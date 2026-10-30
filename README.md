@@ -20,6 +20,23 @@ npx vite preview --host 0.0.0.0
 
 将 `dist/` 部署至静态站点。首次获取中文网络字体失败时使用本机 sans-serif，不影响游戏。
 
+## GitHub Pages 自动部署
+
+在线地址：[无动力滑翔](https://nigh.github.io/glider-3d/)。
+
+`.github/workflows/deploy-pages.yml` 在推送或合并到 `main` 后自动部署，也支持在 Actions 页面通过 `Run workflow` 手动触发。仓库 Pages 的构建来源为 **GitHub Actions**。
+
+工作流使用 Node.js 24，依次执行 `npm ci`、类型检查、单元测试和生产构建，然后通过官方 Pages Actions 上传并部署 `dist/`。构建路径直接使用 `configure-pages` 返回的 `base_path`，无需硬编码仓库名称，也不改变本地开发路径。构建任务没有部署写权限，部署任务单独申请 `pages: write` 和 `id-token: write`。
+
+Action 版本于2026-10-30通过各官方仓库的最新发布接口核实，并固定到对应提交 SHA：`checkout` v7.0.1、`setup-node` v7.1.0、`configure-pages` v6.0.0、`upload-pages-artifact` v5.0.0、`deploy-pages` v5.0.1。升级时同时更新 SHA 和旁边的版本注释。
+
+本地复现项目子路径构建：
+
+```sh
+npm run build -- --base /glider-3d/
+npx vite preview --base /glider-3d/
+```
+
 ## 游戏
 
 1. 进入飞机工坊，修改机身长度、驾驶舱和驾驶员质量。
