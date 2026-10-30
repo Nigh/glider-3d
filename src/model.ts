@@ -17,7 +17,13 @@ export const clamp = (v:number,a:number,b:number) => Math.max(a,Math.min(b,v));
 export const DEG = Math.PI / 180;
 export const PILOT_MASS = 60;
 export type WingKey = 'mainWing' | 'horizontalTail' | 'verticalTail';
-export const SUPPORT_AREAL_DENSITY = 2; // kg/m²：轻型夹板支撑，质量随实际侧投影面积变化。
+/** Squalo公开空机38kg的工程分配，不是部件实测；参考尺寸25.3m/17.8m²/5.28m。 */
+export const AIRFRAME_MASS = {
+ mainArea: 8 / 17.8, mainSpar: 17 / 25.3 ** 3,
+ tailArea: 2 / 3.5, fuselageLinear: 6 / 5.28, cockpit: 4,
+} as const;
+/** 参考支撑侧面积1.2m²分配1kg；板形仅为游戏的刚性支撑代理。 */
+export const SUPPORT_AREAL_DENSITY = 1 / 1.2;
 /** 尾翼位置为翼根中心；主翼保留纵向前缘基准，高度统一为翼根中心高度。 */
 export function wingOrigin(d: AircraftDefinition, key: WingKey) {
  const wing = d[key], middle = (wing.points[0].x + wing.points[3].x) / 2;

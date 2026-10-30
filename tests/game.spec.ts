@@ -11,7 +11,7 @@ declare global {
       readonly flightReady: boolean;
       readonly time: number;
       readonly recordingLength: number;
-      readonly trajectory: { distance: number; height: number; energyRatio: number }[];
+      readonly trajectory: { distance: number; height: number; energyRatio: number; energyPerDistance: number | null }[];
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
       readonly result: FlightResult | null;
@@ -413,27 +413,43 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
 });
 
-test('试飞入口待开始，空格不能跳过，开始前输入不计时不录制', async ({ page }) => {
+test('空格开始、暂停与继续，C键循环视角，输入焦点不触发快捷键', async ({ page }) => {
   await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
   await expectWaiting(page);
-  await page.keyboard.press('Space');
   await page.keyboard.down('w');
   await page.keyboard.down('d');
   await expectWaiting(page);
-  await expect(page.locator('.pause-banner')).toHaveCount(0);
   const cg = await page.evaluate(() => window.glider.telemetry!.cg.x);
-  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
-  await page.waitForTimeout(120);
+  await page.keyboard.press('Space');
+  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(0);
   expect(await page.evaluate(() => window.glider.telemetry!.cg.x)).toBe(cg);
   await expect(page.getByRole('progressbar', { name: '重心操纵输入' })).toHaveAttribute('value', '1');
-  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(0);
-  await expect.poll(() => page.evaluate(() => window.glider.recordingLength)).toBeGreaterThan(0);
   await page.keyboard.up('w');
   await page.keyboard.up('d');
+  await page.keyboard.press('Space');
+  await expect(page.locator('.pause-banner')).toBeVisible();
+  const stopped = await page.evaluate(() => window.glider.time);
+  const camera = page.getByRole('combobox', { name: '飞行相机', exact: true });
+  for (const view of ['侧面', '驾驶员', '自由', '追尾']) {
+    await page.keyboard.press('c');
+    await expect(camera).toHaveValue(view);
+  }
+  expect(await page.evaluate(() => window.glider.time)).toBe(stopped);
+  await camera.selectOption('驾驶员');
+  await page.locator('.flight-hud').click();
+  await page.keyboard.press('c');
+  await expect(camera).toHaveValue('自由');
+  await page.keyboard.press('Space');
+  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(stopped);
   await page.getByRole('button', { name: '返回设计', exact: true }).click();
+  const name = page.getByRole('textbox', { name: '飞机名称', exact: true });
+  await name.fill('测试');
+  await name.press('Space');
+  await name.press('c');
+  await expect(name).toHaveValue('测试 c');
   await page.getByRole('navigation', { name: '游戏流程' }).getByRole('button', { name: '试飞', exact: true }).click();
   await expectWaiting(page);
-  await beginFlight(page);
+  await expect(camera).toHaveValue('追尾');
 });
 
 test('主视图持续展示三翼结果，安装角滑条实时改变气动数值', async ({ page }) => {
@@ -815,6 +831,13 @@ test('底部主按钮启动飞行，实时能耗及结算机械能曲线使用�
   expect(energyPoints.map(point=>point[0])).toEqual(heightPoints.map(point=>point[0]));
   expect(energyPoints[0][1]).toBeCloseTo(22, 2);
   expect(energyPoints.at(-1)![1]).toBeCloseTo(98-finalRatio*76, 2);
+  const finalCost = await page.evaluate(() => Number(window.glider.telemetry!.energyPerDistance));
+  const maxCost = Math.max(1,...trajectory.map(p=>p.energyPerDistance??0));
+  const costLine = chart.locator('.chart-cost-line');
+  const costPoints = (await costLine.getAttribute('d'))!.match(/[ML][\d.]+,[\d.]+/g)!.map(point=>point.slice(1).split(',').map(Number));
+  expect(costPoints.at(-1)![0]).toBeCloseTo(heightPoints.at(-1)![0], 2);
+  expect(costPoints.at(-1)![1]).toBeCloseTo(98-finalCost/maxCost*76, 2);
+  await insideViewport(page, chart.getByText('J/m', { exact: true }));
   await insideViewport(page, chart.getByText('100%', { exact: true }));
   await insideViewport(page, chart.getByText('0%', { exact: true }));
   await noOverflow(page);

@@ -16,24 +16,29 @@
  let mainMountLimits=$derived(mainWingMountLimits(aircraft)),support=$derived(mainWingSupport(aircraft));
  let recording:ReturnType<FlightSimulation['getRecording']>|null=null;let recordedLength=$state(0);let isReplay=$state(false);let lastDefinition=clone(defaultAircraft),lastMode:FlightMode='standard';
  let weight=$state(0),rudder=$state(0),elevator=$state(0),aileron=$state(0);const keys=new Set<string>();const controls:Controls={weight:0,rudder:0,elevator:0,aileron:0};
- type FlightSample={distance:number;height:number;energyRatio:number};
+ const flightViews=['追尾','侧面','驾驶员','自由'];
+ let flightCamera=$state('追尾');
+ let messageTimeout:ReturnType<typeof setTimeout>;
+ type FlightSample={distance:number;height:number;energyRatio:number;energyPerDistance:number|null};
  let samples:FlightSample[]=[],lastSampleTime=-Infinity;
  let trajectory=$state.raw<FlightSample[]>([]);
  let chartMaxDistance=$derived(trajectory.reduce<number>((max,p)=>Math.max(max,p.distance),1));
  let chartMaxHeight=$derived(trajectory.reduce<number>((max,p)=>Math.max(max,p.height),LAUNCH.height));
  let chartPoints=$derived(trajectory.map(p=>`${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.height/chartMaxHeight*76).toFixed(2)}`).join(' '));
  let energyCurvePoints=$derived(screen==='result'?trajectory.map(p=>`${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.energyRatio*76).toFixed(2)}`).join(' '):'');
+ let chartMaxCost=$derived(trajectory.reduce<number>((max,p)=>Math.max(max,p.energyPerDistance??0),1));
+ let costCurvePath=$derived(screen==='result'?trajectory.map((p,i)=>p.energyPerDistance===null?'':`${i===0||trajectory[i-1].energyPerDistance===null?'M':'L'}${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.energyPerDistance/chartMaxCost*76).toFixed(2)}`).join(' '):'');
  let energyParts=$derived([{key:'potential',name:'势能',value:hud.potentialEnergy},{key:'kinetic',name:'动能',value:hud.kineticEnergy},{key:'dissipated',name:'已耗散',value:hud.dissipatedEnergy}]);
  let energyTotal=$derived(hud.potentialEnergy+hud.kineticEnergy+hud.dissipatedEnergy);
  let assemblyPositions=$derived([{key:'mainWing',label:'主翼纵向位置',value:aircraft.assembly.mainWing,min:mainMountLimits.min,max:mainMountLimits.max},{key:'horizontalTail',label:'水平尾翼位置',value:aircraft.assembly.horizontalTail,min:tailMin,max:tailMax},{key:'verticalTail',label:'垂直尾翼位置',value:aircraft.assembly.verticalTail,min:tailMin,max:tailMax},{key:'cockpit',label:'驾驶舱位置',value:aircraft.cockpit.position,min:cockpitMin,max:cockpitMax}] as const);
  function setPosition(key:typeof assemblyPositions[number]['key'],input:HTMLInputElement){const n=input.valueAsNumber,position=assemblyPositions.find(p=>p.key===key)!;if(Number.isFinite(n)){const supported=clamp(n,position.min,position.max);change(d=>{if(key==='cockpit')d.cockpit.position=supported;else d.assembly[key]=supported;});if(n!==supported)notify('已限制在机身支撑范围内；可先延长机头或机尾。');commit();}else notify('位置必须是有限数值');input.value=String(key==='cockpit'?aircraft.cockpit.position:aircraft.assembly[key]);}
  function setEnd(end:'nose'|'tail',input:HTMLInputElement){const n=input.valueAsNumber;if(Number.isFinite(n)){change(d=>resizeFuselage(d,end,n));commit();if(Math.abs(fuselageEnds(aircraft)[end]-n)>1e-6)notify('端点受 3–12 m 机身长度、驾驶舱和尾翼支撑限制。');}else notify('端点必须是有限数值');input.value=String(Number(fuselageEnds(aircraft)[end].toFixed(6)));}
  $effect(()=>{const target=screen==='design'?(tab==='组装'?'assembly':tab==='机身'?null:wingKey):null;if(sceneReady)scene.setEditor(target,d=>change(out=>Object.assign(out,d)),commit);});
- function sampleFlight(final=false){if(!simulation||simulation.launching)return;if(final||simulation.time-lastSampleTime>=0.1){const t=simulation.telemetry;samples.push({distance:t.distance,height:t.altitude,energyRatio:(t.kineticEnergy+t.potentialEnergy)/t.initialEnergy});lastSampleTime=simulation.time;}}
+ function sampleFlight(final=false){if(!simulation||simulation.launching)return;if(final||simulation.time-lastSampleTime>=0.1){const t=simulation.telemetry;samples.push({distance:t.distance,height:t.altitude,energyRatio:(t.kineticEnergy+t.potentialEnergy)/t.initialEnergy,energyPerDistance:t.energyPerDistance});lastSampleTime=simulation.time;}}
  function refreshHud(){if(!simulation)return;const t=simulation.telemetry;hud={...t,alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching};}
  function refreshTrajectory(){if(trajectory.length!==samples.length)trajectory=samples.slice();}
  const hints:Record<Tab,string>={'机身':'驾驶舱的位置改变重心。过度靠后可能让飞机俯仰失稳。','主翼':'拖动四个顶点或 1–4 根弦、2–3 梢弦线段。沿屏幕垂直方向轻吸附，按住 Ctrl 取消。增加面积降低翼载荷，但增加重量与阻力。','水平尾翼':'拖动顶点或 1–4 根弦、2–3 梢弦线段。沿屏幕垂直方向轻吸附，按住 Ctrl 取消。增大尾翼或后移安装位置，通常提高俯仰稳定性。','垂直尾翼':'侧视拖动顶点或 1–4 根弦、2–3 梢弦线段。沿屏幕垂直方向轻吸附，按住 Ctrl 取消。垂直尾翼提供偏航恢复力矩，太小容易偏离航向。','组装':'侧视拖动主翼、尾翼或驾驶舱。主翼高度接近机身时吸附至 0 m，按住 Ctrl 绕过吸附。正 X 朝机头；尾翼位置以翼根中心为准。'};
- function notify(s:string){message=s;}
+ function notify(s:string){clearTimeout(messageTimeout);message=s;messageTimeout=setTimeout(()=>message='',5000);}
  function commit(){try{aircraft=validateAircraft(aircraft);history.push(clone(aircraft));historyVersion++;}catch(e){notify((e as Error).message);}}
  function change(mutator:(d:AircraftDefinition)=>void){const d=clone(aircraft);mutator(d);try{aircraft=validateAircraft(d);scene?.updateAircraft(aircraft);}catch(e){notify((e as Error).message);}}
  function replace(d:AircraftDefinition){try{aircraft=validateAircraft(d);scene?.updateAircraft(aircraft);commit();}catch(e){notify((e as Error).message);}}
@@ -46,19 +51,33 @@
  function fileExport(){const url=URL.createObjectURL(new Blob([exportAircraft(aircraft)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=aircraft.name+'.json';a.click();URL.revokeObjectURL(url);}
  async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');replace(importAircraft(await f.text()));selectedId='';notify('导入成功');}}catch(e){notify('导入失败：'+(e as Error).message);}input.value='';}
  function clearControls(){keys.clear();weight=rudder=elevator=aileron=0;controls.weight=controls.rudder=controls.elevator=controls.aileron=0;}
- function start(replay=false){try{lastDefinition=replay?lastDefinition:clone(aircraft);lastMode=replay?lastMode:mode;simulation=new FlightSimulation(lastDefinition,lastMode);if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(debug||lastMode==='experimental');scene.cameraView('追尾');}catch(e){notify((e as Error).message);}}
+ function start(replay=false){try{lastDefinition=replay?lastDefinition:clone(aircraft);lastMode=replay?lastMode:mode;simulation=new FlightSimulation(lastDefinition,lastMode);if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(debug||lastMode==='experimental');flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
  function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;}
  function togglePause(){if(screen==='flight'&&flightReady)paused=!paused;}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;recordedLength=simulation.recordingLength;screen='result';if(!isReplay){recording=simulation.getRecording();try{best=writeBest(mode,result.distance);}catch(e){notify((e as Error).message);}}}
  function design(){screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
- function keyboard(e:KeyboardEvent,down:boolean){const target=e.target as HTMLElement;if(target.matches('input,select,textarea')||e.key===' '&&target.closest('button,summary,a'))return;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();if(down&&screen==='flight'&&flightReady)keys.add(e.key.toLowerCase());else keys.delete(e.key.toLowerCase());if(down&&!e.repeat&&e.key===' ')togglePause();if(down&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}}
+ function keyboard(e:KeyboardEvent,down:boolean){
+ const target=e.target as HTMLElement;
+ if(target.closest('input,select,textarea,[contenteditable="true"]'))return;
+ if(screen==='flight'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.code==='Space'||e.code==='KeyC')){
+ e.preventDefault();
+ if(down&&!e.repeat){
+ if(e.code==='Space'){if(flightReady)togglePause();else beginFlight();}
+ else{flightCamera=flightViews[(flightViews.indexOf(flightCamera)+1)%flightViews.length];scene.cameraView(flightCamera);}
+ }
+ return;
+ }
+ if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
+ if(down&&screen==='flight'&&flightReady)keys.add(e.key.toLowerCase());else keys.delete(e.key.toLowerCase());
+ if(down&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
+ }
  onMount(()=>{scene=new SceneView(host);scene.updateAircraft(aircraft);sceneReady=true;let previous=performance.now(),accumulator=0,lastInstruments=0;let request=0;
  const tick=(now:number)=>{let elapsed=Math.min((now-previous)/1000,0.1);previous=now;if(!document.hidden){if(screen==='flight'&&simulation&&flightReady&&!paused){accumulator+=elapsed;let steps=0;while(accumulator>=1/60&&steps<5){controls.weight=Math.max(-1,Math.min(1,weight+(keys.has('arrowup')||keys.has('w')?1:0)-(keys.has('arrowdown')||keys.has('s')?1:0)));controls.rudder=Math.max(-1,Math.min(1,rudder+(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0)));controls.elevator=elevator;controls.aileron=aileron;simulation.step(controls,1/60);sampleFlight();accumulator-=1/60;steps++;if(simulation.ended){finish();accumulator=0;break;}}if(steps===5)accumulator=0;}else accumulator=0;scene.render(elapsed);if(screen==='flight')refreshHud();if(now-lastInstruments>150){refreshTrajectory();perf={...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0};lastInstruments=now;}}request=requestAnimationFrame(tick);};request=requestAnimationFrame(tick);
  const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,false),blur=clearControls;window.addEventListener('keydown',down);window.addEventListener('keyup',up);window.addEventListener('blur',blur);document.addEventListener('visibilitychange',blur);
  try{saved=listAircraft();best=readBest(mode);}catch(e){notify((e as Error).message);}
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get result(){return result}}});
- return()=>{cancelAnimationFrame(request);scene.dispose();window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',blur);};});
+ return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);scene.dispose();window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',blur);};});
  function touch(e:PointerEvent,key:'weight'|'rudder',value:number){if(!flightReady)return;e.currentTarget instanceof HTMLElement&&e.currentTarget.setPointerCapture(e.pointerId);if(key==='weight')weight=value;else rudder=value;}
 </script>
 <svelte:head><title>无动力滑翔 · 设计与飞行</title></svelte:head>
@@ -66,7 +85,7 @@
  <section class="energy-panel" aria-label="离台能量守恒">
  <div class="instrument-heading"><h2>能量分配</h2><span>{!flightReady?'待开始':hud.launching?'助跑供能中':'离台后总量恒定'}</span></div>
  {#if hud.launching}
- <p class="launch-note">{!flightReady?'点击开始后助跑':'平台助跑中'}，加速至 {LAUNCH.speed.toFixed(1)} m/s。离台时建立能量基准，助跑外力供能不计入耗散。</p>
+ <p class="launch-note">{!flightReady?'点击开始后助跑':'坡道助跑中'}，沿10 m、3.5°坡道加速至 {LAUNCH.speed.toFixed(1)} m/s。滚转扰动在助跑中平滑加入；离台时建立能量基准，助跑外力供能不计入耗散。</p>
  {:else}
  <div class="energy-track" aria-hidden="true">{#each energyParts as part}<span class={part.key} style:width={`${hud.initialEnergy>0?part.value/hud.initialEnergy*100:0}%`}></span>{/each}</div>
  <dl class="energy-values">{#each energyParts as part}<div class={part.key}><dt>{part.name}</dt><dd>{part.value.toFixed(0)} J <small>{(hud.initialEnergy>0?part.value/hud.initialEnergy*100:0).toFixed(1)}%</small></dd></div>{/each}</dl>
@@ -77,18 +96,20 @@
 {/snippet}
 {#snippet altitudeCurve()}
  <section class="trajectory-panel" aria-label="距离高度曲线">
- <div class="instrument-heading"><h2>{screen==='result'?'距离—高度与能量':'距离—高度'}</h2><span>{trajectory.length?`真实采样 ${trajectory.length} 点`:'离台后开始采样'}</span></div>
- {#if screen==='result'}<div class="chart-legend"><span class="height-key">高度 · 左轴 m</span><span class="energy-key">剩余机械能 · 右轴 %</span></div>{/if}
- <svg viewBox={screen==='result'?'0 0 388 124':'0 0 348 124'} role="img" aria-label={`飞行轨迹，水平距离0至${chartMaxDistance.toFixed(1)}米，高度0至${chartMaxHeight.toFixed(1)}米${screen==='result'?'；剩余机械能为动能与势能之和占离台初始能量的百分比，右轴0至100%':''}`}>
+ <div class="instrument-heading"><h2>{screen==='result'?'距离—高度、能量与能耗':'距离—高度'}</h2><span>{trajectory.length?`真实采样 ${trajectory.length} 点`:'离台后开始采样'}</span></div>
+ {#if screen==='result'}<div class="chart-legend"><span class="height-key">高度 · 左轴 m</span><span class="energy-key">剩余机械能 · 右轴 %</span><span class="cost-key">实时能耗 · 外右轴 J/m</span></div>{/if}
+ <svg viewBox={screen==='result'?'0 0 450 124':'0 0 348 124'} role="img" aria-label={`飞行轨迹，水平距离0至${chartMaxDistance.toFixed(1)}米，高度0至${chartMaxHeight.toFixed(1)}米${screen==='result'?`；剩余机械能为动能与势能之和占离台初始能量的百分比，右轴0至100%；实时能耗外右轴0至${chartMaxCost.toFixed(1)}焦耳每米`:''}`}>
  <line class="chart-grid" x1="38" y1="22" x2="328" y2="22"/><line class="chart-grid" x1="38" y1="60" x2="328" y2="60"/><path class="chart-axis" d="M38 16V98H330"/>
  <text x="2" y="25">{chartMaxHeight.toFixed(1)}</text><text x="23" y="101">0</text><text x="38" y="116">0</text><text x="328" y="116" text-anchor="end">{chartMaxDistance.toFixed(1)} m</text><text x="3" y="12">高度 m</text>
  {#if trajectory.length}{@const last=trajectory[trajectory.length-1]}<polyline class="chart-line" points={chartPoints}/><circle class="chart-current" cx={38+last.distance/chartMaxDistance*290} cy={98-last.height/chartMaxHeight*76} r="3"/>{/if}
  {#if screen==='result'}
  <path class="chart-axis" d="M328 22V98"/><text x="336" y="25">100%</text><text x="336" y="63">50%</text><text x="336" y="101">0%</text>
  <polyline class="chart-energy-line" aria-label="剩余机械能占比曲线" points={energyCurvePoints}/>
+ <path class="chart-axis" d="M390 22V98"/><text x="396" y="12">J/m</text><text x="396" y="25">{chartMaxCost.toFixed(1)}</text><text x="396" y="63">{(chartMaxCost/2).toFixed(1)}</text><text x="396" y="101">0</text>
+ <path class="chart-cost-line" aria-label="实时能耗曲线" d={costCurvePath}/>
  {/if}
  </svg>
- <p class="chart-caption">离台后每 0.1 s 采样，末点保留实际终止高度。{#if screen==='result'}机械能占比 =（动能 + 势能）/ 离台初始能量，动能含转动。{/if}</p>
+ <p class="chart-caption">离台后每 0.1 s 采样，末点保留实际终止高度。{#if screen==='result'}机械能占比 =（动能 + 势能）/ 离台初始能量，动能含转动。实时能耗 = 耗散功率 / 水平速度；无定义时断线，不记作零。{/if}</p>
  </section>
 {/snippet}
 <div class="app" class:flying={screen==='flight'} class:designing={screen==='design'} class:awaiting-flight={screen==='flight'&&!flightReady}>
@@ -139,10 +160,10 @@
  {:else if screen==='flight'}
  <section class="flight-hud" aria-label="飞行数据"><div><small>滑翔距离</small><strong>{hud.distance.toFixed(1)}<em>m</em></strong></div><div><small>空速</small><strong>{hud.speed.toFixed(1)}<em>m/s</em></strong></div><div><small>高度</small><strong>{hud.altitude.toFixed(1)}<em>m</em></strong></div><div><small>总计时</small><strong>{hud.time.toFixed(1)}<em>s</em></strong></div><div><small>实时攻角</small><strong>{hud.alpha.toFixed(1)}<em>°</em></strong></div><div><small>实时升阻比</small><strong>{Number.isFinite(hud.liftDragRatio)?hud.liftDragRatio.toFixed(1):'—'}<em>:1</em></strong></div>
  <div title="真实耗散功率除以世界水平速度；助跑或水平速度不超过0.05 m/s时无定义"><small>实时能耗</small><strong><output aria-label="实时能耗">{hud.energyPerDistance!=null&&Number.isFinite(hud.energyPerDistance)?hud.energyPerDistance.toFixed(1):'—'}</output><em>J/m</em></strong></div></section>
- <div class="flight-status"><span>{!flightReady?'平台待开始 · 点击开始后助跑':hud.launching?'平台助跑 · 外力加速，离台后开始计分':'无动力滑翔 · 距离与能量以离台为基准'}</span><span>{isReplay?'输入重放':mode==='assisted'?'辅助模式 · 独立成绩':mode==='experimental'?'实验模式':'标准模式 · 无风'} · 总计时含助跑</span>{#if hud.stall}<b>攻角过大 · 失速</b>{/if}</div>
+ <div class="flight-status"><span>{!flightReady?'平台待开始 · 10 m / 3.5°坡道':hud.launching?'坡道助跑 · 平滑加入起飞微扰':'无动力滑翔 · 平台前端至机体最后尾计距'}</span><span>{isReplay?'输入重放':mode==='assisted'?'辅助模式 · 独立成绩':mode==='experimental'?'实验模式':'标准模式 · 无风'} · 总计时含助跑</span>{#if hud.stall}<b>攻角过大 · 失速</b>{/if}</div>
  <div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>
- <div class="flight-tools"><button disabled={!flightReady} onclick={togglePause}>{paused?'继续飞行':'暂停'}</button><select aria-label="飞行相机" onchange={e=>scene.cameraView(e.currentTarget.value)}>{#each ['追尾','侧面','驾驶员','自由'] as c}<option>{c}</option>{/each}</select><button onclick={design}>返回设计</button></div>
- {#if !flightReady}<div class="launch-action"><button class="primary launch-start" aria-label="开始试飞" onclick={beginFlight}>开始试飞 <svg viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><p>从静止助跑，离台后无动力滑翔</p></div>{/if}
+ <div class="flight-tools"><button disabled={!flightReady} title="空格开始 / 暂停 / 继续" onclick={togglePause}>{paused?'继续飞行':'暂停'}</button><select aria-label="飞行相机" title="C 键切换视角" bind:value={flightCamera} onchange={e=>scene.cameraView(e.currentTarget.value)}>{#each flightViews as c}<option>{c}</option>{/each}</select><button onclick={design}>返回设计</button></div>
+ {#if !flightReady}<div class="launch-action"><button class="primary launch-start" aria-label="开始试飞" aria-keyshortcuts="Space" onclick={beginFlight}>开始试飞 <svg viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><p>空格开始 / 暂停 · C 切换视角</p></div>{/if}
  {#if paused}<div class="pause-banner">飞行已暂停 <button onclick={()=>paused=false}>继续</button></div>{/if}
  <div class="flight-controls"><div><span>重心前后 · W / S</span><button disabled={!flightReady} aria-label="重心前移" onpointerdown={e=>touch(e,'weight',1)} onpointerup={()=>weight=0} onpointercancel={()=>weight=0}>前移</button><button disabled={!flightReady} aria-label="重心后移" onpointerdown={e=>touch(e,'weight',-1)} onpointerup={()=>weight=0} onpointercancel={()=>weight=0}>后移</button><progress max="2" value={weight+1} aria-label="重心操纵输入"></progress></div><div><span>方向舵 · A / D</span><button disabled={!flightReady} aria-label="向左转向" onpointerdown={e=>touch(e,'rudder',-1)} onpointerup={()=>rudder=0} onpointercancel={()=>rudder=0}>左转</button><button disabled={!flightReady} aria-label="向右转向" onpointerdown={e=>touch(e,'rudder',1)} onpointerup={()=>rudder=0} onpointercancel={()=>rudder=0}>右转</button><progress max="2" value={rudder+1} aria-label="方向操纵输入"></progress></div></div>
  <details class="advanced-hud"><summary>姿态与操纵</summary><p>俯仰 {hud.pitch.toFixed(1)}° · 滚转 {hud.roll.toFixed(1)}°</p><p>下沉率 {hud.sink.toFixed(2)} m/s · 航迹滑翔比 {Number.isFinite(hud.glide)?hud.glide.toFixed(1):'—'}</p>{#if mode==='experimental'}<label>升降舵<input disabled={!flightReady} aria-label="升降舵" type="range" min="-1" max="1" step="0.05" bind:value={elevator}/></label><label>副翼<input disabled={!flightReady} aria-label="副翼" type="range" min="-1" max="1" step="0.05" bind:value={aileron}/></label>{/if}</details>

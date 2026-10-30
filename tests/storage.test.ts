@@ -184,10 +184,17 @@ describe('最远纪录', () => {
   });
 
   it('损坏纪录不被静默覆盖', () => {
-    storage.setItem('lakewind.best.standard', 'broken');
+    storage.setItem('lakewind.best.official-v1.standard', 'broken');
     expect(() => readBest('standard')).toThrow('纪录已损坏');
     expect(() => writeBest('standard', 90)).toThrow('纪录已损坏');
-    expect(storage.getItem('lakewind.best.standard')).toBe('broken');
+    expect(storage.getItem('lakewind.best.official-v1.standard')).toBe('broken');
+  });
+
+  it('旧版重心距离不参与机体最后尾计距纪录，且不删除原始数据', () => {
+    storage.setItem('lakewind.best.standard', '900');
+    expect(readBest('standard')).toBe(0);
+    expect(writeBest('standard', 120)).toBe(120);
+    expect(storage.getItem('lakewind.best.standard')).toBe('900');
   });
 });
 
