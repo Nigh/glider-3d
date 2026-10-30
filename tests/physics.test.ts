@@ -143,12 +143,12 @@ describe('基础物理与边界', () => {
       / (3 * (planform(d.mainWing).root + planform(d.mainWing).tip));
     const quarter = d.mainWing.points[0].x + (d.mainWing.points[1].x - d.mainWing.points[0].x) * fraction
       + (planform(d.mainWing).root + (planform(d.mainWing).tip - planform(d.mainWing).root) * fraction) / 4;
-    expect(p.liftCenter.x).toBeCloseTo(d.assembly.mainWing - quarter * Math.cos(d.assembly.mainIncidence * DEG), 10);
-    expect(p.liftCenter.z).toBe(0);
+    expect(p.mainQuarterChord.x).toBeCloseTo(d.assembly.mainWing - quarter * Math.cos(d.assembly.mainIncidence * DEG), 10);
+    expect(p.mainQuarterChord.z).toBe(0);
     expect(p.staticMargin).toBeCloseTo((p.cg.x - p.neutralPoint) / planform(d.mainWing).chord, 10);
     const aftTail = derive(definition(d => { d.assembly.horizontalTail -= 1; }));
     expect(aftTail.neutralPoint).toBeLessThan(p.neutralPoint);
-    expect(aftTail.liftCenter.equals(p.liftCenter)).toBe(true);
+    expect(aftTail.mainQuarterChord.equals(p.mainQuarterChord)).toBe(true);
   });
 
   it('增加乘员质量同时改变质量、重心和惯量', () => {
@@ -170,7 +170,6 @@ describe('基础物理与边界', () => {
     expect(s.result!.averageSpeed).toBeGreaterThan(0);
     expect(s.result!.maxSpeed).toBeGreaterThanOrEqual(s.result!.minSpeed);
     expect(s.result!.maxHeight).toBeGreaterThanOrEqual(10);
-    expect(s.result!.hints.length).toBeGreaterThan(0);
     const snapshot = s.position.clone();
     s.step(neutral);
     expect(s.position.equals(snapshot)).toBe(true);
@@ -328,6 +327,91 @@ describe('行为 A–H：改变设计会改变真实受力及飞行', () => {
   });
 });
 
+describe('三翼共享参考模型与合力中心', () => {
+  it('参考状态明确速度、攻角和侧滑，且与飞行受力共用模型', () => {
+    const reference = derive(defaultAircraft).aerodynamics;
+    expect(reference.speed).toBeCloseTo(12, 12);
+    expect(reference.alpha).toBeCloseTo(5 * DEG, 12);
+    expect(reference.beta).toBeCloseTo(3 * DEG, 12);
+    expect(reference.wings.map(wing => wing.kind)).toEqual(['main', 'tail', 'vertical']);
+    const s = new FlightSimulation(defaultAircraft);
+    s.launching = false; s.position.set(30, 80, 0);
+    s.velocity.set(12 * Math.cos(reference.alpha) * Math.cos(reference.beta),
+      -12 * Math.sin(reference.alpha) * Math.cos(reference.beta), 12 * Math.sin(reference.beta));
+    s.step(neutral, 1e-8);
+    for (let i = 0; i < reference.wings.length; i++) {
+      const expected = reference.wings[i], actual = s.telemetry.aerodynamics.wings[i];
+      expect(actual.force.distanceTo(expected.force)).toBeLessThan(1e-4);
+      expect(actual.alpha).toBeCloseTo(expected.alpha, 6);
+    }
+  });
+
+  it('水平尾翼独立产生升力和阻力，面积及安装角改变其受力', () => {
+    const base = derive(defaultAircraft).aerodynamics.wings[1];
+    const angled = derive(definition(d => { d.assembly.tailIncidence += 5; })).aerodynamics.wings[1];
+    const enlarged = derive(definition(d => { d.horizontalTail = wing(4.5, 1.1, 0.8); })).aerodynamics.wings[1];
+    expect(Math.abs(base.lift.y)).toBeGreaterThan(1);
+    expect(base.drag.x).toBeLessThan(0);
+    expect(angled.alpha).toBeGreaterThan(base.alpha);
+    expect(angled.lift.y).toBeGreaterThan(base.lift.y);
+    expect(enlarged.drag.length()).toBeGreaterThan(base.drag.length());
+    expect(enlarged.area).toBeCloseTo(planform(wing(4.5, 1.1, 0.8)).area);
+    expect(enlarged.aspect).toBeCloseTo(planform(wing(4.5, 1.1, 0.8)).aspect);
+  });
+
+  it('垂尾侧力与侧滑相反，并独立贡献阻力和偏航力矩', () => {
+    const base = derive(defaultAircraft).aerodynamics.wings[2];
+    const enlarged = derive(definition(d => { d.verticalTail = wing(4, 1.1, 0.8); })).aerodynamics.wings[2];
+    expect(base.lift.z).toBeLessThan(-1);
+    expect(base.drag.x).toBeLessThan(0);
+    expect(base.torque.y).toBeLessThan(0);
+    expect(Math.abs(enlarged.lift.z)).toBeGreaterThan(Math.abs(base.lift.z));
+    expect(enlarged.drag.length()).toBeGreaterThan(base.drag.length());
+    expect(enlarged.area).toBeCloseTo(planform(wing(4, 1.1, 0.8), false).area);
+    expect(enlarged.aspect).toBeCloseTo(planform(wing(4, 1.1, 0.8), false).aspect);
+  });
+
+  it('三翼加机身等于全机合力，等效中心和自由力矩完整重建气动力矩', () => {
+    const p = derive(defaultAircraft), a = p.aerodynamics;
+    const force = a.bodyDrag.clone(), drag = a.bodyDrag.clone(), torque = new Vector3();
+    for (const wing of a.wings) {
+      force.add(wing.force); drag.add(wing.drag); torque.add(wing.torque);
+      expect(wing.force.distanceTo(wing.lift.clone().add(wing.drag))).toBeLessThan(1e-9);
+    }
+    expect(force.distanceTo(a.force)).toBeLessThan(1e-9);
+    expect(drag.distanceTo(a.drag)).toBeLessThan(1e-9);
+    expect(torque.distanceTo(a.torque)).toBeLessThan(1e-9);
+    expect(a.liftCenter).not.toBeNull(); expect(a.dragCenter).not.toBeNull();
+    const reconstructed = new Vector3().crossVectors(a.liftCenter!.clone().sub(p.cg), a.lift)
+      .add(new Vector3().crossVectors(a.dragCenter!.clone().sub(p.cg), a.drag))
+      .add(a.liftMoment).add(a.dragMoment).add(a.freeMoment);
+    expect(reconstructed.distanceTo(a.torque)).toBeLessThan(1e-8);
+    expect(a.liftMoment.length() + a.dragMoment.length()).toBeGreaterThan(1e-4);
+    const moved = derive(definition(d => { d.assembly.horizontalTail -= 1; }));
+    expect(moved.aerodynamics.liftCenter!.distanceTo(a.liftCenter!)).toBeGreaterThan(0.001);
+    expect(p.mainQuarterChord.equals(moved.mainQuarterChord)).toBe(true);
+  });
+
+  it('实时分翼对象复用，零来流没有虚构中心，重置清空残留受力', () => {
+    const s = new FlightSimulation(defaultAircraft), a = s.telemetry.aerodynamics;
+    const wings = a.wings, force = wings[0].force;
+    expect(a.liftCenter).toBeNull(); expect(a.dragCenter).toBeNull();
+    s.launching = false; s.position.set(30, 80, 0); s.velocity.set(12, -1, 2); s.omega.set(0.2, 0.1, 0.3);
+    s.step(neutral);
+    expect(s.telemetry.aerodynamics).toBe(a); expect(a.wings).toBe(wings); expect(a.wings[0].force).toBe(force);
+    const total = a.bodyDrag.clone();
+    for (const wing of a.wings) total.add(wing.force);
+    expect(total.distanceTo(a.force)).toBeLessThan(1e-9);
+    const reconstructed = a.freeMoment.clone().add(a.liftMoment).add(a.dragMoment)
+      .add(new Vector3().crossVectors(a.liftCenter!.clone().sub(s.aircraft.cg), a.lift))
+      .add(new Vector3().crossVectors(a.dragCenter!.clone().sub(s.aircraft.cg), a.drag));
+    expect(reconstructed.distanceTo(s.telemetry.torque)).toBeLessThan(1e-8);
+    s.reset();
+    expect(a.liftCenter).toBeNull(); expect(a.dragCenter).toBeNull();
+    expect(a.force.length()).toBe(0); expect(a.torque.length()).toBe(0);
+  });
+});
+
 describe('局部来流、操纵、能量与确定性', () => {
   it('使用 v + omega cross r：俯仰角速度改变尾翼来流并形成阻尼', () => {
     const still = probe(), rotating = probe(undefined, s => { s.omega.z = 0.4; });
@@ -335,6 +419,18 @@ describe('局部来流、操纵、能量与确定性', () => {
     const tailB = rotating.surfaces.find(p => p.kind === 'tail')!;
     expect(tailB.alpha).toBeGreaterThan(tailA.alpha);
     expect(rotating.telemetry.torque.z).toBeLessThan(still.telemetry.torque.z);
+  });
+
+  it('偏航改变垂尾局部侧滑，横滚让左右主翼迎角不同', () => {
+    const yawing = probe(undefined, s => { s.omega.y = 0.4; });
+    const vertical = yawing.surfaces.find(surface => surface.kind === 'vertical')!;
+    expect(vertical.alpha).toBeLessThan(-0.02);
+    expect(vertical.force.z).toBeLessThan(-1);
+    expect(yawing.telemetry.torque.y).toBeLessThan(0);
+    const rolling = probe(undefined, s => { s.omega.x = 0.4; });
+    const main = rolling.surfaces.filter(surface => surface.kind === 'main');
+    expect(main[1].alpha).toBeGreaterThan(main[0].alpha);
+    expect(rolling.telemetry.torque.x).toBeLessThan(0);
   });
 
   it('输入改变面上气动力，不直接写入姿态；拉杆产生抬头力矩', () => {
@@ -492,6 +588,5 @@ describe('六个预设的完整实际模拟', () => {
     expect(s.result!.time).toBeGreaterThan(0);
     expect(Number.isFinite(s.result!.averageSpeed)).toBe(true);
     expect(s.recordingLength).toBeGreaterThan(0);
-    if (d.name.includes('重心过后')) expect(s.result!.hints.join('')).toContain('中性点');
   });
 });

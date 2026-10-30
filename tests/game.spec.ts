@@ -2,18 +2,23 @@ import { test, expect, type Page, type Locator } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import type { AircraftDefinition } from '../src/model';
 
-type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string; hints: string[] };
+type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string };
 declare global {
   interface Window {
     readonly glider: {
       readonly aircraft: AircraftDefinition;
       readonly state: 'menu' | 'design' | 'flight' | 'result';
+      readonly flightReady: boolean;
+      readonly time: number;
+      readonly recordingLength: number;
+      readonly trajectory: { distance: number; height: number }[];
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
       readonly result: FlightResult | null;
       readonly scene: {
         view: string; orthographic: boolean; editing: string | null;
         camera: { x: number; y: number; z: number }; groundHeight: number; shadowVisible: boolean;
+        editor: { handles: { index: number; side: number; x: number; y: number }[] };
       };
     };
   }
@@ -39,6 +44,24 @@ async function enterDesign(page: Page) {
   await page.getByRole('button', { name: '开始设计' }).click();
   await expect(page.getByRole('heading', { name: '飞机工坊' })).toBeVisible();
 }
+async function expectWaiting(page: Page) {
+  await expect(page.getByRole('button', { name: '开始试飞', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '重心前移', exact: true })).toBeDisabled();
+  const storedInputs = await page.evaluate(() => window.glider.recordingLength);
+  for (let check = 0; check < 2; check++) {
+    expect(await page.evaluate(() => ({
+      ready: window.glider.flightReady, time: window.glider.time, inputs: window.glider.recordingLength,
+      speed: window.glider.telemetry?.speed, distance: window.glider.telemetry?.distance, samples: window.glider.trajectory.length,
+    }))).toEqual({ ready: false, time: 0, inputs: storedInputs, speed: 0, distance: 0, samples: 0 });
+    if (check === 0) await page.waitForTimeout(200);
+  }
+}
+async function beginFlight(page: Page) {
+  await expectWaiting(page);
+  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.glider.flightReady)).toBe(true);
+}
 async function number(page: Page, label: string, value: number) {
   const input = page.getByRole('spinbutton', { name: label, exact: true });
   await input.fill(String(value));
@@ -59,6 +82,11 @@ async function dragHandle(page: Page, index: number, dx: number, dy: number) {
 async function waitResult(page: Page) {
   await expect.poll(() => page.evaluate(() => window.glider.state), { timeout: 90_000 }).toBe('result');
   await expect(page.getByRole('heading', { name: '每一米，都来自你的设计。' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '距离高度曲线', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '离台能量守恒', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '能量分配', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '这次飞行的线索', exact: true })).toHaveCount(0);
+  await expect(page.getByText('总计时（含助跑）', { exact: true })).toBeVisible();
   const result = await page.evaluate(() => window.glider.result);
   expect(result).not.toBeNull();
   expect(result!.landing).toBe('water');
@@ -121,6 +149,10 @@ test.describe('桌面完整交互', () => {
       expect((await aircraft(page))[key].points[2].y).toBe(value);
     }
     await page.getByRole('tab', { name: '组装', exact: true }).click();
+    const navigation = page.getByRole('navigation', { name: '游戏流程' });
+    await expect(navigation.getByRole('button')).toHaveCount(2);
+    await expect(navigation.getByRole('button', { name: '设计', exact: true })).toHaveClass(/active/);
+    await expect(navigation.getByRole('button', { name: '组装', exact: true })).toHaveCount(0);
     const mainHandle = page.getByRole('button', { name: '主翼位置', exact: true });
     const mainBox = await mainHandle.boundingBox();
     if (!mainBox) throw new Error('组装位置手柄不可见');
@@ -207,6 +239,7 @@ test.describe('桌面完整交互', () => {
     await enterDesign(page);
     await page.getByRole('button', { name: '前往平台试飞' }).click();
     await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('flight');
+    await beginFlight(page);
     const initialCg = await page.evaluate(() => window.glider.telemetry!.cg.x);
     await page.keyboard.down('w');
     await page.keyboard.down('d');
@@ -242,15 +275,18 @@ test.describe('桌面完整交互', () => {
     expect(energy.dissipated).toBeGreaterThan(0);
     expect(Math.abs(energy.total - energy.initial) / energy.initial).toBeLessThan(1e-6);
     await page.getByRole('button', { name: '重放飞行', exact: true }).click();
+    await beginFlight(page);
     const replay = await waitResult(page);
     expect(replay).toEqual(first);
     await page.getByRole('button', { name: '返回设计改进', exact: true }).click();
     await page.getByRole('tab', { name: '机身', exact: true }).click();
     await number(page, '驾驶舱位置精确值', 1.3);
     await page.getByRole('button', { name: '前往平台试飞' }).click();
+    await beginFlight(page);
     await waitResult(page);
     await page.getByRole('button', { name: '再试一次', exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('flight');
+    await beginFlight(page);
     expect((await aircraft(page)).cockpit.position).toBe(1.3);
     await page.getByRole('button', { name: '返回设计', exact: true }).click();
     await expect(page.getByRole('heading', { name: '飞机工坊' })).toBeVisible();
@@ -271,6 +307,7 @@ test('手机竖屏与横屏无页面溢出，真实浏览器触摸事件可操�
   await page.getByRole('region', { name: '本地机库' }).getByRole('button', { name: '关闭', exact: true }).tap();
   await insideViewport(page, page.getByRole('button', { name: '前往平台试飞' }));
   await page.getByRole('button', { name: '前往平台试飞' }).tap();
+  await beginFlight(page);
   await noOverflow(page);
   const session = await context.newCDPSession(page);
   let touchActive = false;
@@ -352,6 +389,7 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   }
   await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
   await page.getByRole('button', { name: '前往平台试飞' }).click();
+  await beginFlight(page);
   await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0), { timeout: 20_000 }).toBeGreaterThan(30);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
   for (const camera of ['追尾', '侧面', '驾驶员', '自由']) {
@@ -362,4 +400,96 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
     })).toBeGreaterThanOrEqual(0.549);
   }
   expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
+});
+
+test('试飞入口待开始，空格不能跳过，开始前输入不计时不录制', async ({ page }) => {
+  await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
+  await expectWaiting(page);
+  await page.keyboard.press('Space');
+  await page.keyboard.down('w');
+  await page.keyboard.down('d');
+  await expectWaiting(page);
+  await expect(page.locator('.pause-banner')).toHaveCount(0);
+  const cg = await page.evaluate(() => window.glider.telemetry!.cg.x);
+  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => window.glider.telemetry!.cg.x)).toBe(cg);
+  await expect(page.getByRole('progressbar', { name: '重心操纵输入' })).toHaveAttribute('value', '1');
+  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => window.glider.recordingLength)).toBeGreaterThan(0);
+  await page.keyboard.up('w');
+  await page.keyboard.up('d');
+  await page.getByRole('button', { name: '返回设计', exact: true }).click();
+  await page.getByRole('navigation', { name: '游戏流程' }).getByRole('button', { name: '试飞', exact: true }).click();
+  await expectWaiting(page);
+  await beginFlight(page);
+});
+
+test('设计与组装展示同一模型的三翼作用，三翼修改分别改变预览', async ({ page }) => {
+  await enterDesign(page);
+  const preview = page.getByRole('region', { name: '三翼气动力预览', exact: true });
+  await expect(preview.locator('.aero-wing')).toHaveCount(3);
+  const main = preview.locator('[aria-label="主翼气动作用"]');
+  const horizontal = preview.locator('[aria-label="水平尾翼气动作用"]');
+  const vertical = preview.locator('[aria-label="垂直尾翼气动作用"]');
+  await expect(main).toContainText('升力');
+  await expect(horizontal).toContainText('升力');
+  await expect(vertical).toContainText('侧向力');
+  await expect(vertical).not.toContainText('升力');
+  const beforeMain = await main.textContent(), beforeTail = await horizontal.textContent(), beforeVertical = await vertical.textContent();
+  await page.getByRole('tab', { name: '组装', exact: true }).click();
+  await number(page, '主翼安装角精确值', 8);
+  await expect(main).not.toHaveText(beforeMain!);
+  await number(page, '水平尾翼安装角精确值', -5);
+  await expect(horizontal).not.toHaveText(beforeTail!);
+  await expect(page.locator('.stability')).toContainText('全机升力参考中心');
+  await expect(page.locator('.stability')).toContainText('全机阻力参考中心');
+  await expect(page.locator('.scene-hint')).toContainText('重心 CG');
+  await expect(page.locator('.scene-hint')).toContainText('升力');
+  await expect(page.locator('.scene-hint')).toContainText('阻力');
+  await expect(page.locator('.scene-hint')).not.toContainText('主翼升力参考点');
+  await page.getByRole('tab', { name: '垂直尾翼', exact: true }).click();
+  await page.getByText('精确编辑四个顶点', { exact: true }).click();
+  await number(page, '顶点2展向坐标', 2.5);
+  await expect(vertical).not.toHaveText(beforeVertical!);
+});
+
+test('翼弦线段整体拖动保留弦长，垂直轻吸附可用Ctrl绕过', async ({ page, isMobile }) => {
+  test.skip(isMobile, '鼠标与Ctrl组合在桌面验证；数字输入提供触摸替代');
+  await enterDesign(page);
+  for (const segment of ['14', '23']) {
+    const before = (await aircraft(page)).mainWing.points;
+    const line = page.locator(`.scene-editor g[data-segment="${segment}"][data-side="1"]`);
+    const box = await line.boundingBox();
+    if (!box) throw new Error('翼弦拖动区不可见');
+    await page.keyboard.down('Control');
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + (segment === '23' ? 16 : 0), box.y + box.height / 2 + 14, { steps: 8 });
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    const after = (await aircraft(page)).mainWing.points;
+    const first = segment === '14' ? 0 : 1, last = segment === '14' ? 3 : 2;
+    expect(after[first].x).not.toBe(before[first].x);
+    expect(after[last].x - after[first].x).toBeCloseTo(before[last].x - before[first].x, 8);
+    expect(after[0].y).toBe(0);
+    expect(after[3].y).toBe(0);
+    expect(after[1].y).toBe(after[2].y);
+    if (segment === '23') expect(after[1].y).toBeGreaterThan(before[1].y);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    expect((await aircraft(page)).mainWing.points).toEqual(before);
+  }
+  const points = (await aircraft(page)).mainWing.points;
+  const positions = await page.evaluate(() => window.glider.scene.editor.handles);
+  const rootFront = positions.find(p => p.index === 0 && p.side === 1)!;
+  const rootBack = positions.find(p => p.index === 3 && p.side === 1)!;
+  const pixelsPerMetre = (rootBack.y - rootFront.y) / (points[3].x - points[0].x);
+  const dy = (0.309 - points[1].x) * pixelsPerMetre;
+  await dragHandle(page, 1, 0, dy);
+  expect((await aircraft(page)).mainWing.points[1].x).toBeCloseTo(0.3, 6);
+  await page.getByRole('button', { name: '撤销', exact: true }).click();
+  await page.keyboard.down('Control');
+  await dragHandle(page, 1, 0, dy);
+  await page.keyboard.up('Control');
+  expect((await aircraft(page)).mainWing.points[1].x).toBeCloseTo(0.309, 3);
 });
