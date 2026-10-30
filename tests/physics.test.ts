@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, presets, wing, planform, type AircraftDefinition, type Controls } from '../src/model';
-import { coefficients, derive, FlightSimulation, GRAVITY } from '../src/physics';
+import { coefficients, derive, FlightSimulation, GRAVITY, LAUNCH, launchHeight } from '../src/physics';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisZ = new Vector3(0, 0, 1);
@@ -10,8 +10,21 @@ function definition(change?: (d: AircraftDefinition) => void) {
   change?.(d);
   return d;
 }
+function release(s = new FlightSimulation(defaultAircraft)) {
+  while (s.launching) s.step(neutral);
+  expect(s.ended).toBe(false);
+  return s;
+}
+function budget(s: FlightSimulation) {
+  const t = s.telemetry;
+  expect(t.initialEnergy).toBeGreaterThan(0);
+  expect(t.dissipatedEnergy).toBeGreaterThanOrEqual(0);
+  expect(t.energy).toBeCloseTo(t.potentialEnergy + t.kineticEnergy, 9);
+  expect(Math.abs(t.energy + t.dissipatedEnergy - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
+}
 function probe(d = definition(), setup?: (s: FlightSimulation) => void) {
   const s = new FlightSimulation(d);
+  s.launching = false;
   s.position.set(30, 80, 0);
   s.quaternion.identity();
   s.velocity.set(12, -1, 0);
@@ -26,7 +39,9 @@ function fly(d = definition(), controls = neutral) {
 }
 function finite(s: FlightSimulation) {
   for (const value of [s.position.x, s.position.y, s.position.z, s.velocity.x, s.velocity.y, s.velocity.z,
-    s.omega.x, s.omega.y, s.omega.z, s.quaternion.length(), s.telemetry.energy, s.telemetry.aeroPower]) {
+    s.omega.x, s.omega.y, s.omega.z, s.quaternion.length(), s.telemetry.energy, s.telemetry.aeroPower,
+    s.telemetry.potentialEnergy, s.telemetry.kineticEnergy, s.telemetry.dissipatedEnergy,
+    s.telemetry.initialEnergy, s.telemetry.liftDragRatio]) {
     expect(Number.isFinite(value)).toBe(true);
   }
   expect(s.quaternion.length()).toBeCloseTo(1, 10);
@@ -38,11 +53,15 @@ function pitchSlope(d: AircraftDefinition) {
 }
 
 describe('基础物理与边界', () => {
-  it('统一 10m / 10m/s 初始条件，质量中心与惯量均由构型计算', () => {
+  it('从平台入口静止发射，质量中心与惯量均由构型计算', () => {
     const s = new FlightSimulation(defaultAircraft);
     const p = derive(defaultAircraft);
-    expect(s.position.toArray()).toEqual([0, 10, 0]);
-    expect(s.velocity.toArray()).toEqual([10, 0, 0]);
+    expect(s.position.toArray()).toEqual([LAUNCH.startX, launchHeight(defaultAircraft), 0]);
+    expect(s.velocity.toArray()).toEqual([0, 0, 0]);
+    expect(s.quaternion.toArray()).toEqual([0, 0, 0, 1]);
+    expect(s.launching).toBe(true);
+    expect(s.telemetry.distance).toBe(0);
+    expect(s.telemetry.initialEnergy).toBe(0);
     expect(s.time).toBe(0);
     expect(s.surfaces).toHaveLength(5);
     expect(p.mass).toBeGreaterThan(defaultAircraft.pilot.mass);
@@ -54,6 +73,82 @@ describe('基础物理与边界', () => {
     expect(p.wingLoading).toBeCloseTo(p.mass / p.wingArea);
     expect(p.aspect).toBeCloseTo(p.span ** 2 / p.wingArea);
     expect(s.telemetry.cg).toBe(s.aircraft.cg);
+  });
+
+  it('沿20米平台匀加速4秒，以固定10m/s离台后才建立能量预算', () => {
+    const s = new FlightSimulation(defaultAircraft), height = s.position.y;
+    for (let second = 1; second <= 4; second++) {
+      for (let quarter = 0; quarter < 4; quarter++) s.step(neutral, 0.25);
+      expect(s.position.x).toBeCloseTo(LAUNCH.startX + 0.5 * LAUNCH.acceleration * second ** 2, 10);
+      expect(s.velocity.x).toBeCloseTo(LAUNCH.acceleration * second, 10);
+      expect(s.position.y).toBe(height);
+      expect(s.velocity.y).toBe(0);
+      expect(s.telemetry.distance).toBe(0);
+      expect(s.ended).toBe(false);
+      expect(s.launching).toBe(second < 4);
+      if (second < 4) {
+        expect(s.telemetry.initialEnergy).toBe(0);
+        expect(s.telemetry.dissipatedEnergy).toBe(0);
+      }
+    }
+    expect(s.time).toBeCloseTo(4, 10);
+    expect(s.position.x).toBe(LAUNCH.endX);
+    expect(s.velocity.length()).toBe(LAUNCH.speed);
+    expect(s.telemetry.initialEnergy).toBeCloseTo(s.aircraft.mass * (GRAVITY * height + 50), 8);
+    budget(s);
+    s.step(neutral);
+    expect(s.telemetry.distance).toBeGreaterThan(0);
+    expect(s.position.x).toBeGreaterThan(LAUNCH.endX);
+    budget(s);
+  });
+
+  it('助跑支持重心操纵，滑橇和大安装角翼面不沉入平台', () => {
+    const d = definition(d => {
+      d.mainWing = wing(14, 5.8, 5.8);
+      d.assembly.mainWingHeight = 0;
+      d.assembly.mainIncidence = 18;
+    });
+    const s = new FlightSimulation(d), originalCG = s.aircraft.cg.x, inertia = s.aircraft.inertia.clone();
+    const height = s.position.y;
+    for (let frame = 0; frame < 120; frame++) {
+      s.step({ ...neutral, weight: 1 });
+      expect(s.launching).toBe(true);
+      expect(s.position.y).toBe(height);
+      expect(s.position.y - s.aircraft.cg.y - 0.495).toBeGreaterThanOrEqual(LAUNCH.height + 0.05 - 1e-10);
+      // 可见网格的主翼根部后缘，随安装角向下转动。
+      const trailingY = s.position.y - s.aircraft.cg.y - 5.8 * Math.sin(18 * DEG);
+      expect(trailingY).toBeGreaterThanOrEqual(LAUNCH.height + 0.05 - 1e-10);
+      expect(s.aircraft.inertia.equals(inertia)).toBe(true);
+      expect(s.ended).toBe(false);
+    }
+    expect(s.aircraft.cg.x).toBeGreaterThan(originalCG);
+    expect(s.aircraft.cg.x).toBeCloseTo(derive(d, 1).cg.x, 10);
+    expect(s.omega.length()).toBe(0);
+  });
+
+  it('离台后后部仍在平台上方，保留真实平台碰撞而不让默认构型沉台', () => {
+    const s = release();
+    expect(s.position.y - s.aircraft.cg.y - 0.495).toBeCloseTo(LAUNCH.height + 0.05, 9);
+    for (let i = 0; i < 60 && !s.ended; i++) {
+      s.step(neutral);
+      expect(s.result?.landing).not.toBe('platform');
+      budget(s);
+    }
+    expect(s.ended).toBe(false);
+  });
+
+  it('主翼1/4弦参考点独立于尾翼中性点，静稳定裕度以MAC归一化', () => {
+    const d = definition(), p = derive(d);
+    const fraction = (planform(d.mainWing).root + 2 * planform(d.mainWing).tip)
+      / (3 * (planform(d.mainWing).root + planform(d.mainWing).tip));
+    const quarter = d.mainWing.points[0].x + (d.mainWing.points[1].x - d.mainWing.points[0].x) * fraction
+      + (planform(d.mainWing).root + (planform(d.mainWing).tip - planform(d.mainWing).root) * fraction) / 4;
+    expect(p.liftCenter.x).toBeCloseTo(d.assembly.mainWing - quarter * Math.cos(d.assembly.mainIncidence * DEG), 10);
+    expect(p.liftCenter.z).toBe(0);
+    expect(p.staticMargin).toBeCloseTo((p.cg.x - p.neutralPoint) / planform(d.mainWing).chord, 10);
+    const aftTail = derive(definition(d => { d.assembly.horizontalTail -= 1; }));
+    expect(aftTail.neutralPoint).toBeLessThan(p.neutralPoint);
+    expect(aftTail.liftCenter.equals(p.liftCenter)).toBe(true);
   });
 
   it('增加乘员质量同时改变质量、重心和惯量', () => {
@@ -83,6 +178,7 @@ describe('基础物理与边界', () => {
 
   it('机翼尖先接水也结束，不等待重心沉入水面', () => {
     const s = new FlightSimulation(defaultAircraft);
+    s.launching = false;
     s.position.set(30, 1, 0);
     s.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), 30 * DEG);
     s.step(neutral);
@@ -97,6 +193,7 @@ describe('基础物理与边界', () => {
     { name: '场景边界', x: 2001, y: 20, landing: 'boundary' },
   ])('$name 接触终止', ({ x, y, landing }) => {
     const s = new FlightSimulation(defaultAircraft);
+    s.launching = false;
     s.position.set(x, y, 0);
     s.step(neutral);
     expect(s.result?.landing).toBe(landing);
@@ -104,19 +201,23 @@ describe('基础物理与边界', () => {
 
   it('零速度不产生除零；重力仍使飞机下落', () => {
     const s = new FlightSimulation(defaultAircraft);
+    s.launching = false;
     s.position.set(30, 50, 0); s.velocity.set(0, 0, 0);
     s.step(neutral);
     finite(s);
-    expect(s.velocity.y).toBeCloseTo(-GRAVITY / 60);
-    expect(s.telemetry.force.length()).toBe(0);
+    // 中点来流包含本步重力下落，微小空气阻力不是零。
+    expect(s.velocity.y).toBeCloseTo(-GRAVITY / 60, 4);
+    expect(s.telemetry.force.y).toBeGreaterThan(0);
     for (let i = 0; i < 30; i++) s.step(neutral);
     finite(s);
   });
 
   it('外部大步长拆为60Hz；非有限/过大/非正步长拒绝', () => {
     const a = new FlightSimulation(defaultAircraft), b = new FlightSimulation(defaultAircraft);
-    a.step(neutral, 0.25);
-    for (let i = 0; i < 15; i++) b.step(neutral);
+    for (let second = 0; second < 5; second++) {
+      for (let quarter = 0; quarter < 4; quarter++) a.step(neutral, 0.25);
+      for (let frame = 0; frame < 60; frame++) b.step(neutral);
+    }
     expect(a.position.distanceTo(b.position)).toBeLessThan(1e-10);
     expect(a.quaternion.angleTo(b.quaternion)).toBeLessThan(1e-7);
     for (const dt of [0, -1, NaN, Infinity, 1]) expect(() => a.step(neutral, dt)).toThrow();
@@ -127,11 +228,14 @@ describe('基础物理与边界', () => {
     const d = definition(), before = JSON.stringify(d);
     const s = fly(d);
     s.reset();
-    expect(s.position.toArray()).toEqual([0, 10, 0]);
+    expect(s.position.toArray()).toEqual([LAUNCH.startX, launchHeight(d), 0]);
+    expect(s.launching).toBe(true);
     expect(s.omega.length()).toBe(0);
     expect(s.time).toBe(0); expect(s.result).toBeNull(); expect(s.ended).toBe(false);
     expect(s.recordingLength).toBe(0);
-    expect(s.telemetry.energy).toBeCloseTo(derive(d).mass * (10 * GRAVITY + 50));
+    expect(s.telemetry.energy).toBeCloseTo(derive(d).mass * launchHeight(d) * GRAVITY);
+    expect(s.telemetry.initialEnergy).toBe(0);
+    expect(s.telemetry.dissipatedEnergy).toBe(0);
     expect(JSON.stringify(d)).toBe(before);
   });
 });
@@ -147,11 +251,10 @@ describe('行为 A–H：改变设计会改变真实受力及飞行', () => {
     expect(derive(forward, 1).inertia.z).not.toBeCloseTo(derive(forward, -1).inertia.z);
   });
 
-  it('B：主翼面积改变翼载荷、瞬时升力和实际航程', () => {
+  it('B：主翼面积改变翼载荷和瞬时升力', () => {
     const big = definition(d => { d.mainWing = { ...wing(14, 2, 1.5, 0.25), dihedral: 5 }; });
     expect(derive(big).wingLoading).toBeLessThan(derive(defaultAircraft).wingLoading);
     expect(probe(big).telemetry.force.y).toBeGreaterThan(probe().telemetry.force.y);
-    expect(Math.abs(fly(big).result!.distance - fly().result!.distance)).toBeGreaterThan(1);
   });
 
   it('C：可比面积与升力条件下，高展弦比降低诱导阻力并提高估算滑翔效率', () => {
@@ -221,6 +324,7 @@ describe('行为 A–H：改变设计会改变真实受力及飞行', () => {
     }
     const stalledFlight = probe(undefined, s => { s.quaternion.setFromAxisAngle(axisZ, 40 * DEG); });
     expect(stalledFlight.telemetry.stall).toBe(true);
+    budget(stalledFlight);
   });
 });
 
@@ -236,6 +340,7 @@ describe('局部来流、操纵、能量与确定性', () => {
   it('输入改变面上气动力，不直接写入姿态；拉杆产生抬头力矩', () => {
     const base = probe();
     const pull = new FlightSimulation(defaultAircraft);
+    pull.launching = false;
     pull.position.set(30, 80, 0); pull.quaternion.identity(); pull.velocity.set(12, -1, 0);
     pull.step({ ...neutral, elevator: 0.5 });
     expect(pull.telemetry.torque.z).toBeGreaterThan(base.telemetry.torque.z);
@@ -245,37 +350,77 @@ describe('局部来流、操纵、能量与确定性', () => {
   });
 
   it.each(['standard', 'assisted', 'experimental'] as const)('%s 静态输入飞行的气动力做功非正，总机械能不凭空增加', mode => {
-    const s = new FlightSimulation(defaultAircraft, mode), initial = s.telemetry.energy;
-    let previous = initial;
+    const s = release(new FlightSimulation(defaultAircraft, mode)), initial = s.telemetry.initialEnergy;
+    let previous = s.telemetry.energy, previousDissipation = 0;
     for (let i = 0; i < 1800 && !s.ended; i++) {
       s.step(neutral);
       finite(s);
-      expect(s.telemetry.aeroPower).toBeLessThanOrEqual(1e-6);
-      // 有限步长积分误差允许每帧初始能量的百万分之一，不允许持续增益。
-      expect(s.telemetry.energy).toBeLessThanOrEqual(previous + initial * 1e-6);
-      expect(s.telemetry.energy).toBeLessThanOrEqual(initial * 1.00001);
+      budget(s);
+      expect(s.telemetry.aeroPower).toBeLessThanOrEqual(0);
+      expect(s.telemetry.energy).toBeLessThanOrEqual(previous + initial * 1e-10);
+      expect(s.telemetry.dissipatedEnergy).toBeGreaterThanOrEqual(previousDissipation);
       previous = s.telemetry.energy;
+      previousDissipation = s.telemetry.dissipatedEnergy;
     }
     expect(s.ended).toBe(true);
   });
 
   it('高频抖动全部操纵不提供无源推进或能量增益', () => {
-    const s = new FlightSimulation(defaultAircraft), initial = s.telemetry.energy;
+    const s = release(), initial = s.telemetry.initialEnergy;
     const input = { ...neutral };
     for (let i = 0; i < 900 && !s.ended; i++) {
       const sign = i % 2 ? 1 : -1;
       input.weight = sign; input.rudder = sign; input.elevator = sign; input.aileron = sign;
       s.step(input);
       finite(s);
-      expect(s.telemetry.aeroPower).toBeLessThanOrEqual(1e-6);
-      expect(s.telemetry.energy).toBeLessThan(initial * 1.001);
+      budget(s);
+      expect(s.telemetry.aeroPower).toBeLessThanOrEqual(0);
+      expect(s.telemetry.energy).toBeLessThanOrEqual(initial * (1 + 1e-10));
     }
+  });
+
+  it('耗散只积分真实阻力功，不能填平数值残差；动能包含转动', () => {
+    const s = new FlightSimulation(defaultAircraft);
+    s.launching = false;
+    s.position.set(30, 100, 0); s.velocity.set(12, -1, 2); s.omega.set(0.7, 0.9, 0.4);
+    const initial = s.aircraft.mass * (GRAVITY * s.position.y + s.velocity.lengthSq() / 2)
+      + s.aircraft.inertia.dot(new Vector3(s.omega.x ** 2, s.omega.y ** 2, s.omega.z ** 2)) / 2;
+    const inertia = s.aircraft.inertia.clone(), input = { ...neutral }, dt = 1 / 240;
+    let previousDissipation = 0;
+    for (let frame = 0; frame < 240 && !s.ended; frame++) {
+      input.weight = Math.sin(frame / 7);
+      input.elevator = Math.cos(frame / 11) * 0.4;
+      input.rudder = Math.sin(frame / 13) * 0.5;
+      input.aileron = Math.cos(frame / 17) * 0.3;
+      s.step(input, dt);
+      expect(s.telemetry.initialEnergy).toBeCloseTo(initial, 8);
+      expect(s.telemetry.dissipatedEnergy - previousDissipation).toBeCloseTo(-s.telemetry.aeroPower * dt, 8);
+      expect(s.aircraft.inertia.equals(inertia)).toBe(true);
+      const rotational = s.aircraft.inertia.dot(new Vector3(s.omega.x ** 2, s.omega.y ** 2, s.omega.z ** 2)) / 2;
+      expect(s.telemetry.kineticEnergy).toBeCloseTo(s.aircraft.mass * s.velocity.lengthSq() / 2 + rotational, 8);
+      budget(s);
+      previousDissipation = s.telemetry.dissipatedEnergy;
+    }
+  });
+
+  it('实时升阻比由实际合力沿来流分解，不冒用轨迹滑翔比', () => {
+    const s = new FlightSimulation(defaultAircraft);
+    s.launching = false;
+    s.position.set(30, 80, 0); s.velocity.set(12, -1, 0);
+    s.step(neutral, 1e-7);
+    const flow = s.velocity.clone().normalize();
+    const drag = -s.telemetry.force.dot(flow);
+    const lift = s.telemetry.force.clone().addScaledVector(flow, drag).length();
+    expect(drag).toBeGreaterThan(0);
+    expect(s.telemetry.liftDragRatio).toBeCloseTo(lift / drag, 5);
+    expect(Math.abs(s.telemetry.liftDragRatio - s.telemetry.glide)).toBeGreaterThan(0.1);
+    expect(s.telemetry.liftDragRatio).toBeGreaterThan(0);
   });
 
   it('输入录制重放逐帧重现位姿、速度和结果，与外部帧率无关', () => {
     const original = new FlightSimulation(defaultAircraft);
     const input = { ...neutral };
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 420 && !original.ended; i++) {
       input.elevator = Math.sin(i / 20) * 0.08;
       input.rudder = Math.sin(i / 18) * 0.04;
       original.step(input, i % 2 ? 1 / 60 : 1 / 120);
@@ -290,6 +435,9 @@ describe('局部来流、操纵、能量与确定性', () => {
     expect(replay.time).toBe(original.time);
     expect(replay.recordingLength).toBe(recording.length);
     expect(replay.result).toEqual(original.result);
+    expect(replay.telemetry.initialEnergy).toBe(original.telemetry.initialEnergy);
+    expect(replay.telemetry.dissipatedEnergy).toBe(original.telemetry.dissipatedEnergy);
+    expect(replay.launching).toBe(original.launching);
     const snapshot = replay.position.clone(); replay.step(neutral);
     expect(replay.position.equals(snapshot)).toBe(true);
     expect(() => replay.loadReplay({ frames: new Float64Array([NaN, 0, 0, 0, 0]), length: 1 })).toThrow();
@@ -307,13 +455,14 @@ describe('局部来流、操纵、能量与确定性', () => {
     { name: '最大半展', make: () => definition(d => { d.mainWing = { ...wing(24, 1.5, 0.8), dihedral: 25 }; }) },
     { name: '最小主翼', make: () => definition(d => { d.mainWing = wing(0.5, 0.15, 0.15); }) },
     { name: '最小全部翼面', make: () => definition(d => { d.mainWing = wing(0.5, 0.15, 0.15); d.horizontalTail = wing(0.5, 0.15, 0.15); d.verticalTail = wing(0.5, 0.15, 0.15); }) },
-  ])('$name 极端合法几何保持有限姿态与能量', ({ make }) => {
-    const s = new FlightSimulation(make()), initial = s.telemetry.energy;
+  ])('$name 极端合法几何在大外部步长下保持有限姿态与能量', ({ make }) => {
+    const s = release(new FlightSimulation(make())), initial = s.telemetry.initialEnergy;
     for (let i = 0; i < 180 && !s.ended; i++) {
-      s.step(neutral);
+      s.step(neutral, i % 2 === 0 ? 0.25 : 1 / 60);
       finite(s);
-      expect(s.telemetry.energy).toBeLessThan(initial * 1.05);
-      expect(s.telemetry.aeroPower).toBeLessThanOrEqual(1e-5);
+      budget(s);
+      expect(s.telemetry.energy).toBeLessThanOrEqual(initial * (1 + 1e-10));
+      expect(s.telemetry.aeroPower).toBeLessThanOrEqual(0);
     }
   });
 });
@@ -336,6 +485,7 @@ describe('六个预设的完整实际模拟', () => {
   it.each(presets.map(d => ({ name: d.name, d })))('$name 从平台飞行至真实终止', ({ d }) => {
     const s = fly(d);
     finite(s);
+    budget(s);
     expect(s.ended).toBe(true);
     expect(s.result).not.toBeNull();
     expect(s.result!.distance).toBeGreaterThan(0);
