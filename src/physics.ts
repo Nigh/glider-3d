@@ -73,6 +73,8 @@ export interface AerodynamicSurface {
   aspect: number;
   span: number;
   spanDirection: Vector3;
+  /** 四分之一弦后掠角，rad；前掠为负。 */
+  sweep: number;
   /** 世界作用点相对水面 Y=0 的净空；设计参考为 Infinity。 */
   clearance: number;
   groundEffect: number;
@@ -110,6 +112,11 @@ function quarterChord(w: Wing) {
   const fraction = (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
   return w.points[0].x + (w.points[1].x - w.points[0].x) * fraction
     + (p.root + (p.tip - p.root) * fraction) * 0.25;
+}
+
+function sweepAngle(w: Wing) {
+  const root = w.points[3].x - w.points[0].x, tip = w.points[2].x - w.points[1].x;
+  return Math.atan2(w.points[1].x - w.points[0].x + (tip - root) / 4, w.points[1].y);
 }
 
 function massLayout(d: AircraftDefinition): MassPart[] {
@@ -164,7 +171,8 @@ function properties(d: AircraftDefinition): AircraftProperties {
   const mainOrigin = wingOrigin(d, 'mainWing'), tailOrigin = wingOrigin(d, 'horizontalTail');
   const mainX = mainOrigin.x - mainQuarter * Math.cos(mainAngle);
   const tailX = tailOrigin.x - quarterChord(d.horizontalTail) * Math.cos(d.assembly.tailIncidence * DEG);
-  const tailSlopeRatio = (tail.aspect / (tail.aspect + 2)) / (p.aspect / (p.aspect + 2));
+  const mainSlope = p.aspect / (p.aspect + 2) * Math.cos(sweepAngle(d.mainWing));
+  const tailSlopeRatio = tail.aspect / (tail.aspect + 2) * Math.cos(sweepAngle(d.horizontalTail)) / mainSlope;
   const effectiveness = 0.65 * tail.area / p.area * tailSlopeRatio;
   const neutral = (mainX + effectiveness * tailX) / (1 + effectiveness);
   const cd0 = 0.018 + (0.28 + 0.018 * (tail.area + vertical.area)) / p.area;
@@ -257,6 +265,7 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
         normal: vertical ? new Vector3(0, 0, 1) : new Vector3(0, Math.cos(angle), -side * Math.sin(angle)),
         area: p.area / (vertical ? 1 : 2), aspect: p.aspect, span: p.span,
         spanDirection: vertical ? new Vector3(0, 1, 0) : new Vector3(0, Math.tan(angle), side),
+        sweep: sweepAngle(w),
         clearance: Infinity, groundEffect: 1, inducedDrag: 0,
         incidence: vertical ? 0 : (key === 'mainWing' ? d.assembly.mainIncidence + 2 : d.assembly.tailIncidence) * DEG,
         kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
@@ -274,17 +283,25 @@ function evaluateSurface(surface: AerodynamicSurface, input: Controls, mainDownw
   if (surface.kind === 'main') incidence -= surface.side * input.aileron * 8 * DEG;
   else if (surface.kind === 'tail') incidence -= mainDownwash * 0.78 / (Math.PI * mainAspect) + input.elevator * 12 * DEG;
   else incidence -= input.rudder * 15 * DEG;
-  surface.alpha = Math.atan2(-normalSpeed, velocity.x) + incidence;
+  // ponytail: 刚性半翼的后掠法向来流近似；翼尖失速和弹性发散需要展向面元及结构刚度数据。
+  // 侧滑改变两侧有效动压，后掠产生上反效应，前掠产生反向效应。
+  const crossflow = surface.kind === 'vertical' ? velocity.y : surface.side * velocity.z;
+  const chordSpeed = velocity.x * Math.cos(surface.sweep) + crossflow * Math.sin(surface.sweep);
+  surface.alpha = Math.atan2(-normalSpeed, chordSpeed) + incidence;
   polar(surface.alpha, surface.aspect, coefficient, surface.groundEffect);
-  const lift = 0.5 * AIR_DENSITY * (velocity.x ** 2 + normalSpeed ** 2) * surface.area * coefficient.cl;
-  surface.inducedDrag = 0.5 * AIR_DENSITY * speed * speed * surface.area * coefficient.inducedCd;
+  const pressureSpeedSq = chordSpeed ** 2 + normalSpeed ** 2;
+  const lift = 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * coefficient.cl;
+  surface.inducedDrag = 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * coefficient.inducedCd;
   liftDirection.copy(surface.normal);
   if (speed > 1e-9) liftDirection.addScaledVector(velocity, -normalSpeed / (speed * speed));
   if (liftDirection.lengthSq() > 1e-12) liftDirection.normalize();
   else liftDirection.set(0, 0, 0);
-  surface.drag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * speed * surface.area * coefficient.cd);
+  // 型阻仍使用全来流动压；诱导阻力与产生升力的有效动压一致。
+  const dragPressure = 0.018 * speed * speed + pressureSpeedSq * (coefficient.cd - 0.018);
+  surface.drag.copy(velocity).multiplyScalar(speed > 1e-9 ? -0.5 * AIR_DENSITY * surface.area * dragPressure / speed : 0);
   surface.force.copy(liftDirection).multiplyScalar(lift).add(surface.drag);
-  return coefficient.cl;
+  // 下洗需要全来流动压下的等效 CL，而非后掠法向截面的 CL。
+  return speed > 1e-9 ? coefficient.cl * pressureSpeedSq / (speed * speed) : 0;
 }
 
 /** 汇总复用已有翼面，不为每个时间步分配向量或数组。 */
@@ -374,6 +391,8 @@ function evaluateReference(aircraft: AircraftProperties) {
   const polarSample: Polar = { cl: 0, cd: 0, inducedCd: 0 };
   let maxCl = 0;
   for (let i = 0; i <= 360; i++) maxCl = Math.max(maxCl, polar(i * DEG / 4, aircraft.aspect, polarSample).cl);
+  const sweep = (aircraft.aerodynamics as AerodynamicSummary).surfaces[0].sweep;
+  maxCl *= Math.cos(sweep) ** 2;
   aircraft.stallSpeed = Math.sqrt(2 * aircraft.mass * GRAVITY / (AIR_DENSITY * aircraft.wingArea * maxCl));
   const summary = aircraft.aerodynamics as AerodynamicSummary;
   const alpha = 5 * DEG, beta = 3 * DEG, speed = 12;
