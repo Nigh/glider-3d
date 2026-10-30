@@ -68,14 +68,14 @@ describe('飞机本地保存', () => {
     const first = saveAircraft(input);
     expect(first).toMatchObject({ name: input.name, definition: input });
     expect(typeof first.updatedAt).toBe('number');
-    input.pilot.mass = 75;
-    expect(listAircraft()[0].definition.pilot.mass).toBe(65);
+    input.name = '未保存的改动';
+    expect(listAircraft()[0].definition.name).toBe(defaultAircraft.name);
 
     const changed = clone(first.definition);
-    changed.pilot.mass = 80;
+    changed.cockpit.position = 1.8;
     expect(saveAircraft(changed, first.id).id).toBe(first.id);
     expect(listAircraft()).toHaveLength(1);
-    expect(listAircraft()[0].definition.pilot.mass).toBe(80);
+    expect(listAircraft()[0].definition.cockpit.position).toBe(1.8);
     const renamed = renameAircraft(first.id, '新机名');
     expect(renamed.name).toBe('新机名');
     expect(renamed.definition.name).toBe('新机名');
@@ -83,7 +83,7 @@ describe('飞机本地保存', () => {
     const copied = duplicateAircraft(first.id);
     expect(copied.id).not.toBe(first.id);
     expect(copied.name).toBe('新机名 副本');
-    expect(copied.definition.pilot.mass).toBe(80);
+    expect(copied.definition.cockpit.position).toBe(1.8);
     expect(listAircraft()).toHaveLength(2);
     deleteAircraft(first.id);
     expect(listAircraft()).toEqual([copied]);
