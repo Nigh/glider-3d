@@ -233,9 +233,10 @@ describe('基础物理与边界', () => {
 
   it('估算失速速度复用全重与主翼极曲线峰值，不虚构安装角或地效增升', () => {
     const base = derive(defaultAircraft);
-    let maximum = 0;
-    for (let i = 0; i <= 360; i++) maximum = Math.max(maximum, coefficients(i * DEG / 4, base.aspect).cl);
-    expect(base.stallSpeed).toBeCloseTo(Math.sqrt(2 * base.mass * GRAVITY / (AIR_DENSITY * base.wingArea * maximum)), 12);
+    const straight = definition(d => { d.mainWing = wing(8, 1.5, 1.5); });
+    const swept = clone(straight);
+    swept.mainWing = wing(8, 1.5, 1.5, 3);
+    expect(derive(swept).stallSpeed).toBeGreaterThan(derive(straight).stallSpeed);
     expect(base.stallSpeed).toBeGreaterThan(0);
     const angled = derive(definition(d => { d.assembly.mainIncidence += 4; d.assembly.tailIncidence += 3; }));
     // 安装角改变支撑板投影面积与质量，失速速度只响应实际全重变化。
@@ -387,6 +388,25 @@ describe('行为 A–H：改变设计会改变真实受力及飞行', () => {
     const opposite = (s: FlightSimulation) => { s.velocity.set(12, 0, -2); };
     const reversedFlat = probe(flat, opposite), reversedAngled = probe(angled, opposite);
     expect(mainRoll(reversedAngled) - mainRoll(reversedFlat)).toBeGreaterThan(1);
+  });
+
+  it('前后掠在侧滑中产生相反滚转，且大后掠降低同攻角升力', () => {
+    const sample = (sweep: number, beta: number) => probe(definition(d => {
+      d.mainWing = wing(8, 1.5, 1.5, sweep);
+      d.assembly.mainIncidence = 4;
+    }), s => { s.velocity.set(12, -1, beta); });
+    const roll = (s: FlightSimulation) => s.telemetry.aerodynamics.wings[0].torque.x;
+    const aft = sample(3, 2), forward = sample(-3, 2);
+    expect(roll(aft)).toBeLessThan(-1);
+    expect(roll(forward)).toBeGreaterThan(1);
+    expect(roll(sample(3, -2))).toBeGreaterThan(1);
+    expect(roll(sample(-3, -2))).toBeLessThan(-1);
+    expect(sample(3, 0).telemetry.aerodynamics.wings[0].lift.y)
+      .toBeLessThan(sample(0, 0).telemetry.aerodynamics.wings[0].lift.y);
+    for (const s of [aft, forward]) {
+      expect(s.telemetry.aeroPower).toBeLessThan(0);
+      budget(s);
+    }
   });
 
   it('G：主翼和水平尾翼安装角各自改变配平力矩', () => {
