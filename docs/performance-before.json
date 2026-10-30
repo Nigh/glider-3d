@@ -1,0 +1,6374 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-10-30T09:19:18.803Z",
+  "url": "http://127.0.0.1:5173",
+  "configuration": {
+    "sampleMs": 4000,
+    "longMs": 12000,
+    "warmupMs": 500,
+    "resetMs": 6000,
+    "connection": "local-Chromium",
+    "headless": true
+  },
+  "environment": {
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.8078.4 Safari/537.36",
+    "platform": "Linux x86_64",
+    "hardwareConcurrency": 20,
+    "deviceMemoryGB": 32,
+    "viewport": {
+      "width": 1440,
+      "height": 1000,
+      "devicePixelRatio": 1
+    },
+    "screen": {
+      "width": 1440,
+      "height": 1000
+    },
+    "touchPoints": 0,
+    "visibility": "visible",
+    "webgl": {
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)",
+      "vendor": "WebKit",
+      "renderer": "WebKit WebGL",
+      "unmaskedVendor": "Google Inc. (Google)",
+      "unmaskedRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "gpuTimerQuerySupported": false
+    },
+    "browserVersion": "156.0.8078.4",
+    "browserGpu": {
+      "devices": [
+        {
+          "vendorId": 65535,
+          "deviceId": 65535,
+          "vendorString": "Google Inc. (Google)",
+          "deviceString": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+          "driverVendor": "SwANGLE",
+          "driverVersion": "5.0.0"
+        }
+      ],
+      "auxAttributes": {
+        "amdSwitchable": false,
+        "canSupportThreadedTextureMailbox": false,
+        "directRenderingVersion": "",
+        "displayType": "ANGLE_SWIFTSHADER",
+        "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_copy_texture_3d GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_image GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_object_flags GL_ANGLE_memory_size GL_ANGLE_multi_draw GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_read_only_depth_stencil_feedback_loops GL_ANGLE_relaxed_vertex_attribute_type GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_robust_fragment_shader_output GL_ANGLE_robust_resource_initialization GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_texture_usage GL_ANGLE_translated_shader_source GL_ANGLE_vulkan_image GL_ANGLE_yuv_internal_format GL_APPLE_clip_distance GL_ARM_rgba8 GL_ARM_shader_framebuffer_fetch GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_compressed_texture GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_EGL_image_array GL_EXT_EGL_image_external_wrap_modes GL_EXT_EGL_image_storage GL_EXT_base_instance GL_EXT_blend_minmax GL_EXT_buffer_storage GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_copy_image GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_separate_shader_objects GL_EXT_shader_framebuffer_fetch GL_EXT_shader_framebuffer_fetch_non_coherent GL_EXT_shader_non_constant_global_initializers GL_EXT_shader_texture_lod GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_lod_bias GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_debug GL_KHR_robust_buffer_access_behavior GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_polygon_mode GL_NV_read_depth GL_NV_read_depth_stencil GL_NV_read_stencil GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_compressed_paletted_texture GL_OES_copy_image GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_depth_texture_cube_map GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_shading GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object GL_OES_vertex_half_float GL_OES_vertex_type_10_10_10_2 GL_OVR_multiview GL_OVR_multiview2 GL_QCOM_texture_lod_bias ",
+        "glImplementationParts": "(gl=egl-angle,angle=swiftshader)",
+        "glRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+        "glResetNotificationStrategy": 33362,
+        "glVendor": "Google Inc. (Google)",
+        "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28967 git hash: dfeede58b618)",
+        "glWsExtensions": "EGL_EXT_create_context_robustness EGL_ANGLE_surface_orientation EGL_KHR_create_context EGL_KHR_image EGL_KHR_image_base EGL_EXT_image_gl_colorspace EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_IMG_context_priority EGL_KHR_create_context_no_error EGL_KHR_reusable_sync EGL_EXT_buffer_age EGL_ANGLE_create_surface_swap_interval EGL_ANGLE_vulkan_image EGL_KHR_partial_update EGL_ANGLE_global_fence_sync EGL_ANGLE_memory_usage_report ",
+        "glWsVendor": "Google Inc. (Google)",
+        "glWsVersion": "1.5 (ANGLE 2.1.28967 git hash: dfeede58b618)",
+        "hardwareSupportsVulkan": false,
+        "inProcessGpu": false,
+        "initializationTime": 0.009614,
+        "isAsan": false,
+        "isClangCoverage": false,
+        "jpegDecodeAcceleratorSupported": false,
+        "maxMsaaSamples": "4",
+        "optimus": false,
+        "passthroughCmdDecoder": true,
+        "pixelShaderVersion": "3.00",
+        "processCrashCount": 0,
+        "sandboxed": false,
+        "skiaBackendType": "None",
+        "subpixelFontRendering": true,
+        "targetCpuBits": 64,
+        "vertexShaderVersion": "3.00",
+        "visibilityCallbackCallCount": 0
+      },
+      "featureStatus": {
+        "2d_canvas": "unavailable_software",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "disabled_software",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "disabled_off",
+        "rasterization": "disabled_software",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "disabled_off",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "disabled_software",
+        "video_encode": "disabled_software",
+        "vulkan": "disabled_off",
+        "webgl": "unavailable_software",
+        "webgpu": "unavailable_software",
+        "webgpu_on_vk_via_gl_interop": "disabled_off",
+        "webnn": "unavailable_software"
+      },
+      "driverBugWorkarounds": [],
+      "videoDecoding": [],
+      "videoEncoding": []
+    },
+    "runner": {
+      "platform": "linux",
+      "release": "7.0.0-38-generic",
+      "arch": "x64",
+      "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+      "logicalCpus": 20,
+      "totalMemoryBytes": 65415798784
+    }
+  },
+  "methodology": {
+    "frameSource": "Independent requestAnimationFrame timestamps in the visible application page; not application FPS metrics",
+    "fps": "1000 / mean(frameIntervalsMs)",
+    "percentiles": "Nearest-rank percentiles of measured rAF frame intervals, milliseconds",
+    "renderMs": "CPU time around renderer.render submission, NOT GPU execution duration",
+    "gpuTimeMs": null,
+    "memory": "Application metrics.memory estimates GPU resources in MiB; performance.memory is optional JS heap in bytes, not total process or GPU memory",
+    "deviceValidation": "Local desktop or attached CDP browser only. Viewport dimensions do not establish real-phone hardware validation."
+  },
+  "scenarios": [
+    {
+      "id": "default-flight",
+      "name": "默认飞机飞行",
+      "requestedDurationMs": 4000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 7
+            },
+            {
+              "x": 1.05,
+              "y": 7
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "resets": 0
+      },
+      "frames": {
+        "count": 213,
+        "averageFps": 53.02992580789723,
+        "meanMs": 18.857276995305163,
+        "p95Ms": 33.30000000000018,
+        "p99Ms": 33.399999999999864,
+        "minMs": 16.5,
+        "maxMs": 66.69999999999982
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        16.799999999999955,
+        16.59999999999991,
+        16.600000000000136,
+        33.399999999999864,
+        16.600000000000136,
+        16.699999999999818,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.5,
+        16.700000000000273,
+        16.799999999999727,
+        16.600000000000364,
+        16.59999999999991,
+        16.799999999999727,
+        16.5,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        33.29999999999973,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000273,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        33.29999999999973,
+        16.600000000000364,
+        16.799999999999727,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000728,
+        33.19999999999982,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.699999999999818,
+        16.600000000000364,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.699999999999818,
+        16.699999999999818,
+        33.20000000000073,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        33.399999999999636,
+        16.600000000000364,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        66.69999999999982,
+        33.30000000000018
+      ],
+      "samples": [
+        {
+          "elapsedMs": -11.999999976158051,
+          "state": "flight",
+          "metrics": {
+            "fps": 36.52253279869305,
+            "mean": 27.380357367651804,
+            "p95": 66.69999694824219,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 80,
+            "triangles": 4549,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 238.10000002384186,
+          "state": "flight",
+          "metrics": {
+            "fps": 36.52253279869305,
+            "mean": 27.380357367651804,
+            "p95": 66.69999694824219,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 79,
+            "triangles": 4547,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 504.70000002384177,
+          "state": "flight",
+          "metrics": {
+            "fps": 40.818333335034254,
+            "mean": 24.498795474868224,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 76,
+            "triangles": 4531,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 754.7000000238418,
+          "state": "flight",
+          "metrics": {
+            "fps": 40.818333335034254,
+            "mean": 24.498795474868224,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 73,
+            "triangles": 4515,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1004.7000000238418,
+          "state": "flight",
+          "metrics": {
+            "fps": 44.707634931406595,
+            "mean": 22.367544190925464,
+            "p95": 50,
+            "p99": 83.30000305175781,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 72,
+            "triangles": 4503,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1254.7000000238418,
+          "state": "flight",
+          "metrics": {
+            "fps": 44.707634931406595,
+            "mean": 22.367544190925464,
+            "p95": 50,
+            "p99": 83.30000305175781,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 70,
+            "triangles": 4481,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1521.3000000238417,
+          "state": "flight",
+          "metrics": {
+            "fps": 46.22950741614876,
+            "mean": 21.63120603899584,
+            "p95": 33.400001525878906,
+            "p99": 83.30000305175781,
+            "renderMs": 0.5999999046325684,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 70,
+            "triangles": 4481,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1771.3000000238417,
+          "state": "flight",
+          "metrics": {
+            "fps": 46.22950741614876,
+            "mean": 21.63120603899584,
+            "p95": 33.400001525878906,
+            "p99": 83.30000305175781,
+            "renderMs": 0.40000009536743164,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.09999990463256836
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2021.3000000238417,
+          "state": "flight",
+          "metrics": {
+            "fps": 47.10368331951001,
+            "mean": 21.229762293043592,
+            "p95": 33.400001525878906,
+            "p99": 83.30000305175781,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2288.0000000238415,
+          "state": "flight",
+          "metrics": {
+            "fps": 47.10368331951001,
+            "mean": 21.229762293043592,
+            "p95": 33.400001525878906,
+            "p99": 83.30000305175781,
+            "renderMs": 0.5999999046325684,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2571.3000000238417,
+          "state": "flight",
+          "metrics": {
+            "fps": 50.945317580185815,
+            "mean": 19.628889316982693,
+            "p95": 33.29999923706055,
+            "p99": 50,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2821.3000000238417,
+          "state": "flight",
+          "metrics": {
+            "fps": 50.945317580185815,
+            "mean": 19.628889316982693,
+            "p95": 33.29999923706055,
+            "p99": 50,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3104.600000023842,
+          "state": "flight",
+          "metrics": {
+            "fps": 54.002158683474484,
+            "mean": 18.51777825885349,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3354.600000023842,
+          "state": "flight",
+          "metrics": {
+            "fps": 54.002158683474484,
+            "mean": 18.51777825885349,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3604.600000023842,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.73294582034892,
+            "mean": 18.6105560514662,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.30000007152557373,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.09999990463256836
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3871.200000023842,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.73294582034892,
+            "mean": 18.6105560514662,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 68,
+            "triangles": 3509,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4020.2000000476837,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.6839534206607,
+            "mean": 18.981111611260307,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.20000004768371582,
+            "geometryMs": 2.100000023841858,
+            "drawCalls": 66,
+            "triangles": 3017,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 4020.2000000476837,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    },
+    {
+      "id": "maximum-span-flight",
+      "name": "最大翼展 24 m 飞行",
+      "requestedDurationMs": 4000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 12
+            },
+            {
+              "x": 1.05,
+              "y": 12
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "resets": 0
+      },
+      "frames": {
+        "count": 235,
+        "averageFps": 58.508651811278476,
+        "meanMs": 17.091489361702127,
+        "p95Ms": 16.800000000000182,
+        "p99Ms": 33.29999999999973,
+        "minMs": 16.5,
+        "maxMs": 33.399999999999636
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        16.699999999999818,
+        16.700000000000273,
+        33.29999999999973,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        33.29999999999973,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.59999999999991,
+        16.800000000000182,
+        16.699999999999818,
+        16.59999999999991,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.700000000000273,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        16.699999999999818,
+        16.599999999999454,
+        16.600000000000364,
+        16.800000000000182,
+        16.599999999999454,
+        16.600000000000364,
+        16.800000000000182,
+        16.599999999999454,
+        16.600000000000364,
+        16.800000000000182,
+        16.599999999999454,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.800000000000182,
+        16.599999999999454,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.800000000000182,
+        16.5,
+        33.399999999999636,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        33.30000000000018,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        33.19999999999982,
+        16.800000000000182,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        16.599999999999454,
+        16.700000000000728,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        33.29999999999927
+      ],
+      "samples": [
+        {
+          "elapsedMs": -2.1999999046324774,
+          "state": "flight",
+          "metrics": {
+            "fps": 35.924481859118806,
+            "mean": 27.836170440024517,
+            "p95": 66.69999694824219,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1,
+            "drawCalls": 81,
+            "triangles": 4551,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 247.80000009536752,
+          "state": "flight",
+          "metrics": {
+            "fps": 35.924481859118806,
+            "mean": 27.836170440024517,
+            "p95": 66.69999694824219,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 80,
+            "triangles": 4549,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 497.8000000953675,
+          "state": "flight",
+          "metrics": {
+            "fps": 38.937826705434894,
+            "mean": 25.68196750078045,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 78,
+            "triangles": 4545,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 747.9000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 38.937826705434894,
+            "mean": 25.68196750078045,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 75,
+            "triangles": 4519,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 997.9000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 41.836397086141666,
+            "mean": 23.90263191022371,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 72,
+            "triangles": 4503,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1264.4000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 41.836397086141666,
+            "mean": 23.90263191022371,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 72,
+            "triangles": 4503,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1514.5000000953678,
+          "state": "flight",
+          "metrics": {
+            "fps": 45.76309898603122,
+            "mean": 21.851667001512315,
+            "p95": 33.400001525878906,
+            "p99": 66.69999694824219,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 72,
+            "triangles": 4503,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1781.1000000953672,
+          "state": "flight",
+          "metrics": {
+            "fps": 45.76309898603122,
+            "mean": 21.851667001512315,
+            "p95": 33.400001525878906,
+            "p99": 66.69999694824219,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 71,
+            "triangles": 4491,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2031.1000000953672,
+          "state": "flight",
+          "metrics": {
+            "fps": 50.70565267780739,
+            "mean": 19.721667056613498,
+            "p95": 33.29999923706055,
+            "p99": 66.69999694824219,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1,
+            "drawCalls": 71,
+            "triangles": 4491,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2314.4000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 50.70565267780739,
+            "mean": 19.721667056613498,
+            "p95": 33.29999923706055,
+            "p99": 66.69999694824219,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2564.4000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.84330045090519,
+            "mean": 17.592222690582275,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2814.4000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.84330045090519,
+            "mean": 17.592222690582275,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3064.4000000953674,
+          "state": "flight",
+          "metrics": {
+            "fps": 58.69692643440448,
+            "mean": 17.036667177412244,
+            "p95": 16.799999237060547,
+            "p99": 33.29999923706055,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3331.000000095368,
+          "state": "flight",
+          "metrics": {
+            "fps": 58.69692643440448,
+            "mean": 17.036667177412244,
+            "p95": 16.799999237060547,
+            "p99": 33.29999923706055,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3581.000000095368,
+          "state": "flight",
+          "metrics": {
+            "fps": 59.01832666863045,
+            "mean": 16.943889405992294,
+            "p95": 16.799999237060547,
+            "p99": 33.29999923706055,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3831.1000000953672,
+          "state": "flight",
+          "metrics": {
+            "fps": 59.01832666863045,
+            "mean": 16.943889405992294,
+            "p95": 16.799999237060547,
+            "p99": 33.29999923706055,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4035,
+          "state": "flight",
+          "metrics": {
+            "fps": 58.698840575888035,
+            "mean": 17.03611161973741,
+            "p95": 16.799999237060547,
+            "p99": 33.29999923706055,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 70,
+            "triangles": 4479,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 4035.100000023842,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    },
+    {
+      "id": "continuous-orbit",
+      "name": "三维相机连续旋转",
+      "requestedDurationMs": 4000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 7
+            },
+            {
+              "x": 1.05,
+              "y": 7
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "pointerMoves": 53
+      },
+      "frames": {
+        "count": 160,
+        "averageFps": 40.002000100005006,
+        "meanMs": 24.998749999999998,
+        "p95Ms": 33.400000000000546,
+        "p99Ms": 50,
+        "minMs": 16.599999999999454,
+        "maxMs": 50.09999999999991
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        33.30000000000018,
+        16.59999999999991,
+        33.40000000000009,
+        33.299999999999955,
+        16.700000000000045,
+        33.299999999999955,
+        16.700000000000045,
+        33.299999999999955,
+        16.700000000000045,
+        33.399999999999864,
+        33.200000000000045,
+        16.700000000000045,
+        50,
+        33.299999999999955,
+        33.299999999999955,
+        16.799999999999955,
+        33.20000000000027,
+        33.399999999999636,
+        16.700000000000273,
+        33.29999999999973,
+        16.600000000000364,
+        33.399999999999636,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.30000000000018,
+        33.399999999999636,
+        16.600000000000364,
+        33.399999999999636,
+        16.700000000000273,
+        33.29999999999973,
+        16.600000000000364,
+        33.29999999999973,
+        16.800000000000182,
+        16.59999999999991,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        50,
+        16.59999999999991,
+        50.09999999999991,
+        16.600000000000364,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        33.40000000000009,
+        16.59999999999991,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        33.30000000000018,
+        16.59999999999991,
+        16.799999999999727,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.59999999999991,
+        33.40000000000009,
+        16.699999999999818,
+        16.600000000000364,
+        33.29999999999973,
+        16.700000000000273,
+        33.399999999999636,
+        16.600000000000364,
+        16.59999999999991,
+        33.40000000000009,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.29999999999973,
+        16.700000000000273,
+        50,
+        33.29999999999973,
+        16.700000000000273,
+        33.399999999999636,
+        33.30000000000018,
+        16.699999999999818,
+        33.19999999999982,
+        33.400000000000546,
+        16.599999999999454,
+        33.400000000000546,
+        16.599999999999454,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.400000000000546,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        33.399999999999636,
+        16.600000000000364,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.400000000000546,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.600000000000364,
+        33.399999999999636,
+        16.700000000000728,
+        33.29999999999927,
+        33.400000000000546,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.800000000000182,
+        33.30000000000018,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.800000000000182,
+        16.599999999999454,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        33.30000000000018,
+        16.800000000000182,
+        16.599999999999454
+      ],
+      "samples": [
+        {
+          "elapsedMs": -12.199999952316375,
+          "state": "design",
+          "metrics": {
+            "fps": 29.064316405439037,
+            "mean": 34.40645174826345,
+            "p95": 100,
+            "p99": 100,
+            "renderMs": 0.6999999284744263,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 254.50000004768367,
+          "state": "design",
+          "metrics": {
+            "fps": 29.064316405439037,
+            "mean": 34.40645174826345,
+            "p95": 100,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 47,
+            "triangles": 4377,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 521.1000000476838,
+          "state": "design",
+          "metrics": {
+            "fps": 31.876992091603775,
+            "mean": 31.370588452208278,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 804.4000000476835,
+          "state": "design",
+          "metrics": {
+            "fps": 31.876992091603775,
+            "mean": 31.370588452208278,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 50,
+            "triangles": 4407,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1071.000000047684,
+          "state": "design",
+          "metrics": {
+            "fps": 33.0719075322436,
+            "mean": 30.237143080575127,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 50,
+            "triangles": 4407,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1337.7000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 33.0719075322436,
+            "mean": 30.237143080575127,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 49,
+            "triangles": 4397,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1587.7000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 34.55871162323777,
+            "mean": 28.936263912326687,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 47,
+            "triangles": 4377,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1837.7000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 34.55871162323777,
+            "mean": 28.936263912326687,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 46,
+            "triangles": 4367,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2087.7000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 36.51025434077209,
+            "mean": 27.38956542637037,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 45,
+            "triangles": 4357,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2371.000000047684,
+          "state": "design",
+          "metrics": {
+            "fps": 36.51025434077209,
+            "mean": 27.38956542637037,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 46,
+            "triangles": 4367,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2621.000000047684,
+          "state": "design",
+          "metrics": {
+            "fps": 36.71434023168533,
+            "mean": 27.23731364065142,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.40000009536743164,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 46,
+            "triangles": 4367,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2887.6000000476834,
+          "state": "design",
+          "metrics": {
+            "fps": 36.71434023168533,
+            "mean": 27.23731364065142,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 47,
+            "triangles": 4377,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3154.300000047684,
+          "state": "design",
+          "metrics": {
+            "fps": 36.86924639548927,
+            "mean": 27.12287604886722,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 50,
+            "triangles": 4407,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3437.6000000476834,
+          "state": "design",
+          "metrics": {
+            "fps": 36.941341969359534,
+            "mean": 27.069942419239553,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 50,
+            "triangles": 4407,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3687.6000000476834,
+          "state": "design",
+          "metrics": {
+            "fps": 36.941341969359534,
+            "mean": 27.069942419239553,
+            "p95": 33.400001525878906,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 49,
+            "triangles": 4397,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3954.2000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 39.56304779129741,
+            "mean": 25.276111316680907,
+            "p95": 33.400001525878906,
+            "p99": 50,
+            "renderMs": 0.5,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 47,
+            "triangles": 4377,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4013.2000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 39.56304779129741,
+            "mean": 25.276111316680907,
+            "p95": 33.400001525878906,
+            "p99": 50,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 47,
+            "triangles": 4377,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 4013.2999999523163,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    },
+    {
+      "id": "continuous-wing-drag",
+      "name": "主翼控制点连续拖动",
+      "requestedDurationMs": 4000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 7
+            },
+            {
+              "x": 1.05,
+              "y": 7
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "pointerMoves": 28
+      },
+      "frames": {
+        "count": 103,
+        "averageFps": 25.433354733567093,
+        "meanMs": 39.318446601941744,
+        "p95Ms": 83.30000000000018,
+        "p99Ms": 83.40000000000009,
+        "minMs": 16.599999999999454,
+        "maxMs": 83.40000000000055
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        33.200000000000045,
+        33.40000000000009,
+        16.700000000000045,
+        33.299999999999955,
+        16.59999999999991,
+        33.40000000000009,
+        16.700000000000045,
+        33.19999999999982,
+        16.800000000000182,
+        33.19999999999982,
+        16.800000000000182,
+        33.19999999999982,
+        33.5,
+        16.600000000000136,
+        33.299999999999955,
+        16.700000000000045,
+        33.299999999999955,
+        16.700000000000045,
+        33.299999999999955,
+        16.699999999999818,
+        83.30000000000018,
+        16.699999999999818,
+        33.40000000000009,
+        66.59999999999991,
+        33.30000000000018,
+        16.59999999999991,
+        83.40000000000009,
+        16.699999999999818,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        16.699999999999818,
+        66.60000000000036,
+        33.29999999999973,
+        33.40000000000009,
+        66.59999999999991,
+        33.40000000000009,
+        33.40000000000009,
+        66.59999999999991,
+        16.59999999999991,
+        33.40000000000009,
+        66.59999999999991,
+        33.30000000000018,
+        33.40000000000009,
+        83.39999999999964,
+        16.600000000000364,
+        33.399999999999636,
+        66.60000000000036,
+        16.59999999999991,
+        33.40000000000009,
+        83.39999999999964,
+        16.600000000000364,
+        33.29999999999973,
+        83.30000000000018,
+        16.699999999999818,
+        33.40000000000009,
+        66.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        66.59999999999991,
+        33.5,
+        33.30000000000018,
+        66.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        66.70000000000027,
+        33.29999999999973,
+        16.700000000000273,
+        83.30000000000018,
+        16.699999999999818,
+        33.19999999999982,
+        83.39999999999964,
+        33.30000000000018,
+        16.699999999999818,
+        83.40000000000055,
+        16.599999999999454,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        16.800000000000182,
+        83.30000000000018,
+        16.699999999999818,
+        33.19999999999982,
+        66.69999999999982,
+        33.400000000000546,
+        16.599999999999454,
+        66.70000000000073,
+        33.29999999999927,
+        33.30000000000018,
+        66.69999999999982,
+        33.400000000000546,
+        33.30000000000018,
+        66.59999999999945,
+        33.400000000000546,
+        16.599999999999454,
+        66.69999999999982,
+        33.30000000000018,
+        16.699999999999818,
+        83.30000000000018,
+        33.30000000000018,
+        33.399999999999636,
+        66.60000000000036,
+        33.399999999999636
+      ],
+      "samples": [
+        {
+          "elapsedMs": -16.599999928474517,
+          "state": "design",
+          "metrics": {
+            "fps": 30.490803214121975,
+            "mean": 32.79677458732359,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.5,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 249.90000007152548,
+          "state": "design",
+          "metrics": {
+            "fps": 30.490803214121975,
+            "mean": 32.79677458732359,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.5,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 500.0000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 32.96630796016881,
+            "mean": 30.334000434875488,
+            "p95": 50.099998474121094,
+            "p99": 100,
+            "renderMs": 3.100000023841858,
+            "geometryMs": 0.8999999761581421,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 833.3000000715256,
+          "state": "design",
+          "metrics": {
+            "fps": 31.680506464639635,
+            "mean": 31.565151937080152,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1099.9000000715255,
+          "state": "design",
+          "metrics": {
+            "fps": 31.680506464639635,
+            "mean": 31.565151937080152,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.6999999284744263,
+            "geometryMs": 0.7000000476837158,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1349.9000000715255,
+          "state": "design",
+          "metrics": {
+            "fps": 30.193937705400607,
+            "mean": 33.119231077340935,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.9000000953674316,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1600.0000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 30.193937705400607,
+            "mean": 33.119231077340935,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.5999999046325684,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1850.0000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 29.03225777871155,
+            "mean": 34.444444783528645,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2133.3000000715256,
+          "state": "design",
+          "metrics": {
+            "fps": 29.03225777871155,
+            "mean": 34.444444783528645,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 0.5999999046325684,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2383.3000000715256,
+          "state": "design",
+          "metrics": {
+            "fps": 28.348883672789693,
+            "mean": 35.27475760746928,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 0.7000000476837158,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2649.8000000715256,
+          "state": "design",
+          "metrics": {
+            "fps": 28.348883672789693,
+            "mean": 35.27475760746928,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 4.899999976158142,
+            "geometryMs": 0.7000000476837158,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2916.5000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 27.84111338964258,
+            "mean": 35.918103777129076,
+            "p95": 83.4000015258789,
+            "p99": 83.4000015258789,
+            "renderMs": 3.100000023841858,
+            "geometryMs": 0.9000000953674316,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3166.5000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 27.84111338964258,
+            "mean": 35.918103777129076,
+            "p95": 83.4000015258789,
+            "p99": 83.4000015258789,
+            "renderMs": 2.6999999284744263,
+            "geometryMs": 0.9000000953674316,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3416.5000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 27.429550864802064,
+            "mean": 36.45703150331974,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 3.200000047683716,
+            "geometryMs": 0.8000000715255737,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3666.5000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 27.429550864802064,
+            "mean": 36.45703150331974,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 3.100000023841858,
+            "geometryMs": 0.8000000715255737,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3933.200000071525,
+          "state": "design",
+          "metrics": {
+            "fps": 27.010340939015006,
+            "mean": 37.02285736628941,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 2.399999976158142,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4065.5,
+          "state": "design",
+          "metrics": {
+            "fps": 27.010340939015006,
+            "mean": 37.02285736628941,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 4065.5,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    },
+    {
+      "id": "flight-entry-exit",
+      "name": "反复进入和退出飞行",
+      "requestedDurationMs": 4000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 7
+            },
+            {
+              "x": 1.05,
+              "y": 7
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "cycles": 6
+      },
+      "frames": {
+        "count": 165,
+        "averageFps": 41.2510312757819,
+        "meanMs": 24.24181818181818,
+        "p95Ms": 33.400000000000546,
+        "p99Ms": 83.30000000000018,
+        "minMs": 16.599999999999454,
+        "maxMs": 83.30000000000018
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        16.700000000000045,
+        33.399999999999864,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.59999999999991,
+        33.40000000000009,
+        33.399999999999864,
+        16.600000000000136,
+        66.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        16.700000000000045,
+        16.59999999999991,
+        16.799999999999955,
+        16.600000000000136,
+        16.700000000000045,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.59999999999991,
+        16.600000000000364,
+        16.799999999999727,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        83.30000000000018,
+        16.59999999999991,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.799999999999727,
+        16.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        33.30000000000018,
+        33.30000000000018,
+        16.799999999999727,
+        16.59999999999991,
+        16.600000000000364,
+        16.699999999999818,
+        33.40000000000009,
+        16.699999999999818,
+        16.59999999999991,
+        16.600000000000364,
+        33.399999999999636,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        33.29999999999973,
+        16.700000000000273,
+        16.59999999999991,
+        66.69999999999982,
+        33.40000000000009,
+        16.59999999999991,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.40000000000009,
+        16.59999999999991,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        33.40000000000009,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        66.60000000000036,
+        33.29999999999973,
+        16.700000000000273,
+        33.399999999999636,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        33.29999999999973,
+        33.40000000000009,
+        16.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        16.700000000000273,
+        33.399999999999636,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        33.40000000000009,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        83.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.399999999999636,
+        16.699999999999818,
+        33.19999999999982,
+        16.700000000000728,
+        33.29999999999927,
+        16.800000000000182,
+        33.19999999999982,
+        16.700000000000728,
+        33.399999999999636,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        33.399999999999636,
+        16.600000000000364,
+        33.29999999999927,
+        16.700000000000728,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.599999999999454,
+        16.800000000000182,
+        83.30000000000018,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        33.400000000000546,
+        33.399999999999636,
+        16.600000000000364,
+        33.29999999999927,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        33.400000000000546,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        33.400000000000546,
+        16.599999999999454,
+        66.69999999999982
+      ],
+      "samples": [
+        {
+          "elapsedMs": -2.600000023841858,
+          "state": "design",
+          "metrics": {
+            "fps": 30.001874730908447,
+            "mean": 33.33125042915344,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 297.39999997615814,
+          "state": "flight",
+          "metrics": {
+            "fps": 30.001874730908447,
+            "mean": 33.33125042915344,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 547.499999976158,
+          "state": "flight",
+          "metrics": {
+            "fps": 31.27792629377723,
+            "mean": 31.971429007393972,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 797.499999976158,
+          "state": "design",
+          "metrics": {
+            "fps": 31.27792629377723,
+            "mean": 31.971429007393972,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1047.499999976158,
+          "state": "flight",
+          "metrics": {
+            "fps": 34.56055247523796,
+            "mean": 28.934722635481094,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.09999990463256836
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1314.099999976158,
+          "state": "design",
+          "metrics": {
+            "fps": 34.56055247523796,
+            "mean": 28.934722635481094,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1564.099999976158,
+          "state": "flight",
+          "metrics": {
+            "fps": 36.00046402772535,
+            "mean": 27.777419736308435,
+            "p95": 66.69999694824219,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 86,
+            "triangles": 4581,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1830.6999999761583,
+          "state": "flight",
+          "metrics": {
+            "fps": 36.00046402772535,
+            "mean": 27.777419736308435,
+            "p95": 66.69999694824219,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2080.6999999761583,
+          "state": "design",
+          "metrics": {
+            "fps": 37.74315245222538,
+            "mean": 26.494872182862373,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.40000009536743164,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2330.6999999761583,
+          "state": "flight",
+          "metrics": {
+            "fps": 37.74315245222538,
+            "mean": 26.494872182862373,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.5,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2580.6999999761583,
+          "state": "design",
+          "metrics": {
+            "fps": 37.7788265931525,
+            "mean": 26.469853359110214,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 3.299999952316284,
+            "geometryMs": 0.5999999046325684,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2847.299999976158,
+          "state": "design",
+          "metrics": {
+            "fps": 37.7788265931525,
+            "mean": 26.469853359110214,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.40000009536743164,
+            "geometryMs": 0.5999999046325684,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3097.399999976158,
+          "state": "flight",
+          "metrics": {
+            "fps": 38.049707913466854,
+            "mean": 26.28141068189572,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.5999999046325684,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3363.9999999761585,
+          "state": "design",
+          "metrics": {
+            "fps": 38.049707913466854,
+            "mean": 26.28141068189572,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3613.9999999761585,
+          "state": "flight",
+          "metrics": {
+            "fps": 38.340733673065095,
+            "mean": 26.081921345770024,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3880.599999976158,
+          "state": "flight",
+          "metrics": {
+            "fps": 38.340733673065095,
+            "mean": 26.081921345770024,
+            "p95": 66.5999984741211,
+            "p99": 83.30000305175781,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 85,
+            "triangles": 4579,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4031.2000000476837,
+          "state": "design",
+          "metrics": {
+            "fps": 41.2229466664512,
+            "mean": 24.25833378897773,
+            "p95": 33.400001525878906,
+            "p99": 83.30000305175781,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.5999999046325684,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 4031.3000000715256,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    },
+    {
+      "id": "geometry-create-dispose",
+      "name": "模型反复几何生成与释放",
+      "requestedDurationMs": 4000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 7
+            },
+            {
+              "x": 1.05,
+              "y": 7
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "rebuilds": 26
+      },
+      "frames": {
+        "count": 105,
+        "averageFps": 25.926566088051555,
+        "meanMs": 38.57047619047619,
+        "p95Ms": 83.30000000000018,
+        "p99Ms": 83.40000000000055,
+        "minMs": 16.599999999999454,
+        "maxMs": 83.40000000000055
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        33.299999999999955,
+        16.700000000000045,
+        33.299999999999955,
+        16.700000000000045,
+        83.29999999999995,
+        16.700000000000045,
+        33.399999999999864,
+        33.200000000000045,
+        83.40000000000009,
+        16.700000000000045,
+        33.299999999999955,
+        16.59999999999991,
+        66.70000000000005,
+        33.299999999999955,
+        33.399999999999864,
+        33.30000000000018,
+        66.69999999999982,
+        16.700000000000273,
+        33.29999999999973,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        66.59999999999991,
+        33.40000000000009,
+        33.30000000000018,
+        33.29999999999973,
+        66.70000000000027,
+        33.399999999999636,
+        16.600000000000364,
+        33.399999999999636,
+        83.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        33.29999999999973,
+        33.40000000000009,
+        66.59999999999991,
+        33.40000000000009,
+        16.699999999999818,
+        33.30000000000018,
+        66.69999999999982,
+        33.20000000000027,
+        16.699999999999818,
+        33.40000000000009,
+        83.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        83.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        33.29999999999973,
+        66.70000000000027,
+        33.29999999999973,
+        33.40000000000009,
+        33.19999999999982,
+        66.70000000000027,
+        33.40000000000009,
+        16.699999999999818,
+        16.59999999999991,
+        83.30000000000018,
+        16.699999999999818,
+        33.29999999999973,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        33.400000000000546,
+        16.599999999999454,
+        83.40000000000055,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        66.69999999999982,
+        33.30000000000018,
+        16.699999999999818,
+        33.400000000000546,
+        66.59999999999945,
+        33.400000000000546,
+        16.599999999999454,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        66.69999999999982,
+        33.30000000000018,
+        33.400000000000546,
+        33.19999999999982,
+        66.80000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        66.69999999999982,
+        33.30000000000018,
+        16.699999999999818,
+        33.30000000000018,
+        83.40000000000055,
+        16.599999999999454,
+        33.30000000000018,
+        16.699999999999818,
+        83.40000000000055
+      ],
+      "samples": [
+        {
+          "elapsedMs": -14.99999992847438,
+          "state": "design",
+          "metrics": {
+            "fps": 29.99999965667725,
+            "mean": 33.33333371480306,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.40000009536743164,
+            "geometryMs": 1.399999976158142,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 251.60000007152553,
+          "state": "design",
+          "metrics": {
+            "fps": 29.99999965667725,
+            "mean": 33.33333371480306,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 3.5,
+            "geometryMs": 1,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 501.6000000715255,
+          "state": "design",
+          "metrics": {
+            "fps": 30.00065179250633,
+            "mean": 33.332609135171644,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.7000000476837158,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 785.0000000715254,
+          "state": "design",
+          "metrics": {
+            "fps": 30.00065179250633,
+            "mean": 33.332609135171644,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 0.8999999761581421,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1101.6000000715258,
+          "state": "design",
+          "metrics": {
+            "fps": 29.517081054506583,
+            "mean": 33.87868868718382,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1351.6000000715258,
+          "state": "design",
+          "metrics": {
+            "fps": 29.517081054506583,
+            "mean": 33.87868868718382,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 3.299999952316284,
+            "geometryMs": 0.5,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1618.3000000715256,
+          "state": "design",
+          "metrics": {
+            "fps": 28.28097522488915,
+            "mean": 35.35945956771438,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1901.6000000715258,
+          "state": "design",
+          "metrics": {
+            "fps": 28.28097522488915,
+            "mean": 35.35945956771438,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2201.6000000715258,
+          "state": "design",
+          "metrics": {
+            "fps": 27.91503550981487,
+            "mean": 35.82298864167312,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.8000000715255737,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2518.2000000715257,
+          "state": "design",
+          "metrics": {
+            "fps": 27.6502791774097,
+            "mean": 36.16600011825562,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 0.7000000476837158,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2834.900000071526,
+          "state": "design",
+          "metrics": {
+            "fps": 27.6502791774097,
+            "mean": 36.16600011825562,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.6000000238418579,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3118.200000071525,
+          "state": "design",
+          "metrics": {
+            "fps": 27.361094368625253,
+            "mean": 36.54824571442186,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 0.7999999523162842,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3418.200000071525,
+          "state": "design",
+          "metrics": {
+            "fps": 27.361094368625253,
+            "mean": 36.54824571442186,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 0.8000000715255737,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3718.200000071525,
+          "state": "design",
+          "metrics": {
+            "fps": 27.33173894404554,
+            "mean": 36.58750005066395,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 1,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4034.900000071526,
+          "state": "design",
+          "metrics": {
+            "fps": 27.13444923192765,
+            "mean": 36.85352119929354,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5999999046325684,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4066.100000023842,
+          "state": "design",
+          "metrics": {
+            "fps": 27.13444923192765,
+            "mean": 36.85352119929354,
+            "p95": 83.30000305175781,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5999999046325684,
+            "geometryMs": 0.6999999284744263,
+            "drawCalls": 48,
+            "triangles": 4387,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 28,
+            "textures": 2,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 4066.2000000476837,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    },
+    {
+      "id": "long-flight-reset",
+      "name": "长时间飞行并重置",
+      "requestedDurationMs": 12000,
+      "aircraft": {
+        "name": "湖风 01",
+        "fuselage": {
+          "length": 6.5
+        },
+        "cockpit": {
+          "position": 1.2
+        },
+        "mainWing": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.25,
+              "y": 7
+            },
+            {
+              "x": 1.05,
+              "y": 7
+            },
+            {
+              "x": 1.5,
+              "y": 0
+            }
+          ],
+          "dihedral": 5
+        },
+        "horizontalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.15,
+              "y": 1.75
+            },
+            {
+              "x": 0.7000000000000001,
+              "y": 1.75
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "verticalTail": {
+          "points": [
+            {
+              "x": 0,
+              "y": 0
+            },
+            {
+              "x": 0.3,
+              "y": 1.5
+            },
+            {
+              "x": 0.7,
+              "y": 1.5
+            },
+            {
+              "x": 0.9,
+              "y": 0
+            }
+          ],
+          "dihedral": 0
+        },
+        "assembly": {
+          "mainWing": 0.9,
+          "mainWingHeight": 0.8,
+          "horizontalTail": -2.8,
+          "verticalTail": -2.9,
+          "mainIncidence": 4,
+          "tailIncidence": 0
+        },
+        "pilot": {
+          "mass": 65
+        },
+        "controls": {
+          "travel": 0.45
+        }
+      },
+      "operations": {
+        "resets": 1
+      },
+      "frames": {
+        "count": 664,
+        "averageFps": 55.335177839261306,
+        "meanMs": 18.071686746987954,
+        "p95Ms": 33.30000000000018,
+        "p99Ms": 33.400000000000546,
+        "minMs": 16.5,
+        "maxMs": 116.59999999999945
+      },
+      "heapBefore": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapAfter": {
+        "usedJSHeapSize": 21700000,
+        "totalJSHeapSize": 33100000,
+        "jsHeapSizeLimit": 3760000000
+      },
+      "heapUsedDeltaBytes": 0,
+      "intervalsMs": [
+        16.700000000000045,
+        16.700000000000045,
+        16.59999999999991,
+        16.700000000000045,
+        16.700000000000045,
+        16.59999999999991,
+        16.699999999999818,
+        33.40000000000009,
+        16.59999999999991,
+        16.600000000000364,
+        33.399999999999636,
+        16.700000000000273,
+        16.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.600000000000364,
+        16.799999999999727,
+        16.59999999999991,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        33.29999999999973,
+        16.700000000000273,
+        16.699999999999818,
+        16.59999999999991,
+        33.40000000000009,
+        16.59999999999991,
+        16.800000000000182,
+        16.59999999999991,
+        16.59999999999991,
+        33.40000000000009,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.799999999999727,
+        16.600000000000364,
+        16.59999999999991,
+        16.799999999999727,
+        16.600000000000364,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.59999999999991,
+        16.700000000000273,
+        16.59999999999991,
+        16.699999999999818,
+        16.700000000000273,
+        16.59999999999991,
+        16.799999999999727,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.600000000000364,
+        16.699999999999818,
+        16.800000000000182,
+        33.19999999999982,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        33.400000000000546,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        33.5,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.599999999999454,
+        33.400000000000546,
+        16.699999999999818,
+        33.30000000000018,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        33.400000000000546,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.700000000000728,
+        83.19999999999982,
+        16.800000000000182,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        33.30000000000018,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.700000000000728,
+        16.599999999999454,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.700000000000728,
+        33.19999999999982,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        33.30000000000018,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.599999999999454,
+        16.700000000000728,
+        16.699999999999818,
+        16.699999999999818,
+        16.600000000000364,
+        16.699999999999818,
+        16.599999999999454,
+        16.800000000000182,
+        16.600000000000364,
+        16.599999999999454,
+        16.800000000000182,
+        116.59999999999945,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        33.29999999999927,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.5,
+        16.799999999999272,
+        16.600000000000364,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        33.30000000000109,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.599999999998545,
+        16.80000000000109,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.599999999998545,
+        16.700000000000728,
+        33.29999999999927,
+        16.80000000000109,
+        16.600000000000364,
+        16.599999999998545,
+        16.700000000000728,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        33.29999999999927,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.599999999998545,
+        16.700000000000728,
+        16.700000000000728,
+        16.599999999998545,
+        16.700000000000728,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.599999999998545,
+        16.700000000000728,
+        16.700000000000728,
+        16.599999999998545,
+        16.700000000000728,
+        16.700000000000728,
+        16.599999999998545,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        33.400000000001455,
+        16.599999999998545,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        33.30000000000109,
+        16.799999999999272,
+        16.600000000000364,
+        16.600000000000364,
+        33.399999999999636,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.600000000000364,
+        33.399999999999636,
+        16.700000000000728,
+        16.599999999998545,
+        16.600000000000364,
+        16.80000000000109,
+        16.69999999999891,
+        16.600000000000364,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.80000000000109,
+        16.599999999998545,
+        33.400000000001455,
+        16.599999999998545,
+        16.700000000000728,
+        16.700000000000728,
+        16.599999999998545,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        33.30000000000109,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.700000000000728,
+        16.5,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        33.399999999999636,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        33.29999999999927,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.600000000000364,
+        33.399999999999636,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.799999999999272,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.700000000000728,
+        16.600000000000364,
+        16.69999999999891,
+        16.600000000000364,
+        16.700000000000728,
+        16.69999999999891,
+        16.700000000000728
+      ],
+      "samples": [
+        {
+          "elapsedMs": -12.299999952316284,
+          "state": "flight",
+          "metrics": {
+            "fps": 36.00303142654047,
+            "mean": 27.775438911036442,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 80,
+            "triangles": 4549,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 237.70000004768372,
+          "state": "flight",
+          "metrics": {
+            "fps": 36.00303142654047,
+            "mean": 27.775438911036442,
+            "p95": 83.30000305175781,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 79,
+            "triangles": 4547,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.19999992847442627
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 487.7000000476837,
+          "state": "flight",
+          "metrics": {
+            "fps": 40.16064191882532,
+            "mean": 24.90000040390912,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.6000000238418579,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 76,
+            "triangles": 4531,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 737.7000000476837,
+          "state": "flight",
+          "metrics": {
+            "fps": 40.16064191882532,
+            "mean": 24.90000040390912,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 73,
+            "triangles": 4515,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 987.7000000476837,
+          "state": "flight",
+          "metrics": {
+            "fps": 40.16064191882532,
+            "mean": 24.90000040390912,
+            "p95": 50,
+            "p99": 100,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 72,
+            "triangles": 4503,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1237.7000000476837,
+          "state": "flight",
+          "metrics": {
+            "fps": 43.67475513051491,
+            "mean": 22.89652219025985,
+            "p95": 33.400001525878906,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 70,
+            "triangles": 4481,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1487.7000000476837,
+          "state": "flight",
+          "metrics": {
+            "fps": 43.67475513051491,
+            "mean": 22.89652219025985,
+            "p95": 33.400001525878906,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 70,
+            "triangles": 4481,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 1754.4000000476835,
+          "state": "flight",
+          "metrics": {
+            "fps": 45.71573604418697,
+            "mean": 21.874306016498142,
+            "p95": 33.400001525878906,
+            "p99": 83.4000015258789,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2021.000000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 45.71573604418697,
+            "mean": 21.874306016498142,
+            "p95": 33.400001525878906,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2287.6000000476834,
+          "state": "flight",
+          "metrics": {
+            "fps": 46.91250173174704,
+            "mean": 21.31627952220828,
+            "p95": 33.400001525878906,
+            "p99": 83.4000015258789,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2554.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.1754241111822,
+            "mean": 19.166111575232613,
+            "p95": 33.400001525878906,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 2804.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.1754241111822,
+            "mean": 19.166111575232613,
+            "p95": 33.400001525878906,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3054.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 54.002158683474484,
+            "mean": 18.51777825885349,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.09999990463256836
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3304.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 54.002158683474484,
+            "mean": 18.51777825885349,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3554.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 54.002158683474484,
+            "mean": 18.51777825885349,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.5,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 3820.9000000476835,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.73294588153729,
+            "mean": 18.610556030273436,
+            "p95": 33.400001525878906,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 69,
+            "triangles": 4469,
+            "memory": 1.212076187133789,
+            "quality": "Medium",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4070.9000000476835,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.73294588153729,
+            "mean": 18.610556030273436,
+            "p95": 33.400001525878906,
+            "p99": 33.400001525878906,
+            "renderMs": 0.19999992847442627,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 66,
+            "triangles": 3017,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4320.9000000476835,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.942732368312484,
+            "mean": 18.888333776262073,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 65,
+            "triangles": 3015,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4570.9000000476835,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.942732368312484,
+            "mean": 18.888333776262073,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 65,
+            "triangles": 3015,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 4820.9000000476835,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.429219317245156,
+            "mean": 19.0733337826199,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 64,
+            "triangles": 3003,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 5087.500000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.429219317245156,
+            "mean": 19.0733337826199,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.30000007152557373,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 64,
+            "triangles": 3003,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 5337.500000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.68395350889461,
+            "mean": 18.981111579471165,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.19999992847442627,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 64,
+            "triangles": 3003,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 5587.500000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 52.68395350889461,
+            "mean": 18.981111579471165,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.30000007152557373,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 64,
+            "triangles": 3003,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 5837.500000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.20406576359311,
+            "mean": 18.79555604722765,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 64,
+            "triangles": 3003,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 6087.500000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.20406576359311,
+            "mean": 18.79555604722765,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.9000000953674316,
+            "drawCalls": 64,
+            "triangles": 3003,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 13,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 6354.200000047684,
+          "state": "design",
+          "metrics": {
+            "fps": 54.54875896704114,
+            "mean": 18.332222747802735,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 46,
+            "triangles": 2947,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 6620.800000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 54.54875896704114,
+            "mean": 18.332222747802735,
+            "p95": 33.29999923706055,
+            "p99": 33.5,
+            "renderMs": 0.20000004768371582,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 83,
+            "triangles": 3139,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 6870.800000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.464815714010605,
+            "mean": 18.703889401753745,
+            "p95": 33.29999923706055,
+            "p99": 83.19999694824219,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 82,
+            "triangles": 3137,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 7120.800000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 53.464815714010605,
+            "mean": 18.703889401753745,
+            "p95": 33.29999923706055,
+            "p99": 83.19999694824219,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 79,
+            "triangles": 3111,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 7387.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 55.103163755566214,
+            "mean": 18.14777830971612,
+            "p95": 16.799999237060547,
+            "p99": 83.19999694824219,
+            "renderMs": 0.40000009536743164,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 77,
+            "triangles": 3107,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 7637.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 55.103163755566214,
+            "mean": 18.14777830971612,
+            "p95": 16.799999237060547,
+            "p99": 83.19999694824219,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 75,
+            "triangles": 3093,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 7887.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.545092964809406,
+            "mean": 17.685000546773274,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 71,
+            "triangles": 3075,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 8137.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.545092964809406,
+            "mean": 17.685000546773274,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 70,
+            "triangles": 3063,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 8387.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 57.14285541283576,
+            "mean": 17.500000529819065,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 70,
+            "triangles": 3063,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 8637.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 57.14285541283576,
+            "mean": 17.500000529819065,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.19999992847442627,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 68,
+            "triangles": 3041,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 8887.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.54509306645034,
+            "mean": 17.685000514984132,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.20000004768371582,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 9137.400000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.54509306645034,
+            "mean": 17.685000514984132,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.30000007152557373,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 9404.100000047683,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.84330024547352,
+            "mean": 17.592222754160563,
+            "p95": 16.799999237060547,
+            "p99": 33.29999923706055,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 9670.700000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 57.75524425645897,
+            "mean": 17.31444499757555,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 9920.700000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 57.75524425645897,
+            "mean": 17.31444499757555,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 10170.700000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 57.14466953619436,
+            "mean": 17.499444972144232,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 10437.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 57.14466953619436,
+            "mean": 17.499444972144232,
+            "p95": 16.799999237060547,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 10687.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.84330021123491,
+            "mean": 17.592222764756944,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 10937.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.84330021123491,
+            "mean": 17.592222764756944,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.3999999761581421,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 67,
+            "triangles": 3029,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 11187.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.25175613059453,
+            "mean": 17.777222771114772,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.20000004768371582,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 66,
+            "triangles": 3017,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 11437.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.25175613059453,
+            "mean": 17.777222771114772,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 66,
+            "triangles": 3017,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 11687.300000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.25175616412423,
+            "mean": 17.77722276051839,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 65,
+            "triangles": 3015,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 11953.900000047684,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.25175616412423,
+            "mean": 17.77722276051839,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 65,
+            "triangles": 3015,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        },
+        {
+          "elapsedMs": 12007.899999976158,
+          "state": "flight",
+          "metrics": {
+            "fps": 56.25175616412423,
+            "mean": 17.77722276051839,
+            "p95": 33.29999923706055,
+            "p99": 33.400001525878906,
+            "renderMs": 0.2999999523162842,
+            "geometryMs": 1.100000023841858,
+            "drawCalls": 65,
+            "triangles": 3015,
+            "memory": 1.212076187133789,
+            "quality": "Low",
+            "geometries": 29,
+            "textures": 16,
+            "programs": 15,
+            "physicsMs": 0.10000002384185791
+          },
+          "jsHeap": {
+            "usedJSHeapSize": 21700000,
+            "totalJSHeapSize": 33100000,
+            "jsHeapSizeLimit": 3760000000
+          }
+        }
+      ],
+      "elapsedMs": 12007.899999976158,
+      "hiddenFrames": 0,
+      "visibilityAtEnd": "visible",
+      "errors": []
+    }
+  ],
+  "pageErrors": []
+}

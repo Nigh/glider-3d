@@ -1,0 +1,431 @@
+import { Quaternion, Vector3 } from 'three';
+import { clamp, DEG, planform, validateAircraft, type AircraftDefinition, type Controls, type FlightMode, type Wing } from './model';
+
+export const GRAVITY = 9.81;
+export const AIR_DENSITY = 1.225;
+const MAX_FRAMES = 36_000;
+const FRAME_WIDTH = 5;
+const ZERO_CONTROLS: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+
+export interface AircraftProperties {
+  mass: number;
+  cg: Vector3;
+  inertia: Vector3;
+  wingArea: number;
+  span: number;
+  aspect: number;
+  wingLoading: number;
+  glideRatio: number;
+  staticMargin: number;
+}
+interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; moving?: boolean }
+interface Polar { cl: number; cd: number }
+export interface AerodynamicSurface {
+  name: string;
+  point: Vector3;
+  force: Vector3;
+  drag: Vector3;
+  area: number;
+  aspect: number;
+  normal: Vector3;
+  incidence: number;
+  kind: 'main' | 'tail' | 'vertical';
+  side: number;
+  alpha: number;
+}
+export interface FlightResult {
+  distance: number;
+  time: number;
+  averageSpeed: number;
+  maxSpeed: number;
+  minSpeed: number;
+  maxHeight: number;
+  landing: 'water' | 'boundary' | 'platform' | 'terrain';
+  hints: string[];
+}
+export interface FlightTelemetry {
+  speed: number; altitude: number; distance: number;
+  alpha: number; pitch: number; roll: number; sink: number; glide: number;
+  stall: boolean; physicsMs: number; cg: Vector3; mass: number;
+  force: Vector3; drag: Vector3; torque: Vector3;
+  aeroPower: number; energy: number; staticMargin: number;
+}
+export interface InputRecording { frames: Float64Array; length: number }
+
+function quarterChord(w: Wing) {
+  const p = planform(w);
+  const fraction = (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
+  return w.points[0].x + (w.points[1].x - w.points[0].x) * fraction
+    + (p.root + (p.tip - p.root) * fraction) * 0.25;
+}
+
+function massLayout(d: AircraftDefinition): MassPart[] {
+  const length = d.fuselage.length;
+  const fuselageMass = 22 + 1.1 * length;
+  const parts: MassPart[] = [
+    { mass: fuselageMass, x: -0.13 * length, y: 0, z: 0, ix: fuselageMass * 0.04, iy: fuselageMass * length * length / 12, iz: fuselageMass * length * length / 12 },
+    { mass: 4, x: d.cockpit.position, y: 0.12, z: 0, ix: 0.1, iy: 0.2, iz: 0.2 },
+    { mass: d.pilot.mass, x: d.cockpit.position, y: 0.15, z: 0, ix: d.pilot.mass * 0.08, iy: d.pilot.mass * 0.025, iz: d.pilot.mass * 0.08, moving: true },
+  ];
+  for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
+    const vertical = key === 'verticalTail';
+    const w = d[key], p = planform(w, !vertical);
+    const density = key === 'mainWing' ? 0.95 : 0.9;
+    const fraction = (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
+    const centerX = w.points[0].x + (w.points[1].x - w.points[0].x) * fraction
+      + (p.root + (p.tip - p.root) * fraction) / 2;
+    const halfSpan = vertical ? p.span : p.span / 2;
+    const center = halfSpan * fraction;
+    for (let side = -1; side <= 1; side += 2) {
+      if (vertical && side === -1) continue;
+      // 展长的立方惩罚近似梁的增强成本，避免等面积无限增展成为无代价最优解。
+      const reinforcement = key === 'mainWing' ? 0.0025 * p.span ** 3 : 0;
+      const mass = (p.area * density + reinforcement) / (vertical ? 1 : 2);
+      const y = vertical ? center : (key === 'mainWing' ? d.assembly.mainWingHeight : 0) + center * Math.tan(w.dihedral * DEG);
+      parts.push({ mass, x: d.assembly[key] - centerX, y, z: vertical ? 0 : side * center,
+        ix: mass * halfSpan * halfSpan / 12,
+        iy: mass * (p.chord * p.chord + (vertical ? 0 : halfSpan * halfSpan)) / 12,
+        iz: mass * (p.chord * p.chord + (vertical ? halfSpan * halfSpan : 0)) / 12 });
+    }
+  }
+  return parts;
+}
+
+function properties(d: AircraftDefinition): AircraftProperties {
+  const p = planform(d.mainWing);
+  const tail = planform(d.horizontalTail);
+  const vertical = planform(d.verticalTail, false);
+  const mainX = d.assembly.mainWing - quarterChord(d.mainWing);
+  const tailX = d.assembly.horizontalTail - quarterChord(d.horizontalTail);
+  const tailSlopeRatio = (tail.aspect / (tail.aspect + 2)) / (p.aspect / (p.aspect + 2));
+  const effectiveness = 0.65 * tail.area / p.area * tailSlopeRatio;
+  const neutral = (mainX + effectiveness * tailX) / (1 + effectiveness);
+  const cd0 = 0.018 + (0.28 + 0.018 * (tail.area + vertical.area)) / p.area;
+  return { mass: 0, cg: new Vector3(), inertia: new Vector3(), wingArea: p.area, span: p.span, aspect: p.aspect,
+    wingLoading: 0, glideRatio: 1 / (2 * Math.sqrt(cd0 / (Math.PI * p.aspect * 0.82))), staticMargin: neutral };
+}
+
+function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, out: AircraftProperties, neutral: number, chord: number) {
+  let mass = 0, x = 0, y = 0, z = 0;
+  for (const p of parts) {
+    const px = p.x + (p.moving ? weight * d.controls.travel : 0);
+    mass += p.mass; x += p.mass * px; y += p.mass * p.y; z += p.mass * p.z;
+  }
+  out.mass = mass;
+  out.cg.set(x / mass, y / mass, z / mass);
+  let ix = 0, iy = 0, iz = 0;
+  for (const p of parts) {
+    const dx = p.x + (p.moving ? weight * d.controls.travel : 0) - out.cg.x;
+    const dy = p.y - out.cg.y, dz = p.z - out.cg.z;
+    ix += p.ix + p.mass * (dy * dy + dz * dz);
+    iy += p.iy + p.mass * (dx * dx + dz * dz);
+    iz += p.iz + p.mass * (dx * dx + dy * dy);
+  }
+  out.inertia.set(ix, iy, iz);
+  out.wingLoading = mass / out.wingArea;
+  out.staticMargin = (out.cg.x - neutral) / chord;
+}
+
+export function derive(d: AircraftDefinition, weight = 0): AircraftProperties {
+  const out = properties(d), neutral = out.staticMargin;
+  updateMass(d, massLayout(d), clamp(weight, -1, 1), out, neutral, planform(d.mainWing).chord);
+  return out;
+}
+
+function polar(alpha: number, aspect: number, out: Polar): Polar {
+  alpha = Math.atan2(Math.sin(alpha), Math.cos(alpha));
+  const absolute = Math.abs(alpha);
+  const slope = 2 * Math.PI * aspect / (aspect + 2);
+  const blend = clamp((absolute - 15 * DEG) / (20 * DEG), 0, 1);
+  const separated = blend * blend * (3 - 2 * blend);
+  out.cl = (1 - separated) * slope * alpha + separated * 1.05 * Math.sin(2 * alpha);
+  const dragBlend = clamp((absolute - 12 * DEG) / (20 * DEG), 0, 1);
+  const dragSeparation = dragBlend * dragBlend * (3 - 2 * dragBlend);
+  out.cd = 0.018 + out.cl * out.cl / (Math.PI * Math.max(aspect, 0.1) * 0.82)
+    + 1.7 * Math.sin(alpha) ** 2 * dragSeparation + 0.3 * (1 - Math.cos(alpha)) ** 2;
+  return out;
+}
+
+/** 迎角为弧度；光滑失速混合保留失速前有限翼升力斜率。 */
+export function coefficients(alpha: number, aspect: number): Polar {
+  return polar(alpha, aspect, { cl: 0, cd: 0 });
+}
+
+function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
+  const surfaces: AerodynamicSurface[] = [];
+  for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
+    const vertical = key === 'verticalTail', w = d[key], p = planform(w, !vertical);
+    const center = (vertical ? p.span : p.span / 2) * (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
+    for (let side = -1; side <= 1; side += 2) {
+      if (vertical && side === -1) continue;
+      const angle = w.dihedral * DEG;
+      surfaces.push({ name: vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '水平尾翼'}${side < 0 ? '左' : '右'}`,
+        point: new Vector3(d.assembly[key] - quarterChord(w), vertical ? center : (key === 'mainWing' ? d.assembly.mainWingHeight : 0) + center * Math.tan(angle), vertical ? 0 : side * center),
+        normal: vertical ? new Vector3(0, 0, 1) : new Vector3(0, Math.cos(angle), -side * Math.sin(angle)),
+        area: p.area / (vertical ? 1 : 2), aspect: p.aspect,
+        incidence: vertical ? 0 : (key === 'mainWing' ? d.assembly.mainIncidence + 2 : d.assembly.tailIncidence) * DEG,
+        kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
+        force: new Vector3(), drag: new Vector3() });
+    }
+  }
+  return surfaces;
+}
+
+export class FlightSimulation {
+  readonly definition: AircraftDefinition;
+  readonly mode: FlightMode;
+  readonly position = new Vector3();
+  readonly velocity = new Vector3();
+  readonly quaternion = new Quaternion();
+  /** 角速度使用机身坐标，单位 rad/s。 */
+  readonly omega = new Vector3();
+  readonly surfaces: AerodynamicSurface[];
+  readonly aircraft: AircraftProperties;
+  readonly telemetry: FlightTelemetry;
+  readonly recording = new Float64Array(MAX_FRAMES * FRAME_WIDTH);
+  recordingLength = 0;
+  time = 0;
+  ended = false;
+  result: FlightResult | null = null;
+  replayFinished = false;
+  private replay: InputRecording | null = null;
+  private replayIndex = 0;
+  private readonly parts: MassPart[];
+  private readonly neutral: number;
+  private readonly chord: number;
+  private readonly bodyVelocity = new Vector3();
+  private readonly contacts: Vector3[];
+  private readonly inverse = new Quaternion();
+  private readonly rotation = new Quaternion();
+  private readonly arm = new Vector3();
+  private readonly localVelocity = new Vector3();
+  private readonly liftDirection = new Vector3();
+  private readonly localForce = new Vector3();
+  private readonly localDrag = new Vector3();
+  private readonly torque = new Vector3();
+  private readonly cross = new Vector3();
+  private readonly previousVelocity = new Vector3();
+  private readonly previousOmega = new Vector3();
+  private readonly angularAcceleration = new Vector3();
+  private readonly polar: Polar = { cl: 0, cd: 0 };
+  private maxSpeed = 10;
+  private minSpeed = 10;
+  private maxHeight = 10;
+  private travelled = 0;
+  private stallTime = 0;
+  private weight = 0;
+  private readonly effective: Controls = { ...ZERO_CONTROLS };
+
+  constructor(d: AircraftDefinition, mode: FlightMode = 'standard') {
+    this.definition = validateAircraft(d);
+    this.mode = mode;
+    this.parts = massLayout(this.definition);
+    this.aircraft = properties(this.definition);
+    this.neutral = this.aircraft.staticMargin;
+    this.chord = planform(this.definition.mainWing).chord;
+    this.surfaces = makeSurfaces(this.definition);
+    this.contacts = [new Vector3(d.fuselage.length * 0.45, -0.25, 0), new Vector3(-d.fuselage.length * 0.55, -0.25, 0), new Vector3(d.cockpit.position, -0.4, 0)];
+    for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
+      const w = d[key];
+      for (let side = -1; side <= 1; side += 2) {
+        if (key === 'verticalTail' && side < 0) continue;
+        for (const p of w.points) this.contacts.push(new Vector3(d.assembly[key] - p.x,
+          key === 'verticalTail' ? p.y : (key === 'mainWing' ? d.assembly.mainWingHeight : 0) + p.y * Math.tan(w.dihedral * DEG),
+          key === 'verticalTail' ? 0 : side * p.y));
+      }
+    }
+    this.telemetry = { speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
+      stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(), aeroPower: 0, energy: 0, staticMargin: 0 };
+    this.reset();
+  }
+
+  reset() {
+    this.position.set(0, 10, 0);
+    this.velocity.set(10, 0, 0);
+    this.quaternion.set(0, 0, Math.sin(2.5 * DEG), Math.cos(2.5 * DEG));
+    this.omega.set(0, 0, 0);
+    this.time = 0; this.ended = false; this.result = null;
+    this.recordingLength = 0; this.replayIndex = 0; this.replayFinished = false; this.replay = null;
+    this.maxSpeed = 10; this.minSpeed = 10; this.maxHeight = 10;
+    this.travelled = 0; this.stallTime = 0; this.weight = 0;
+    Object.assign(this.effective, ZERO_CONTROLS);
+    updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
+    for (const surface of this.surfaces) { surface.force.set(0, 0, 0); surface.drag.set(0, 0, 0); surface.alpha = 0; }
+    this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0); this.telemetry.torque.set(0, 0, 0);
+    this.telemetry.physicsMs = 0; this.telemetry.aeroPower = 0;
+    this.updateTelemetry();
+  }
+
+  getRecording(): InputRecording {
+    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength };
+  }
+
+  loadReplay(recording: InputRecording) {
+    if (!Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length < recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
+    for (let i = 0; i < recording.length * FRAME_WIDTH; i++) {
+      if (!Number.isFinite(recording.frames[i]) || (i % FRAME_WIDTH === 0 && (recording.frames[i] <= 0 || recording.frames[i] > 0.25))) throw new Error('飞行记录包含无效输入');
+    }
+    const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length };
+    this.reset();
+    this.replay = copy;
+    this.recording.set(copy.frames);
+    this.recordingLength = copy.length;
+    this.replayFinished = copy.length === 0;
+  }
+
+  step(controls: Controls, dt = 1 / 60) {
+    if (this.ended || this.replayFinished) return;
+    const started = performance.now();
+    const input = this.effective;
+    if (this.replay) {
+      const offset = this.replayIndex * FRAME_WIDTH;
+      dt = this.replay.frames[offset];
+      input.weight = this.replay.frames[offset + 1]; input.rudder = this.replay.frames[offset + 2];
+      input.elevator = this.replay.frames[offset + 3]; input.aileron = this.replay.frames[offset + 4];
+      this.replayIndex++;
+      this.replayFinished = this.replayIndex >= this.replay.length;
+    } else {
+      input.weight = controls.weight; input.rudder = controls.rudder;
+      input.elevator = controls.elevator; input.aileron = controls.aileron;
+    }
+    if (!Number.isFinite(dt) || dt <= 0 || dt > 0.25) throw new RangeError('步长须在 0 至 0.25 秒之间');
+    if (!Number.isFinite(input.weight + input.rudder + input.elevator + input.aileron)) throw new RangeError('操纵输入必须为有限数');
+    input.weight = clamp(input.weight, -1, 1); input.rudder = clamp(input.rudder, -1, 1);
+    input.elevator = clamp(input.elevator, -1, 1); input.aileron = clamp(input.aileron, -1, 1);
+    if (!this.replay && this.recordingLength < MAX_FRAMES) {
+      const offset = this.recordingLength++ * FRAME_WIDTH;
+      this.recording[offset] = dt; this.recording[offset + 1] = input.weight;
+      this.recording[offset + 2] = input.rudder; this.recording[offset + 3] = input.elevator; this.recording[offset + 4] = input.aileron;
+    }
+    // 60 Hz 是标准物理步；较大的外部步长只拆成相同上限，绝不按帧率缩放气动力。
+    const steps = Math.max(1, Math.ceil(dt * 60 - 1e-10));
+    const h = dt / steps;
+    for (let i = 0; i < steps && !this.ended; i++) this.integrate(input, h);
+    this.telemetry.physicsMs = performance.now() - started;
+  }
+
+  private integrate(input: Controls, dt: number) {
+    // 准静态乘员移动保持角动量；人体移动惯量所需的内部功不作为推进力。
+    const oldX = this.aircraft.inertia.x, oldY = this.aircraft.inertia.y, oldZ = this.aircraft.inertia.z;
+    this.weight += clamp(input.weight - this.weight, -dt * 1.5, dt * 1.5);
+    updateMass(this.definition, this.parts, this.weight, this.aircraft, this.neutral, this.chord);
+    const inertia = this.aircraft.inertia;
+    this.omega.x *= oldX / inertia.x;
+    this.omega.y *= oldY / inertia.y;
+    this.omega.z *= oldZ / inertia.z;
+    const mass = this.aircraft.mass;
+    this.inverse.copy(this.quaternion).invert();
+    this.bodyVelocity.copy(this.velocity).applyQuaternion(this.inverse);
+    const speed = this.velocity.length();
+    this.torque.set(0, 0, 0);
+    this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0);
+    let mainLift = 0, power = 0;
+    for (const surface of this.surfaces) {
+      this.arm.copy(surface.point).sub(this.aircraft.cg);
+      this.localVelocity.crossVectors(this.omega, this.arm).add(this.bodyVelocity);
+      const localSpeed = this.localVelocity.length();
+      const normalSpeed = this.localVelocity.dot(surface.normal);
+      let incidence = surface.incidence;
+      if (surface.kind === 'main') incidence -= surface.side * input.aileron * 8 * DEG;
+      else if (surface.kind === 'tail') incidence -= mainLift * 0.78 / (Math.PI * this.aircraft.aspect) + input.elevator * 12 * DEG;
+      else incidence -= input.rudder * 15 * DEG;
+      const alpha = Math.atan2(-normalSpeed, this.localVelocity.x) + incidence;
+      surface.alpha = alpha;
+      polar(alpha, surface.aspect, this.polar);
+      if (surface.kind === 'main') mainLift += this.polar.cl;
+      const planeSpeedSquared = this.localVelocity.x ** 2 + normalSpeed ** 2;
+      const lift = 0.5 * AIR_DENSITY * planeSpeedSquared * surface.area * this.polar.cl;
+      this.liftDirection.copy(surface.normal);
+      if (localSpeed > 1e-9) this.liftDirection.addScaledVector(this.localVelocity, -normalSpeed / (localSpeed * localSpeed));
+      if (this.liftDirection.lengthSq() > 1e-12) this.liftDirection.normalize();
+      else this.liftDirection.set(0, 0, 0);
+      this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * AIR_DENSITY * localSpeed * surface.area * this.polar.cd);
+      this.localForce.copy(this.liftDirection).multiplyScalar(lift).add(this.localDrag);
+      power += this.localForce.dot(this.localVelocity);
+      this.cross.crossVectors(this.arm, this.localForce); this.torque.add(this.cross);
+      surface.force.copy(this.localForce).applyQuaternion(this.quaternion);
+      surface.drag.copy(this.localDrag).applyQuaternion(this.quaternion);
+      this.telemetry.force.add(surface.force); this.telemetry.drag.add(surface.drag);
+    }
+    // 机身/乘员阻力作用于重心；分布翼面之外补充未解析尺度的动压角阻尼。
+    this.localDrag.copy(this.velocity).multiplyScalar(-0.5 * AIR_DENSITY * speed * 0.28);
+    this.telemetry.force.add(this.localDrag); this.telemetry.drag.add(this.localDrag);
+    power += this.localDrag.dot(this.velocity);
+    const damping = 0.25 * AIR_DENSITY * speed * this.aircraft.wingArea;
+    this.cross.set(-damping * this.aircraft.span ** 2 * 0.015 * this.omega.x,
+      -damping * this.aircraft.span ** 2 * 0.004 * this.omega.y,
+      -damping * this.chord ** 2 * 0.15 * this.omega.z);
+    power += this.cross.dot(this.omega); this.torque.add(this.cross);
+    if (this.mode === 'assisted') {
+      // 辅助只耗散角速度；不锁角度、不额外造升力、不增加能量。
+      this.cross.set(-inertia.x * this.omega.x * 0.65, -inertia.y * this.omega.y * 0.35, -inertia.z * this.omega.z * 0.4);
+      power += this.cross.dot(this.omega); this.torque.add(this.cross);
+    }
+    this.telemetry.aeroPower = power;
+    this.telemetry.torque.copy(this.torque);
+    this.previousVelocity.copy(this.velocity); this.previousOmega.copy(this.omega);
+    this.velocity.addScaledVector(this.telemetry.force, dt / mass);
+    this.velocity.y -= GRAVITY * dt;
+    this.position.addScaledVector(this.previousVelocity, dt / 2).addScaledVector(this.velocity, dt / 2);
+    // 对角惯量的 Euler 刚体方程；陀螺项不做功。
+    this.angularAcceleration.set(
+      (this.torque.x + (inertia.y - inertia.z) * this.omega.y * this.omega.z) / inertia.x,
+      (this.torque.y + (inertia.z - inertia.x) * this.omega.z * this.omega.x) / inertia.y,
+      (this.torque.z + (inertia.x - inertia.y) * this.omega.x * this.omega.y) / inertia.z);
+    this.omega.addScaledVector(this.angularAcceleration, dt);
+    this.cross.copy(this.previousOmega).add(this.omega).multiplyScalar(0.5);
+    const angle = this.cross.length() * dt;
+    if (angle > 1e-12) {
+      this.cross.normalize(); this.rotation.setFromAxisAngle(this.cross, angle);
+      this.quaternion.multiply(this.rotation).normalize();
+    }
+    this.time += dt;
+    const currentSpeed = this.velocity.length();
+    this.travelled += (speed + currentSpeed) * 0.5 * dt;
+    this.maxSpeed = Math.max(this.maxSpeed, currentSpeed); this.minSpeed = Math.min(this.minSpeed, currentSpeed);
+    this.maxHeight = Math.max(this.maxHeight, this.position.y);
+    this.updateTelemetry();
+    if (this.telemetry.stall) this.stallTime += dt;
+    let landing: FlightResult['landing'] | null = null;
+    for (const point of this.contacts) {
+      this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(this.quaternion).add(this.position);
+      if (this.position.x < -0.5 && this.cross.x >= -20 && this.cross.x <= 0 && Math.abs(this.cross.z) <= 6.5 && this.cross.y <= 10) landing = 'platform';
+      else if (this.cross.x >= -132.5 && this.cross.x <= -17.5 && Math.abs(this.cross.z) <= 90 && this.cross.y <= 8 && landing !== 'platform') landing = 'terrain';
+      else if (this.cross.y <= 0 && !landing) landing = 'water';
+    }
+    if (landing) this.finish(landing);
+    else if (Math.abs(this.position.x) >= 2000 || Math.abs(this.position.z) >= 800 || this.position.y >= 300) this.finish('boundary');
+  }
+
+  private updateTelemetry() {
+    const t = this.telemetry;
+    t.speed = this.velocity.length(); t.altitude = this.position.y;
+    t.distance = Math.hypot(this.position.x, this.position.z);
+    this.inverse.copy(this.quaternion).invert();
+    this.bodyVelocity.copy(this.velocity).applyQuaternion(this.inverse);
+    t.alpha = Math.atan2(-this.bodyVelocity.y, this.bodyVelocity.x) + this.definition.assembly.mainIncidence * DEG;
+    this.cross.set(1, 0, 0).applyQuaternion(this.quaternion);
+    t.pitch = Math.atan2(this.cross.y, Math.hypot(this.cross.x, this.cross.z));
+    this.arm.set(0, 1, 0).applyQuaternion(this.quaternion);
+    t.roll = Math.atan2(this.arm.z, this.arm.y);
+    t.sink = -this.velocity.y;
+    t.glide = t.sink > 0.05 ? Math.hypot(this.velocity.x, this.velocity.z) / t.sink : 0;
+    t.stall = Math.abs(t.alpha + 2 * DEG) > 16 * DEG;
+    t.mass = this.aircraft.mass; t.staticMargin = this.aircraft.staticMargin;
+    const inertia = this.aircraft.inertia;
+    t.energy = this.aircraft.mass * (GRAVITY * this.position.y + 0.5 * this.velocity.lengthSq())
+      + 0.5 * (inertia.x * this.omega.x ** 2 + inertia.y * this.omega.y ** 2 + inertia.z * this.omega.z ** 2);
+  }
+
+  private finish(landing: FlightResult['landing']) {
+    this.ended = true;
+    const hints: string[] = [];
+    if (this.aircraft.staticMargin < 0) hints.push('重心已落在中性点后方：前移座舱或增大并后移水平尾翼。');
+    if (this.stallTime > this.time * 0.15) hints.push('大迎角停留过久：适当推杆、前移重心，先恢复速度。');
+    if (this.aircraft.wingLoading > 10) hints.push('翼载荷较高：增加主翼面积，或降低乘员与结构质量。');
+    if (Math.abs(this.telemetry.roll) > 35 * DEG) hints.push('接水时坡度较大：增加上反角，提早小幅修正横滚。');
+    if (hints.length === 0) hints.push('构型基本均衡：保持小幅操纵，比较翼展和安装角的细微变化。');
+    this.result = { distance: this.telemetry.distance, time: this.time, averageSpeed: this.travelled / this.time,
+      maxSpeed: this.maxSpeed, minSpeed: this.minSpeed, maxHeight: this.maxHeight, landing, hints };
+  }
+}
