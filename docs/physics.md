@@ -108,6 +108,10 @@
 
 `telemetry.aeroPower` 是所有气动力在各自作用点的功率与角阻尼功率之和。`potentialEnergy` 为 `mgh`，`kineticEnergy` 包含平动与转动动能，`energy` 为两者之和；`dissipatedEnergy` 累积阻力和角阻尼的耗散功。`initialEnergy` 在离台时确定。离台后 `potentialEnergy + kineticEnergy + dissipatedEnergy` 在求解精度内保持等于 `initialEnergy`，不使用能量硬钳位或假耗散掩盖积分误差。能量槽明确区分助跑外部输入阶段。
 
+`telemetry.energyPerDistance = -aeroPower / hypot(velocity.x, velocity.z)`，单位J/m，即每秒真实耗散能量除以每秒水平路程；包含侧向水平运动，不使用总空速或离台原点的径向距离导数。功率取当前积分步的中点评估值，水平速度取当前世界速度。助跑或水平速度≤0.05 m/s时返回`null`，界面显示“—”；不制造0、Infinity或假耗散。该字段仅派生展示，不改变力、积分及守恒。
+
+轨迹采样同步保存 `energyRatio = (kineticEnergy + potentialEnergy) / initialEnergy`；只从离台后采样，以离台时的机械能为100%，而非每个采样点重新归一化。结果页与高度曲线共用实际距离采样，机械能使用独立右轴0–100%及虚线；末点保存真实终止能量，不强制归零。动能仍包含转动能，耗散能不计入剩余机械能。
+
 正常步进复用向量、四元数、极曲线对象、三翼汇总和控制对象；记录输入使用构造时预分配的数组。完成飞行时才创建结算对象。`getRecording()` 显式导出记录时复制数组，`loadReplay()` 显式载入时复制一次。
 
 ## 接触、边界与结算

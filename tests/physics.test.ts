@@ -63,6 +63,7 @@ describe('基础物理与边界', () => {
     expect(s.launching).toBe(true);
     expect(s.telemetry.distance).toBe(0);
     expect(s.telemetry.initialEnergy).toBe(0);
+    expect(s.telemetry.energyPerDistance).toBeNull();
     expect(s.time).toBe(0);
     expect(s.surfaces).toHaveLength(5);
     expect(p.mass).toBeGreaterThan(defaultAircraft.pilot.mass);
@@ -90,6 +91,7 @@ describe('基础物理与边界', () => {
       if (second < 4) {
         expect(s.telemetry.initialEnergy).toBe(0);
         expect(s.telemetry.dissipatedEnergy).toBe(0);
+        expect(s.telemetry.energyPerDistance).toBeNull();
       }
     }
     expect(s.time).toBeCloseTo(4, 10);
@@ -101,6 +103,36 @@ describe('基础物理与边界', () => {
     expect(s.telemetry.distance).toBeGreaterThan(0);
     expect(s.position.x).toBeGreaterThan(LAUNCH.endX);
     budget(s);
+  });
+
+  it.each([[12, -1, 0], [3, -4, 12]])('实时能耗使用真实耗散功率除以世界水平合速度 (%s, %s, %s)', (x, y, z) => {
+    const s = probe(definition(), s => { s.velocity.set(x, y, z); });
+    expect(s.telemetry.aeroPower).toBeLessThan(0);
+    expect(s.telemetry.energyPerDistance).toBeCloseTo(
+      -s.telemetry.aeroPower / Math.hypot(s.velocity.x, s.velocity.z), 12);
+    expect(s.telemetry.energyPerDistance).toBeGreaterThan(0);
+  });
+
+  it.each([[0, -12, 0], [0, 0, 0], [0.03, 0, 0.04]])('水平速度不超过0.05m/s时能耗无定义 (%s, %s, %s)', (x, y, z) => {
+    const s = new FlightSimulation(defaultAircraft, 'standard', 0);
+    s.launching = false;
+    s.position.set(30, 80, 0);
+    s.velocity.set(x, y, z);
+    s.step(neutral, 1e-8);
+    expect(Math.hypot(s.velocity.x, s.velocity.z)).toBeLessThanOrEqual(0.05);
+    expect(s.telemetry.energyPerDistance).toBeNull();
+  });
+
+  it('离台后能耗可用，复位和再次助跑恢复无定义', () => {
+    const s = release();
+    s.step(neutral);
+    expect(s.telemetry.energyPerDistance).toBeGreaterThan(0);
+    s.reset();
+    expect(s.telemetry.energyPerDistance).toBeNull();
+    expect(s.telemetry.aeroPower).toBe(0);
+    s.step(neutral);
+    expect(s.velocity.x).toBeGreaterThan(0);
+    expect(s.telemetry.energyPerDistance).toBeNull();
   });
 
   it('助跑支持重心操纵，滑橇和大安装角翼面不沉入平台', () => {
