@@ -98,6 +98,7 @@ export interface FlightTelemetry {
   stall: boolean; physicsMs: number; cg: Vector3; mass: number;
   force: Vector3; drag: Vector3; torque: Vector3;
   aeroPower: number; energy: number; staticMargin: number;
+  energyPerDistance: number | null;
   potentialEnergy: number; kineticEnergy: number; dissipatedEnergy: number; initialEnergy: number;
   liftDragRatio: number;
   aerodynamics: AerodynamicReference;
@@ -516,7 +517,7 @@ export class FlightSimulation {
     this.launchAltitude = contactLaunchHeight(this.contacts, this.aircraft.cg);
     this.telemetry = { speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
       stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(),
-      aeroPower: 0, energy: 0, staticMargin: 0, potentialEnergy: 0, kineticEnergy: 0,
+      aeroPower: 0, energy: 0, staticMargin: 0, energyPerDistance: null, potentialEnergy: 0, kineticEnergy: 0,
       dissipatedEnergy: 0, initialEnergy: 0, liftDragRatio: 0, aerodynamics: this.aerodynamics };
     this.reset();
   }
@@ -759,6 +760,8 @@ export class FlightSimulation {
     const t = this.telemetry;
     t.speed = this.velocity.length(); t.altitude = this.position.y;
     t.distance = this.launching ? 0 : Math.hypot(this.position.x - LAUNCH.endX, this.position.z);
+    const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+    t.energyPerDistance = !this.launching && horizontalSpeed > 0.05 ? -t.aeroPower / horizontalSpeed : null;
     this.inverse.copy(this.quaternion).invert();
     this.bodyVelocity.copy(this.velocity).applyQuaternion(this.inverse);
     t.alpha = Math.atan2(-this.bodyVelocity.y, this.bodyVelocity.x) + this.definition.assembly.mainIncidence * DEG;
@@ -767,7 +770,7 @@ export class FlightSimulation {
     this.arm.set(0, 1, 0).applyQuaternion(this.quaternion);
     t.roll = Math.atan2(this.arm.z, this.arm.y);
     t.sink = -this.velocity.y;
-    t.glide = t.sink > 0.05 ? Math.hypot(this.velocity.x, this.velocity.z) / t.sink : 0;
+    t.glide = t.sink > 0.05 ? horizontalSpeed / t.sink : 0;
     t.stall = !this.launching && Math.abs(t.alpha + 2 * DEG) > 16 * DEG;
     t.mass = this.aircraft.mass; t.staticMargin = this.aircraft.staticMargin;
     const inertia = this.aircraft.inertia;

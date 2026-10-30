@@ -1140,8 +1140,51 @@ export class SceneView {
     cliffGeometry.computeVertexNormals();
     const cliffMaterial = cliff.clone(); cliffMaterial.side = THREE.DoubleSide;
     this.terrain.push(this.mesh(cliffGeometry, cliffMaterial, this.environment));
-    const concrete = new THREE.MeshStandardMaterial({ color: 0xd8cbb0, roughness: 0.95, flatShading: true });
-    const platform = this.mesh(new THREE.BoxGeometry(20, 0.6, 13), concrete, this.environment);
+    // One deterministic 2 m tile; world-space UVs keep grain equally sized on every face.
+    const textureSize = 256;
+    const pixels = new Uint8Array(textureSize * textureSize * 4);
+    let seed = 0x63a9f217;
+    const mottling = new Float32Array(64);
+    for (let i = 0; i < mottling.length; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      mottling[i] = (seed / 0x100000000 - 0.5) * 12;
+    }
+    for (let y = 0; y < textureSize; y++) for (let x = 0; x < textureSize; x++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const grain = seed / 0x100000000;
+      const gx = x / 32, gy = y / 32, ix = Math.floor(gx), iy = Math.floor(gy);
+      const fx = gx - ix, fy = gy - iy, tx = fx * fx * (3 - 2 * fx), ty = fy * fy * (3 - 2 * fy);
+      const left = iy * 8 + ix, right = iy * 8 + ((ix + 1) & 7);
+      const below = ((iy + 1) & 7) * 8;
+      const patch = (mottling[left] * (1 - tx) + mottling[right] * tx) * (1 - ty)
+        + (mottling[below + ix] * (1 - tx) + mottling[below + ((ix + 1) & 7)] * tx) * ty;
+      const shade = Math.round(88 + patch + (grain - 0.5) * 28 - (grain < 0.055 ? 18 : 0));
+      const offset = (y * textureSize + x) * 4;
+      pixels[offset] = shade;
+      pixels[offset + 1] = shade + 2;
+      pixels[offset + 2] = shade + 3;
+      pixels[offset + 3] = 255;
+    }
+    const concreteTexture = new THREE.DataTexture(pixels, textureSize, textureSize);
+    concreteTexture.colorSpace = THREE.SRGBColorSpace;
+    concreteTexture.wrapS = concreteTexture.wrapT = THREE.RepeatWrapping;
+    concreteTexture.magFilter = THREE.LinearFilter;
+    concreteTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    concreteTexture.generateMipmaps = true;
+    concreteTexture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    concreteTexture.needsUpdate = true;
+    const concrete = new THREE.MeshStandardMaterial({ map: concreteTexture, roughness: 0.98 });
+    const platformGeometry = new THREE.BoxGeometry(20, 0.6, 13);
+    const positions = platformGeometry.getAttribute('position');
+    const normals = platformGeometry.getAttribute('normal');
+    const uv = platformGeometry.getAttribute('uv');
+    for (let i = 0; i < positions.count; i++) {
+      const top = Math.abs(normals.getY(i)) > 0.5;
+      const end = Math.abs(normals.getX(i)) > 0.5;
+      uv.setXY(i, (end ? positions.getZ(i) : positions.getX(i)) / 2, (top ? positions.getZ(i) : positions.getY(i)) / 2);
+    }
+    const platform = this.mesh(platformGeometry, concrete, this.environment);
+    platform.name = 'launch-platform';
     platform.position.set(-10, 9.7, 0);
     this.terrain.push(platform);
     const supportGeometry = new THREE.BoxGeometry(0.5, 9.2, 0.5);
@@ -1149,17 +1192,23 @@ export class SceneView {
       const support = this.mesh(supportGeometry, cliff, this.environment);
       support.position.set(x, 4.6, z);
     }
-    const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xf8edce });
-    const stripeGeometry = new THREE.PlaneGeometry(0.6, 0.12);
+    const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const stripeGeometry = new THREE.PlaneGeometry(0.95, 0.2);
     for (let x = -19; x < 0; x += 1.6) {
       const stripe = this.mesh(stripeGeometry, stripeMaterial, this.environment);
       stripe.rotation.x = -Math.PI / 2;
       stripe.position.set(x, 10.015, 0);
     }
-    const edgeGeometry = new THREE.BoxGeometry(20, 0.08, 0.09);
+    const edgeGeometry = new THREE.BoxGeometry(20, 0.08, 0.14);
     for (const z of [-6.2, 6.2]) {
       const edge = this.mesh(edgeGeometry, stripeMaterial, this.environment);
       edge.position.set(-10, 10.05, z);
+    }
+    const thresholdGeometry = new THREE.PlaneGeometry(0.2, 12.4);
+    for (const x of [-19.6, -0.35]) {
+      const threshold = this.mesh(thresholdGeometry, stripeMaterial, this.environment);
+      threshold.rotation.x = -Math.PI / 2;
+      threshold.position.set(x, 10.02, 0);
     }
     const sign = this.label('起飞平台 · 10 m', '#37483e', '#f5eedb', 384, 80);
     sign.position.set(-7, 8.7, 6.65);

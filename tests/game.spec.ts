@@ -11,7 +11,7 @@ declare global {
       readonly flightReady: boolean;
       readonly time: number;
       readonly recordingLength: number;
-      readonly trajectory: { distance: number; height: number }[];
+      readonly trajectory: { distance: number; height: number; energyRatio: number }[];
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
       readonly result: FlightResult | null;
@@ -769,4 +769,53 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
       else expect(after.assembly[key]).toBe(before.assembly[key]);
     }
   }
+});
+
+test('底部主按钮启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
+  await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
+  await expectWaiting(page);
+  const start = page.getByRole('button', { name: '开始试飞', exact: true });
+  const box = await start.boundingBox(), viewport = page.viewportSize()!;
+  if (!box) throw new Error('开始按钮不可见');
+  expect(box.x + box.width / 2).toBeCloseTo(viewport.width / 2, 0);
+  expect(viewport.height - box.y - box.height).toBeLessThan(box.height);
+  const otherButtons = await page.getByRole('button').evaluateAll(buttons => buttons
+    .filter(button => button.getAttribute('aria-label') !== '开始试飞')
+    .map(button => { const rect=button.getBoundingClientRect(); return {area:rect.width*rect.height,height:rect.height}; }));
+  expect(box.width * box.height).toBeGreaterThan(Math.max(...otherButtons.map(button=>button.area)));
+  expect(box.height).toBeGreaterThan(Math.max(...otherButtons.map(button=>button.height)));
+  const cost = page.getByLabel('实时能耗', { exact: true });
+  await expect(cost).toHaveText('—');
+  await start.focus();
+  await start.press('Space');
+  await expect(start).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(4.2);
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  const actualCost = await page.evaluate(() => Number(window.glider.telemetry!.energyPerDistance));
+  expect(actualCost).toBeGreaterThan(0);
+  await expect(cost).toHaveText(actualCost.toFixed(1));
+  await insideViewport(page, cost);
+  await page.getByRole('button', { name: '继续飞行', exact: true }).click();
+  await waitResult(page);
+  const trajectory = await page.evaluate(() => window.glider.trajectory);
+  const finalRatio = await page.evaluate(() => {
+    const t = window.glider.telemetry!;
+    return (Number(t.kineticEnergy)+Number(t.potentialEnergy))/Number(t.initialEnergy);
+  });
+  expect(trajectory[0].energyRatio).toBeCloseTo(1, 9);
+  expect(trajectory.at(-1)!.energyRatio).toBeCloseTo(finalRatio, 12);
+  expect(finalRatio).toBeGreaterThan(0);
+  expect(finalRatio).toBeLessThan(1);
+  for (let i=1;i<trajectory.length;i++) expect(trajectory[i].energyRatio).toBeLessThanOrEqual(trajectory[i-1].energyRatio+1e-10);
+  const chart = page.getByRole('region', { name: '距离高度曲线', exact: true });
+  const energyLine = chart.locator('.chart-energy-line');
+  await energyLine.scrollIntoViewIfNeeded();
+  const energyPoints = (await energyLine.getAttribute('points'))!.trim().split(/\s+/).map(point=>point.split(',').map(Number));
+  const heightPoints = (await chart.locator('.chart-line').getAttribute('points'))!.trim().split(/\s+/).map(point=>point.split(',').map(Number));
+  expect(energyPoints.map(point=>point[0])).toEqual(heightPoints.map(point=>point[0]));
+  expect(energyPoints[0][1]).toBeCloseTo(22, 2);
+  expect(energyPoints.at(-1)![1]).toBeCloseTo(98-finalRatio*76, 2);
+  await insideViewport(page, chart.getByText('100%', { exact: true }));
+  await insideViewport(page, chart.getByText('0%', { exact: true }));
+  await noOverflow(page);
 });
