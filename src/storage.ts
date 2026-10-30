@@ -8,7 +8,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-const BEST_PREFIX = 'lakewind.best.';
+// 旧版重心计距与新版机体最后尾计距不可混榜；保留旧存储数据，不迁移为新成绩。
+const BEST_PREFIX = 'lakewind.best.official-v1.';
 
 function storageCall<T>(operation: (storage: Storage) => T): T {
   try {

@@ -182,7 +182,7 @@ export class SceneView {
     this.trail = new THREE.LineSegments(this.trailGeometry, new THREE.LineBasicMaterial({ color: 0xf0b553, transparent: true, opacity: 0.85, depthWrite: false }));
     this.trail.frustumCulled = false;
     this.debugGroup.add(this.trail);
-    const arrowColors = [0x3bada1, 0xf08b5b, 0xa493c3, 0x3686bd, 0x3bada1, 0x3bada1, 0x3bada1, 0x3bada1, 0xf08b5b];
+    const arrowColors = [0x3bada1, 0xf08b5b, 0xa493c3, 0x3686bd];
     for (const color of arrowColors) {
       const arrow = new THREE.ArrowHelper(UP, new THREE.Vector3(), 1, color, 0.35, 0.18);
       (arrow.line.material as THREE.LineBasicMaterial).depthTest = false;
@@ -193,12 +193,10 @@ export class SceneView {
     }
     const markerGeometry = new THREE.SphereGeometry(0.1, 8, 6);
     const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffd777, depthTest: false });
-    for (let i = 0; i < 12; i++) {
-      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
-      marker.visible = false;
-      this.applicationMarkers.push(marker);
-      this.debugGroup.add(marker);
-    }
+    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+    marker.visible = false;
+    this.applicationMarkers.push(marker);
+    this.debugGroup.add(marker);
     this.splashGeometry.setAttribute('position', new THREE.BufferAttribute(this.splashPositions, 3).setUsage(THREE.DynamicDrawUsage));
     this.splash = new THREE.Points(this.splashGeometry, new THREE.PointsMaterial({ color: 0xeafafa, size: 0.2, transparent: true, opacity: 0, depthWrite: false, sizeAttenuation: true }));
     this.splash.frustumCulled = false;
@@ -240,7 +238,10 @@ export class SceneView {
     this.editorTarget = target;
     this.editorDirty = true;
     this.updateEnvironment();
-    if (!this.simulation) this.cameraView(target ? target === 'mainWing' || target === 'horizontalTail' ? 'top' : 'side' : 'orbit');
+    if (!this.simulation) {
+      this.aircraft.rotation.set(0, 0, target ? 0 : -LAUNCH.slope);
+      this.cameraView(target ? target === 'mainWing' || target === 'horizontalTail' ? 'top' : 'side' : 'orbit');
+    }
     this.updateEditorOverlay();
   }
 
@@ -824,7 +825,7 @@ export class SceneView {
     this.cg.visible = !this.simulation || this.debug;
     if (!this.simulation) {
       this.positionAtLaunch();
-      this.aircraft.quaternion.identity();
+      this.aircraft.rotation.set(0, 0, this.editorTarget ? 0 : -LAUNCH.slope);
       this.driver.position.x = 0;
     }
     if (!this.simulation && this.editorTarget === 'assembly' && this.editorPointerId < 0) this.centerAssemblyCamera();
@@ -908,6 +909,32 @@ export class SceneView {
     this.splash.visible = this.ring.visible = false;
     this.cg.visible = !sim || this.debug;
     if (sim) {
+      // 随构型扩展条带可视化池；只在开始飞行时分配，帧内复用并隐藏多余对象。
+      while (this.applicationMarkers.length < sim.surfaces.length) {
+        const template = this.applicationMarkers[0];
+        const marker = new THREE.Mesh(template.geometry, template.material);
+        marker.visible = false;
+        this.applicationMarkers.push(marker);
+        this.debugGroup.add(marker);
+      }
+      while (this.arrows.length < sim.surfaces.length + 4) {
+        const arrow = new THREE.ArrowHelper(UP, new THREE.Vector3(), 1, 0x3bada1, 0.35, 0.18);
+        (arrow.line.material as THREE.LineBasicMaterial).depthTest = false;
+        (arrow.cone.material as THREE.MeshBasicMaterial).depthTest = false;
+        arrow.visible = false;
+        this.arrows.push(arrow);
+        this.debugGroup.add(arrow);
+      }
+      for (let i = 4; i < this.arrows.length; i++) {
+        const surface = sim.surfaces[i - 4], arrow = this.arrows[i];
+        arrow.visible = false;
+        if (surface) {
+          const color = surface.kind === 'main' ? 0x3bada1 : surface.kind === 'tail' ? 0xf08b5b : 0xa493c3;
+          (arrow.line.material as THREE.LineBasicMaterial).color.setHex(color);
+          (arrow.cone.material as THREE.MeshBasicMaterial).color.setHex(color);
+        }
+      }
+      this.metrics.memory = this.geometryMemory();
       this.aircraft.position.copy(sim.position);
       this.aircraft.quaternion.copy(sim.quaternion);
       this.body.position.copy(sim.telemetry.cg).negate();
@@ -915,7 +942,7 @@ export class SceneView {
       this.cameraView('chase');
     } else {
       this.positionAtLaunch();
-      this.aircraft.quaternion.identity();
+      this.aircraft.rotation.set(0, 0, this.editorTarget ? 0 : -LAUNCH.slope);
       this.driver.position.x = 0;
       this.body.position.copy(this.designCG).negate();
       for (const arrow of this.arrows) arrow.visible = false;
@@ -1174,7 +1201,11 @@ export class SceneView {
     concreteTexture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     concreteTexture.needsUpdate = true;
     const concrete = new THREE.MeshStandardMaterial({ map: concreteTexture, roughness: 0.98 });
-    const platformGeometry = new THREE.BoxGeometry(20, 0.6, 13);
+    const runway = new THREE.Group();
+    runway.position.set(LAUNCH.endX, LAUNCH.height, 0);
+    runway.rotation.z = -LAUNCH.slope;
+    this.environment.add(runway);
+    const platformGeometry = new THREE.BoxGeometry(LAUNCH.length, 0.6, 13);
     const positions = platformGeometry.getAttribute('position');
     const normals = platformGeometry.getAttribute('normal');
     const uv = platformGeometry.getAttribute('uv');
@@ -1183,36 +1214,39 @@ export class SceneView {
       const end = Math.abs(normals.getX(i)) > 0.5;
       uv.setXY(i, (end ? positions.getZ(i) : positions.getX(i)) / 2, (top ? positions.getZ(i) : positions.getY(i)) / 2);
     }
-    const platform = this.mesh(platformGeometry, concrete, this.environment);
+    const platform = this.mesh(platformGeometry, concrete, runway);
     platform.name = 'launch-platform';
-    platform.position.set(-10, 9.7, 0);
+    platform.position.set(-LAUNCH.length / 2, -0.3, 0);
     this.terrain.push(platform);
-    const supportGeometry = new THREE.BoxGeometry(0.5, 9.2, 0.5);
-    for (const x of [-2, -9, -16]) for (const z of [-5.4, 5.4]) {
+    const supportGeometry = new THREE.BoxGeometry(0.5, 1, 0.5);
+    for (const fraction of [0.2, 0.6, 0.9]) for (const z of [-5.4, 5.4]) {
+      const x = -LAUNCH.length * fraction * Math.cos(LAUNCH.slope);
+      const height = LAUNCH.height - x * Math.tan(LAUNCH.slope) - 0.6;
       const support = this.mesh(supportGeometry, cliff, this.environment);
-      support.position.set(x, 4.6, z);
+      support.position.set(x, height / 2, z);
+      support.scale.y = height;
     }
     const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const stripeGeometry = new THREE.PlaneGeometry(0.95, 0.2);
-    for (let x = -19; x < 0; x += 1.6) {
-      const stripe = this.mesh(stripeGeometry, stripeMaterial, this.environment);
+    for (let x = -LAUNCH.length + 1; x < -0.5; x += 1.6) {
+      const stripe = this.mesh(stripeGeometry, stripeMaterial, runway);
       stripe.rotation.x = -Math.PI / 2;
-      stripe.position.set(x, 10.015, 0);
+      stripe.position.set(x, 0.015, 0);
     }
-    const edgeGeometry = new THREE.BoxGeometry(20, 0.08, 0.14);
+    const edgeGeometry = new THREE.BoxGeometry(LAUNCH.length, 0.08, 0.14);
     for (const z of [-6.2, 6.2]) {
-      const edge = this.mesh(edgeGeometry, stripeMaterial, this.environment);
-      edge.position.set(-10, 10.05, z);
+      const edge = this.mesh(edgeGeometry, stripeMaterial, runway);
+      edge.position.set(-LAUNCH.length / 2, 0.05, z);
     }
     const thresholdGeometry = new THREE.PlaneGeometry(0.2, 12.4);
-    for (const x of [-19.6, -0.35]) {
-      const threshold = this.mesh(thresholdGeometry, stripeMaterial, this.environment);
+    for (const x of [-LAUNCH.length + 0.35, -0.35]) {
+      const threshold = this.mesh(thresholdGeometry, stripeMaterial, runway);
       threshold.rotation.x = -Math.PI / 2;
-      threshold.position.set(x, 10.02, 0);
+      threshold.position.set(x, 0.02, 0);
     }
-    const sign = this.label('起飞平台 · 10 m', '#37483e', '#f5eedb', 384, 80);
-    sign.position.set(-7, 8.7, 6.65);
-    sign.scale.set(7.2, 1.5, 1);
+    const sign = this.label('跑道 10 m · 坡度 3.5°', '#37483e', '#f5eedb', 512, 80);
+    sign.position.set(-5, 9.4, 6.65);
+    sign.scale.set(8, 1.25, 1);
     this.environment.add(sign);
     const mountainMaterials = [0xa4b7a7, 0x8ba89c, 0xb2bfae, 0x7f9e92].map(color => new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true }));
     const mountainGeometry = new THREE.ConeGeometry(1, 1, 5, 1);
@@ -1256,8 +1290,10 @@ export class SceneView {
       const buoy = this.mesh(buoyGeometry, buoyMaterial, this.environment);
       buoy.position.set(distance, 0.45, -15);
       buoy.castShadow = false;
-      const label = this.label(`${distance} m`, '#f7f1dc', '#49665c', 192, 80);
-      label.position.set(distance, 3, -15);
+      const label = this.label(`${distance} m`, '#f7f1dc', '#49665c', 192, 80, true);
+      label.name = `water-distance-${distance}`;
+      label.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);
+      label.position.set(distance, 0.025, -19);
       label.scale.set(5.2, 2.15, 1);
       this.environment.add(label);
     }
@@ -1265,7 +1301,7 @@ export class SceneView {
     this.scene.updateMatrixWorld(true);
   }
 
-  private label(text: string, color: string, background: string, width: number, height: number): THREE.Sprite {
+  private label(text: string, color: string, background: string, width: number, height: number, flat = false): THREE.Sprite | THREE.Mesh {
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const context = canvas.getContext('2d')!;
@@ -1277,6 +1313,8 @@ export class SceneView {
     context.fillText(text, width / 2, height / 2, width - 20);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
+    if (flat) return new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, depthWrite: false }));
     return new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: false, depthWrite: false }));
   }
 
@@ -1450,7 +1488,7 @@ export class SceneView {
       marker.visible = !!surface;
       if (surface) {
         marker.position.copy(surface.point).sub(sim.telemetry.cg).applyQuaternion(sim.quaternion).add(sim.position);
-        if (i + 4 < this.arrows.length) this.setArrow(this.arrows[i + 4], marker.position, surface.force, 0.007);
+        this.setArrow(this.arrows[i + 4], marker.position, surface.force, 0.007);
       }
     }
   }
