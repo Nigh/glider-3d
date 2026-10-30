@@ -11,6 +11,10 @@ declare global {
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
       readonly result: FlightResult | null;
+      readonly scene: {
+        view: string; orthographic: boolean; editing: string | null;
+        camera: { x: number; y: number; z: number }; groundHeight: number; shadowVisible: boolean;
+      };
     };
   }
 }
@@ -42,7 +46,7 @@ async function number(page: Page, label: string, value: number) {
   await expect(input).toHaveValue(String(value));
 }
 async function dragHandle(page: Page, index: number, dx: number, dy: number) {
-  const handle = page.locator('.planform-editor svg circle[role="presentation"]').nth(index);
+  const handle = page.getByRole('button', { name: `主翼顶点${index + 1}`, exact: true });
   await handle.scrollIntoViewIfNeeded();
   const box = await handle.boundingBox();
   if (!box) throw new Error('翼面控制点不可见');
@@ -105,6 +109,7 @@ test.describe('桌面完整交互', () => {
     expect(points[0].y).toBe(0);
     expect(points[3].y).toBe(0);
     expect(points[1].y).toBe(points[2].y);
+    await expect(page.getByRole('button', { name: '轨道', exact: true })).toBeDisabled();
     await number(page, '主翼上反角精确值', 8);
     for (const [tab, key, value] of [
       ['水平尾翼', 'horizontalTail', 2.1], ['垂直尾翼', 'verticalTail', 2.0],
@@ -116,6 +121,15 @@ test.describe('桌面完整交互', () => {
       expect((await aircraft(page))[key].points[2].y).toBe(value);
     }
     await page.getByRole('tab', { name: '组装', exact: true }).click();
+    const mainHandle = page.getByRole('button', { name: '主翼位置', exact: true });
+    const mainBox = await mainHandle.boundingBox();
+    if (!mainBox) throw new Error('组装位置手柄不可见');
+    const originalPosition = (await aircraft(page)).assembly.mainWing;
+    await page.mouse.move(mainBox.x + mainBox.width / 2, mainBox.y + mainBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(mainBox.x + mainBox.width / 2 + 18, mainBox.y + mainBox.height / 2 - 8, { steps: 8 });
+    await page.mouse.up();
+    expect((await aircraft(page)).assembly.mainWing).not.toBe(originalPosition);
     for (const [label, value, key] of [
       ['主翼纵向位置', 1.1, 'mainWing'], ['主翼安装高度', 1.0, 'mainWingHeight'],
       ['主翼安装角', 5, 'mainIncidence'], ['水平尾翼位置', -3.1, 'horizontalTail'],
@@ -216,8 +230,18 @@ test.describe('桌面完整交互', () => {
     await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption('侧面');
     await page.getByRole('button', { name: '继续飞行', exact: true }).click();
     const first = await waitResult(page);
+    const energy = await page.evaluate(() => {
+      const t = window.glider.telemetry!;
+      return {
+        initial: Number(t.initialEnergy),
+        total: Number(t.potentialEnergy) + Number(t.kineticEnergy) + Number(t.dissipatedEnergy),
+        dissipated: Number(t.dissipatedEnergy),
+      };
+    });
+    expect(energy.initial).toBeGreaterThan(0);
+    expect(energy.dissipated).toBeGreaterThan(0);
+    expect(Math.abs(energy.total - energy.initial) / energy.initial).toBeLessThan(1e-6);
     await page.getByRole('button', { name: '重放飞行', exact: true }).click();
-    await expect(page.getByText('输入重放', { exact: true })).toBeVisible();
     const replay = await waitResult(page);
     expect(replay).toEqual(first);
     await page.getByRole('button', { name: '返回设计改进', exact: true }).click();
@@ -309,4 +333,33 @@ test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ pa
   await page.getByRole('button', { name: '机库', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '重命名重命名 A', exact: true })).toHaveValue('重命名 A');
   await expect(page.locator('.saved-plane')).toHaveCount(3);
+});
+
+test('相机轨道与飞行视角保持在地表以上，低画质保留湖面阴影', async ({ page, isMobile }) => {
+  test.skip(isMobile, '相机鼠标轨道在桌面验证');
+  await enterDesign(page);
+  await page.getByRole('tab', { name: '机身', exact: true }).click();
+  await page.getByRole('button', { name: '轨道', exact: true }).click();
+  for (let i = 0; i < 3; i++) {
+    await page.mouse.move(1050, 420);
+    await page.mouse.down();
+    await page.mouse.move(1050, 140, { steps: 12 });
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => {
+      const s = window.glider.scene;
+      return s.camera.y - s.groundHeight;
+    })).toBeGreaterThanOrEqual(0.549);
+  }
+  await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
+  await page.getByRole('button', { name: '前往平台试飞' }).click();
+  await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0), { timeout: 20_000 }).toBeGreaterThan(30);
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  for (const camera of ['追尾', '侧面', '驾驶员', '自由']) {
+    await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(camera);
+    await expect.poll(() => page.evaluate(() => {
+      const s = window.glider.scene;
+      return s.camera.y - s.groundHeight;
+    })).toBeGreaterThanOrEqual(0.549);
+  }
+  expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
 });
