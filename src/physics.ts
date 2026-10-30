@@ -1,10 +1,12 @@
 import { Quaternion, Vector3 } from 'three';
-import { clamp, DEG, planform, validateAircraft, type AircraftDefinition, type Controls, type FlightMode, type Wing } from './model';
+import { clamp, DEG, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type FlightMode, type Wing } from './model';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.225;
 /** 平台顶面与匀加速发射轨道；离台后没有推进力。 */
 export const LAUNCH = { startX: -20, endX: 0, height: 10, speed: 10, acceleration: 2.5 } as const;
+/** 离台时的滚转角扰动上限（rad）；不施加角速度或额外动能。 */
+export const LAUNCH_ROLL_LIMIT = DEG;
 const MAX_FRAMES = 36_000;
 const FRAME_WIDTH = 5;
 const ZERO_CONTROLS: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -17,22 +19,27 @@ export interface AircraftProperties {
   span: number;
   aspect: number;
   wingLoading: number;
+  /** m/s；全重、主翼面积、海平面、无地效，使用现有极曲线最大有效CL。 */
+  stallSpeed: number;
   glideRatio: number;
   staticMargin: number;
   /** 主翼平均气动弦 1/4 弦几何参考点，独立于全机合力中心。 */
   mainQuarterChord: Vector3;
   neutralPoint: number;
-  /** 12 m/s、5°攻角、3°侧滑，零角速度、零操纵的设计参考。 */
+  /** 自由空气、无地效：12 m/s、5°攻角、3°侧滑，零角速度、零操纵。 */
   aerodynamics: AerodynamicReference;
 }
 interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; moving?: boolean }
-interface Polar { cl: number; cd: number }
+interface Polar { cl: number; cd: number; inducedCd: number }
 export interface WingAerodynamics {
   kind: AerodynamicSurface['kind'];
   name: string;
   area: number;
   aspect: number;
   alpha: number;
+  /** 诱导阻力地效系数；1 为自由空气。垂尾恒为 1。 */
+  groundEffect: number;
+  inducedDrag: number;
   force: Vector3;
   lift: Vector3;
   drag: Vector3;
@@ -64,6 +71,12 @@ export interface AerodynamicSurface {
   drag: Vector3;
   area: number;
   aspect: number;
+  span: number;
+  spanDirection: Vector3;
+  /** 世界作用点相对水面 Y=0 的净空；设计参考为 Infinity。 */
+  clearance: number;
+  groundEffect: number;
+  inducedDrag: number;
   normal: Vector3;
   incidence: number;
   kind: 'main' | 'tail' | 'vertical';
@@ -89,7 +102,7 @@ export interface FlightTelemetry {
   liftDragRatio: number;
   aerodynamics: AerodynamicReference;
 }
-export interface InputRecording { frames: Float64Array; length: number }
+export interface InputRecording { frames: Float64Array; length: number; launchRoll: number }
 
 function quarterChord(w: Wing) {
   const p = planform(w);
@@ -102,15 +115,18 @@ function massLayout(d: AircraftDefinition): MassPart[] {
   const length = d.fuselage.length;
   const fuselageMass = 22 + 1.1 * length;
   const parts: MassPart[] = [
-    { mass: fuselageMass, x: -0.13 * length, y: 0, z: 0, ix: fuselageMass * 0.04, iy: fuselageMass * length * length / 12, iz: fuselageMass * length * length / 12 },
+    { mass: fuselageMass, x: d.fuselage.center - 0.13 * length, y: 0, z: 0, ix: fuselageMass * 0.04, iy: fuselageMass * length * length / 12, iz: fuselageMass * length * length / 12 },
     { mass: 4, x: d.cockpit.position, y: 0.12, z: 0, ix: 0.1, iy: 0.2, iz: 0.2 },
     // 趴姿只改变显示网格；乘员仍用此固定质点和局部惯量近似，不引入关节运动功。
-    { mass: d.pilot.mass, x: d.cockpit.position, y: 0.15, z: 0, ix: d.pilot.mass * 0.08, iy: d.pilot.mass * 0.025, iz: d.pilot.mass * 0.08, moving: true },
+    { mass: PILOT_MASS, x: d.cockpit.position, y: 0.15, z: 0, ix: PILOT_MASS * 0.08, iy: PILOT_MASS * 0.025, iz: PILOT_MASS * 0.08, moving: true },
   ];
   for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
     const vertical = key === 'verticalTail';
     const w = d[key], p = planform(w, !vertical);
     const density = key === 'mainWing' ? 0.95 : 0.9;
+    const origin = wingOrigin(d, key);
+    const incidence = (key === 'mainWing' ? d.assembly.mainIncidence : key === 'horizontalTail' ? d.assembly.tailIncidence : 0) * DEG;
+    const c = Math.cos(incidence), s = Math.sin(incidence), slope = Math.tan(w.dihedral * DEG);
     const fraction = (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
     const centerX = w.points[0].x + (w.points[1].x - w.points[0].x) * fraction
       + (p.root + (p.tip - p.root) * fraction) / 2;
@@ -118,15 +134,23 @@ function massLayout(d: AircraftDefinition): MassPart[] {
     const center = halfSpan * fraction;
     for (let side = -1; side <= 1; side += 2) {
       if (vertical && side === -1) continue;
-      // 展长的立方惩罚近似梁的增强成本，避免等面积无限增展成为无代价最优解。
-      const reinforcement = key === 'mainWing' ? 0.0025 * p.span ** 3 : 0;
-      const mass = (p.area * density + reinforcement) / (vertical ? 1 : 2);
-      const y = vertical ? center : (key === 'mainWing' ? d.assembly.mainWingHeight : 0) + center * Math.tan(w.dihedral * DEG);
-      parts.push({ mass, x: d.assembly[key] - centerX, y, z: vertical ? 0 : side * center,
-        ix: mass * halfSpan * halfSpan / 12,
-        iy: mass * (p.chord * p.chord + (vertical ? 0 : halfSpan * halfSpan)) / 12,
-        iz: mass * (p.chord * p.chord + (vertical ? halfSpan * halfSpan : 0)) / 12 });
+      // 内部翼梁的展长立方成本，不包含已移除的可见外撑柱；避免无限增展成为无代价最优解。
+      const sparMass = key === 'mainWing' ? 0.0025 * p.span ** 3 : 0;
+      const mass = (p.area * density + sparMass) / (vertical ? 1 : 2);
+      const y = vertical ? origin.y + center : origin.y - centerX * s + center * slope;
+      parts.push({ mass, x: origin.x - centerX * c, y, z: vertical ? 0 : side * center,
+        ix: mass * (halfSpan ** 2 * (vertical ? 1 : 1 + slope ** 2) + p.chord ** 2 * s ** 2) / 12,
+        iy: mass * (p.chord ** 2 * c ** 2 + (vertical ? 0 : halfSpan ** 2)) / 12,
+        iz: mass * (p.chord ** 2 + halfSpan ** 2 * (vertical ? 1 : slope ** 2)) / 12 });
     }
+  }
+  const support = mainWingSupport(d);
+  if (support.mass > 0) {
+    // 均匀斜边竖板：弦向斜率与安装角一致，正负安装高度共用同一质量分布。
+    const vx = support.width ** 2 / 12;
+    const vy = ((support.frontY - support.backY) ** 2 + support.height ** 2) / 12;
+    parts.push({ mass: support.mass, x: support.x, y: support.y, z: 0,
+      ix: support.mass * vy, iy: support.mass * vx, iz: support.mass * (vx + vy) });
   }
   return parts;
 }
@@ -136,16 +160,17 @@ function properties(d: AircraftDefinition): AircraftProperties {
   const tail = planform(d.horizontalTail);
   const vertical = planform(d.verticalTail, false);
   const mainQuarter = quarterChord(d.mainWing), mainAngle = d.assembly.mainIncidence * DEG;
-  const mainX = d.assembly.mainWing - mainQuarter * Math.cos(mainAngle);
-  const tailX = d.assembly.horizontalTail - quarterChord(d.horizontalTail) * Math.cos(d.assembly.tailIncidence * DEG);
+  const mainOrigin = wingOrigin(d, 'mainWing'), tailOrigin = wingOrigin(d, 'horizontalTail');
+  const mainX = mainOrigin.x - mainQuarter * Math.cos(mainAngle);
+  const tailX = tailOrigin.x - quarterChord(d.horizontalTail) * Math.cos(d.assembly.tailIncidence * DEG);
   const tailSlopeRatio = (tail.aspect / (tail.aspect + 2)) / (p.aspect / (p.aspect + 2));
   const effectiveness = 0.65 * tail.area / p.area * tailSlopeRatio;
   const neutral = (mainX + effectiveness * tailX) / (1 + effectiveness);
   const cd0 = 0.018 + (0.28 + 0.018 * (tail.area + vertical.area)) / p.area;
   const center = p.span / 2 * (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
   return { mass: 0, cg: new Vector3(), inertia: new Vector3(), wingArea: p.area, span: p.span, aspect: p.aspect,
-    wingLoading: 0, glideRatio: 1 / (2 * Math.sqrt(cd0 / (Math.PI * p.aspect * 0.82))), staticMargin: 0,
-    mainQuarterChord: new Vector3(mainX, d.assembly.mainWingHeight - mainQuarter * Math.sin(mainAngle) + center * Math.tan(d.mainWing.dihedral * DEG), 0),
+    wingLoading: 0, stallSpeed: 0, glideRatio: 1 / (2 * Math.sqrt(cd0 / (Math.PI * p.aspect * 0.82))), staticMargin: 0,
+    mainQuarterChord: new Vector3(mainX, mainOrigin.y - mainQuarter * Math.sin(mainAngle) + center * Math.tan(d.mainWing.dihedral * DEG), 0),
     neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d)) };
 }
 
@@ -172,13 +197,14 @@ function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, ou
 }
 
 export function derive(d: AircraftDefinition, weight = 0): AircraftProperties {
+  d = validateAircraft(d);
   const out = properties(d), neutral = out.neutralPoint;
   updateMass(d, massLayout(d), clamp(weight, -1, 1), out, neutral, planform(d.mainWing).chord);
   evaluateReference(out);
   return out;
 }
 
-function polar(alpha: number, aspect: number, out: Polar): Polar {
+function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1): Polar {
   alpha = Math.atan2(Math.sin(alpha), Math.cos(alpha));
   const absolute = Math.abs(alpha);
   const slope = 2 * Math.PI * aspect / (aspect + 2);
@@ -187,14 +213,30 @@ function polar(alpha: number, aspect: number, out: Polar): Polar {
   out.cl = (1 - separated) * slope * alpha + separated * 1.05 * Math.sin(2 * alpha);
   const dragBlend = clamp((absolute - 12 * DEG) / (20 * DEG), 0, 1);
   const dragSeparation = dragBlend * dragBlend * (3 - 2 * dragBlend);
-  out.cd = 0.018 + out.cl * out.cl / (Math.PI * Math.max(aspect, 0.1) * 0.82)
+  out.inducedCd = groundEffect * out.cl * out.cl / (Math.PI * Math.max(aspect, 0.1) * 0.82);
+  out.cd = 0.018 + out.inducedCd
     + 1.7 * Math.sin(alpha) ** 2 * dragSeparation + 0.3 * (1 - Math.cos(alpha)) ** 2;
   return out;
 }
 
 /** 迎角为弧度；光滑失速混合保留失速前有限翼升力斜率。 */
 export function coefficients(alpha: number, aspect: number): Polar {
-  return polar(alpha, aspect, { cl: 0, cd: 0 });
+  return polar(alpha, aspect, { cl: 0, cd: 0, inducedCd: 0 });
+}
+
+/**
+ * 有限翼近地诱导阻力近似 φ=(16h/b)²/(1+(16h/b)²)，不是目标升阻比拟合。
+ * h 为作用点到水面 Y=0 的净空，b 为翼展在水面上的投影；垂尾不调用。
+ * FAA PHAK 第5章说明近地减弱下洗和诱导阻力：
+ * https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/phak/07_phak_ch5.pdf
+ * McCormick 近似见 COBEM 2007 式(14)，对梯形翼、强上反角和极小净空仅作趋势近似：
+ * https://abcm.org.br/anais/cobem/2007/pdf/COBEM2007-1467.pdf
+ * 保持既有 CL、型阻和分离模型；φ 仅修正诱导阻力及传至尾翼的主翼下洗。
+ */
+function groundEffectFactor(clearance: number, span: number) {
+  if (span <= 1e-9) return 1;
+  const ratio = 16 * Math.max(0, clearance) / span;
+  return 1 - 1 / (1 + ratio * ratio);
 }
 
 function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
@@ -204,15 +246,17 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
     const center = (vertical ? p.span : p.span / 2) * (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
     const quarter = quarterChord(w);
     const incidence = (key === 'mainWing' ? d.assembly.mainIncidence : key === 'horizontalTail' ? d.assembly.tailIncidence : 0) * DEG;
-    const height = key === 'mainWing' ? d.assembly.mainWingHeight : 0.35;
+    const origin = wingOrigin(d, key);
     for (let side = -1; side <= 1; side += 2) {
       if (vertical && side === -1) continue;
       const angle = w.dihedral * DEG;
       surfaces.push({ name: vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '水平尾翼'}${side < 0 ? '左' : '右'}`,
-        point: new Vector3(d.assembly[key] - quarter * Math.cos(incidence),
-          vertical ? height + center : height - quarter * Math.sin(incidence) + center * Math.tan(angle), vertical ? 0 : side * center),
+        point: new Vector3(origin.x - quarter * Math.cos(incidence),
+          vertical ? origin.y + center : origin.y - quarter * Math.sin(incidence) + center * Math.tan(angle), vertical ? 0 : side * center),
         normal: vertical ? new Vector3(0, 0, 1) : new Vector3(0, Math.cos(angle), -side * Math.sin(angle)),
-        area: p.area / (vertical ? 1 : 2), aspect: p.aspect,
+        area: p.area / (vertical ? 1 : 2), aspect: p.aspect, span: p.span,
+        spanDirection: vertical ? new Vector3(0, 1, 0) : new Vector3(0, Math.tan(angle), side),
+        clearance: Infinity, groundEffect: 1, inducedDrag: 0,
         incidence: vertical ? 0 : (key === 'mainWing' ? d.assembly.mainIncidence + 2 : d.assembly.tailIncidence) * DEG,
         kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
         force: new Vector3(), drag: new Vector3() });
@@ -222,16 +266,17 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
 }
 
 /** 与飞行积分共用单翼计算；力、阻力输出先保留在机体坐标中。 */
-function evaluateSurface(surface: AerodynamicSurface, input: Controls, mainLift: number, mainAspect: number,
+function evaluateSurface(surface: AerodynamicSurface, input: Controls, mainDownwash: number, mainAspect: number,
   velocity: Vector3, coefficient: Polar, liftDirection: Vector3) {
   const speed = velocity.length(), normalSpeed = velocity.dot(surface.normal);
   let incidence = surface.incidence;
   if (surface.kind === 'main') incidence -= surface.side * input.aileron * 8 * DEG;
-  else if (surface.kind === 'tail') incidence -= mainLift * 0.78 / (Math.PI * mainAspect) + input.elevator * 12 * DEG;
+  else if (surface.kind === 'tail') incidence -= mainDownwash * 0.78 / (Math.PI * mainAspect) + input.elevator * 12 * DEG;
   else incidence -= input.rudder * 15 * DEG;
   surface.alpha = Math.atan2(-normalSpeed, velocity.x) + incidence;
-  polar(surface.alpha, surface.aspect, coefficient);
+  polar(surface.alpha, surface.aspect, coefficient, surface.groundEffect);
   const lift = 0.5 * AIR_DENSITY * (velocity.x ** 2 + normalSpeed ** 2) * surface.area * coefficient.cl;
+  surface.inducedDrag = 0.5 * AIR_DENSITY * speed * speed * surface.area * coefficient.inducedCd;
   liftDirection.copy(surface.normal);
   if (speed > 1e-9) liftDirection.addScaledVector(velocity, -normalSpeed / (speed * speed));
   if (liftDirection.lengthSq() > 1e-12) liftDirection.normalize();
@@ -269,6 +314,7 @@ class AerodynamicSummary implements AerodynamicReference {
       const panels = surfaces.filter(surface => surface.kind === kind);
       return { kind, name: ['主翼', '水平尾翼', '垂直尾翼'][index],
         area: panels.reduce((sum, surface) => sum + surface.area, 0), aspect: panels[0].aspect, alpha: 0,
+        groundEffect: 1, inducedDrag: 0,
         force: new Vector3(), lift: new Vector3(), drag: new Vector3(), torque: new Vector3() };
     });
   }
@@ -283,7 +329,7 @@ class AerodynamicSummary implements AerodynamicReference {
     this.torque.set(0, 0, 0); this.liftMoment.set(0, 0, 0); this.dragMoment.set(0, 0, 0);
     for (const wing of this.wings) {
       wing.force.set(0, 0, 0); wing.lift.set(0, 0, 0); wing.drag.set(0, 0, 0);
-      wing.torque.set(0, 0, 0); wing.alpha = 0;
+      wing.torque.set(0, 0, 0); wing.alpha = 0; wing.groundEffect = 0; wing.inducedDrag = 0;
     }
     for (const surface of this.surfaces) {
       const wing = this.wings[surface.kind === 'main' ? 0 : surface.kind === 'tail' ? 1 : 2];
@@ -292,6 +338,8 @@ class AerodynamicSummary implements AerodynamicReference {
       this.localDrag.copy(surface.drag).applyQuaternion(this.inverse);
       wing.force.add(this.localForce); wing.drag.add(this.localDrag);
       wing.alpha += surface.alpha * surface.area / wing.area;
+      wing.groundEffect += surface.groundEffect * surface.area / wing.area;
+      wing.inducedDrag += surface.inducedDrag;
       this.moment.crossVectors(this.arm, this.localForce);
       wing.torque.add(this.moment); this.torque.add(this.moment);
       this.localForce.sub(this.localDrag);
@@ -321,11 +369,16 @@ class AerodynamicSummary implements AerodynamicReference {
 }
 
 function evaluateReference(aircraft: AircraftProperties) {
+  // 仅在构型派生时采样既有极曲线；非每个积分步重复搜索，不计尾翼或地效增升。
+  const polarSample: Polar = { cl: 0, cd: 0, inducedCd: 0 };
+  let maxCl = 0;
+  for (let i = 0; i <= 360; i++) maxCl = Math.max(maxCl, polar(i * DEG / 4, aircraft.aspect, polarSample).cl);
+  aircraft.stallSpeed = Math.sqrt(2 * aircraft.mass * GRAVITY / (AIR_DENSITY * aircraft.wingArea * maxCl));
   const summary = aircraft.aerodynamics as AerodynamicSummary;
   const alpha = 5 * DEG, beta = 3 * DEG, speed = 12;
   const velocity = new Vector3(speed * Math.cos(alpha) * Math.cos(beta),
     -speed * Math.sin(alpha) * Math.cos(beta), speed * Math.sin(beta));
-  const coefficient: Polar = { cl: 0, cd: 0 }, direction = new Vector3();
+  const coefficient: Polar = { cl: 0, cd: 0, inducedCd: 0 }, direction = new Vector3();
   let mainLift = 0;
   for (const surface of summary.surfaces) {
     const cl = evaluateSurface(surface, ZERO_CONTROLS, mainLift, aircraft.aspect, velocity, coefficient, direction);
@@ -335,16 +388,17 @@ function evaluateReference(aircraft: AircraftProperties) {
 }
 /** 与 scene.wingGeometry 相同的翼型采样，碰撞与发射净空包含安装角和厚度。 */
 function makeContacts(d: AircraftDefinition): Vector3[] {
+  const { nose, tail } = fuselageEnds(d);
   const points = [
-    new Vector3(d.fuselage.length / 2, -0.12, 0),
-    new Vector3(d.fuselage.length / 2 + 0.252, -0.156, 0),
-    new Vector3(-d.fuselage.length / 2, -0.12, 0),
+    new Vector3(nose, -0.12, 0),
+    new Vector3(nose + 0.252, -0.156, 0),
+    new Vector3(tail, -0.12, 0),
     new Vector3(d.cockpit.position - 0.75, -0.495, 0),
     new Vector3(d.cockpit.position + 0.75, -0.495, 0),
   ];
   for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
     const w = d[key], vertical = key === 'verticalTail';
-    const height = key === 'mainWing' ? d.assembly.mainWingHeight : 0.35;
+    const origin = wingOrigin(d, key);
     const incidence = (key === 'mainWing' ? d.assembly.mainIncidence : key === 'horizontalTail' ? d.assembly.tailIncidence : 0) * DEG;
     const c = Math.cos(incidence), s = Math.sin(incidence);
     for (const side of [-1, 1]) {
@@ -359,20 +413,34 @@ function makeContacts(d: AircraftDefinition): Vector3[] {
           const x = -leading - u * chord;
           for (const face of [-1, 1]) {
             const y = (vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u)) + face * thickness;
-            points.push(vertical ? new Vector3(d.assembly[key] + x, height + span, y)
-              : new Vector3(d.assembly[key] + x * c - y * s, height + x * s + y * c + span * Math.tan(w.dihedral * DEG), side * span));
+            points.push(vertical ? new Vector3(origin.x + x, origin.y + span, y)
+              : new Vector3(origin.x + x * c - y * s, origin.y + x * s + y * c + span * Math.tan(w.dihedral * DEG), side * span));
           }
         }
       }
     }
   }
+  const support = mainWingSupport(d);
+  if (support.mass > 0) {
+    points.push(new Vector3(support.frontX, support.frontY, 0), new Vector3(support.backX, support.backY, 0),
+      new Vector3(support.frontX, support.frontY - support.height, 0), new Vector3(support.backX, support.backY - support.height, 0));
+  }
   return points;
 }
 
-/** 水平发射时重心高度；所有接触点至少高于平台顶面 5 cm。 */
+/** 助跑保持水平；高度同时预留±1°离台滚转的5 cm净空，不在空中抬高机体。 */
 export function launchHeight(d: AircraftDefinition, cg = derive(d).cg): number {
+  d = validateAircraft(d);
+  return contactLaunchHeight(makeContacts(d), cg);
+}
+
+function contactLaunchHeight(contacts: Vector3[], cg: Vector3): number {
   let lowest = Infinity;
-  for (const point of makeContacts(d)) lowest = Math.min(lowest, point.y - cg.y);
+  const c = Math.cos(LAUNCH_ROLL_LIMIT), s = Math.sin(LAUNCH_ROLL_LIMIT);
+  for (const point of contacts) {
+    const y = point.y - cg.y;
+    lowest = Math.min(lowest, y, y * c - Math.abs(point.z - cg.z) * s);
+  }
   return LAUNCH.height + 0.05 - lowest;
 }
 
@@ -397,6 +465,7 @@ export class FlightSimulation {
   launching = true;
   private flightStarted = false;
   private launchTime = 0;
+  private launchRoll = 0;
   private replay: InputRecording | null = null;
   private replayIndex = 0;
   private readonly parts: MassPart[];
@@ -418,11 +487,12 @@ export class FlightSimulation {
   private readonly previousVelocity = new Vector3();
   private readonly previousOmega = new Vector3();
   private readonly midpointVelocity = new Vector3();
+  private readonly midpointPosition = new Vector3();
   private readonly midpointOmega = new Vector3();
   private readonly candidateVelocity = new Vector3();
   private readonly candidateOmega = new Vector3();
   private readonly midpointQuaternion = new Quaternion();
-  private readonly polar: Polar = { cl: 0, cd: 0 };
+  private readonly polar: Polar = { cl: 0, cd: 0, inducedCd: 0 };
   private maxSpeed = 10;
   private minSpeed = 10;
   private maxHeight = 10;
@@ -430,7 +500,7 @@ export class FlightSimulation {
   private weight = 0;
   private readonly effective: Controls = { ...ZERO_CONTROLS };
 
-  constructor(d: AircraftDefinition, mode: FlightMode = 'standard') {
+  constructor(d: AircraftDefinition, mode: FlightMode = 'standard', private readonly fixedLaunchRoll?: number) {
     this.definition = validateAircraft(d);
     this.mode = mode;
     this.parts = massLayout(this.definition);
@@ -443,9 +513,7 @@ export class FlightSimulation {
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     evaluateReference(this.aircraft);
     this.flightInertia.copy(this.aircraft.inertia);
-    let lowest = Infinity;
-    for (const point of this.contacts) lowest = Math.min(lowest, point.y - this.aircraft.cg.y);
-    this.launchAltitude = LAUNCH.height + 0.05 - lowest;
+    this.launchAltitude = contactLaunchHeight(this.contacts, this.aircraft.cg);
     this.telemetry = { speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
       stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(),
       aeroPower: 0, energy: 0, staticMargin: 0, potentialEnergy: 0, kineticEnergy: 0,
@@ -453,7 +521,10 @@ export class FlightSimulation {
     this.reset();
   }
 
-  reset() {
+  /** 新飞行重新抽样；构造时明确指定角度则保持该角度。回放仅覆盖本次重置。 */
+  reset(launchRoll = this.fixedLaunchRoll ?? (Math.random() * 2 - 1) * LAUNCH_ROLL_LIMIT) {
+    if (!Number.isFinite(launchRoll) || Math.abs(launchRoll) > LAUNCH_ROLL_LIMIT) throw new RangeError('离台滚转角须在 ±1° 之间');
+    this.launchRoll = launchRoll;
     this.position.set(LAUNCH.startX, this.launchAltitude, 0);
     this.velocity.set(0, 0, 0);
     this.quaternion.identity();
@@ -466,7 +537,10 @@ export class FlightSimulation {
     Object.assign(this.effective, ZERO_CONTROLS);
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     this.aircraft.inertia.copy(this.flightInertia);
-    for (const surface of this.surfaces) { surface.force.set(0, 0, 0); surface.drag.set(0, 0, 0); surface.alpha = 0; }
+    for (const surface of this.surfaces) {
+      surface.force.set(0, 0, 0); surface.drag.set(0, 0, 0); surface.alpha = 0;
+      surface.clearance = Infinity; surface.groundEffect = 1; surface.inducedDrag = 0;
+    }
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0); this.telemetry.torque.set(0, 0, 0);
     this.telemetry.physicsMs = 0; this.telemetry.aeroPower = 0;
     this.telemetry.dissipatedEnergy = 0; this.telemetry.initialEnergy = 0; this.telemetry.liftDragRatio = 0;
@@ -475,16 +549,17 @@ export class FlightSimulation {
   }
 
   getRecording(): InputRecording {
-    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength };
+    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll };
   }
 
   loadReplay(recording: InputRecording) {
     if (!Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length < recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
+    if (!Number.isFinite(recording.launchRoll) || Math.abs(recording.launchRoll) > LAUNCH_ROLL_LIMIT) throw new Error('飞行记录离台滚转角无效');
     for (let i = 0; i < recording.length * FRAME_WIDTH; i++) {
       if (!Number.isFinite(recording.frames[i]) || (i % FRAME_WIDTH === 0 && (recording.frames[i] <= 0 || recording.frames[i] > 0.25))) throw new Error('飞行记录包含无效输入');
     }
-    const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length };
-    this.reset();
+    const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length, launchRoll: recording.launchRoll };
+    this.reset(copy.launchRoll);
     this.replay = copy;
     this.recording.set(copy.frames);
     this.recordingLength = copy.length;
@@ -539,6 +614,9 @@ export class FlightSimulation {
         this.position.x = LAUNCH.endX;
         this.velocity.x = LAUNCH.speed;
         this.launching = false;
+        // 绕重心只改变姿态；速度、角速度和高度不变，能量预算不受扰动注入。
+        this.cross.set(1, 0, 0);
+        this.quaternion.setFromAxisAngle(this.cross, this.launchRoll);
         this.beginFlight();
       }
       this.updateTelemetry();
@@ -558,19 +636,28 @@ export class FlightSimulation {
     this.telemetry.dissipatedEnergy = 0;
   }
 
-  private evaluateForces(input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion) {
+  private evaluateForces(input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3) {
     const inertia = this.aircraft.inertia;
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
     const speed = velocity.length();
     this.torque.set(0, 0, 0);
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0);
-    let mainLift = 0, power = 0;
+    let mainDownwash = 0, power = 0;
     for (const surface of this.surfaces) {
       this.arm.copy(surface.point).sub(this.aircraft.cg);
+      // h 只相对连续水面 Y=0，不以平台/岸边高度切换，离台时地效不会跳变。
+      this.cross.copy(this.arm).applyQuaternion(orientation).add(position);
+      surface.clearance = this.cross.y;
+      surface.groundEffect = 1;
+      if (surface.kind !== 'vertical') {
+        this.cross.copy(surface.spanDirection).applyQuaternion(orientation);
+        const span = surface.span * Math.hypot(this.cross.x, this.cross.z);
+        surface.groundEffect = groundEffectFactor(surface.clearance, span);
+      }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      const cl = evaluateSurface(surface, input, mainLift, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
-      if (surface.kind === 'main') mainLift += cl;
+      const cl = evaluateSurface(surface, input, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      if (surface.kind === 'main') mainDownwash += cl * surface.groundEffect;
       // 升力与作用点局部来流正交；仅真实阻力贡献耗散功率。
       power += surface.drag.dot(this.localVelocity);
       this.cross.crossVectors(this.arm, surface.force); this.torque.add(this.cross);
@@ -615,7 +702,8 @@ export class FlightSimulation {
         this.rotation.setFromAxisAngle(this.cross, angle);
         this.midpointQuaternion.multiply(this.rotation).normalize();
       }
-      this.evaluateForces(input, this.midpointVelocity, this.midpointOmega, this.midpointQuaternion);
+      this.midpointPosition.copy(this.position).addScaledVector(this.midpointVelocity, dt / 2);
+      this.evaluateForces(input, this.midpointVelocity, this.midpointOmega, this.midpointQuaternion, this.midpointPosition);
       this.candidateVelocity.copy(this.previousVelocity).addScaledVector(this.telemetry.force, dt / (2 * mass));
       this.candidateVelocity.y -= GRAVITY * dt / 2;
       const w = this.midpointOmega;
