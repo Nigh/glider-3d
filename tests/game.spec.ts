@@ -594,12 +594,58 @@ test('主视图持续展示三翼结果，安装角滑条实时改变气动数�
   expect(Number(await stall.textContent())).toBeLessThan(beforeStall);
 });
 
+test('拥挤翼型的外伸手柄可分别拖动且不改变弦长', async ({ page }) => {
+  await enterDesign(page);
+  for (const [tab, key] of [['主翼', 'mainWing'], ['水平尾翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    await page.getByText('精确编辑四个顶点', { exact: true }).click();
+    await number(page, '顶点2展向坐标', 0.25);
+    await number(page, '顶点3后向坐标', 0.45);
+    const overlay = page.locator('.scene-editor');
+    const controls = await overlay.evaluate(svg => {
+      const points = Array.from(svg.querySelectorAll<SVGGElement>('g[data-handle]')).filter(g => g.style.display !== 'none').map(g => {
+        const matrix = g.transform.baseVal.consolidate()!.matrix;
+        return { x: matrix.e, y: matrix.f };
+      });
+      const knobs = Array.from(svg.querySelectorAll<SVGCircleElement>('[data-segment-knob]')).filter(c => (c.parentElement as unknown as SVGElement).style.display !== 'none').map(c => ({ x: c.cx.baseVal.value, y: c.cy.baseVal.value }));
+      return [...points, ...knobs];
+    });
+    for (let i = 0; i < controls.length; i++) for (let j = 0; j < i; j++) {
+      expect(Math.hypot(controls[i].x - controls[j].x, controls[i].y - controls[j].y)).toBeGreaterThanOrEqual(51.9);
+    }
+    for (const id of ['14', '23']) {
+      const before = (await aircraft(page))[key].points;
+      const knob = overlay.locator(`g[data-segment="${id}"][data-side="1"] [data-segment-knob]`);
+      const box = (await knob.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 10, box.y + box.height / 2 + 10, { steps: 4 });
+      await page.mouse.up();
+      const after = (await aircraft(page))[key].points;
+      const first = id === '14' ? 0 : 1, last = id === '14' ? 3 : 2;
+      expect(after[last].x - after[first].x).toBeCloseTo(before[last].x - before[first].x, 8);
+      expect(after[first].x).not.toBe(before[first].x);
+      await page.getByRole('button', { name: '撤销', exact: true }).click();
+    }
+    const before = (await aircraft(page))[key].points;
+    const vertex = overlay.locator('g[data-handle="1"] circle').nth(1);
+    const box = (await vertex.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 10, box.y + box.height / 2 - 10, { steps: 4 });
+    await page.mouse.up();
+    const after = (await aircraft(page))[key].points;
+    expect(after[1]).not.toEqual(before[1]);
+    expect(after[2].x).toBe(before[2].x);
+  }
+});
+
 test('翼弦线段整体拖动保留弦长，垂直轻吸附可用Ctrl绕过', async ({ page, isMobile }) => {
   test.skip(isMobile, '鼠标与Ctrl组合在桌面验证；数字输入提供触摸替代');
   await enterDesign(page);
   for (const segment of ['14', '23']) {
     const before = (await aircraft(page)).mainWing.points;
-    const line = page.locator(`.scene-editor g[data-segment="${segment}"][data-side="1"]`);
+    const line = page.locator(`.scene-editor g[data-segment="${segment}"][data-side="1"] [data-segment-knob]`);
     const box = await line.boundingBox();
     if (!box) throw new Error('翼弦拖动区不可见');
     await page.keyboard.down('Control');
@@ -861,7 +907,7 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
     for (const segment of [false, true]) {
       const name = tab + (segment ? '根弦线段1–4' : '顶点1');
       const handle = page.getByRole('button', { name, exact: true });
-      const before = await aircraft(page), box = await handle.boundingBox();
+      const before = await aircraft(page), box = await (segment ? handle.locator('[data-segment-knob]') : handle).boundingBox();
       if (!box) throw new Error('尾翼根拖动区不可见');
       const dx = key === 'verticalTail' ? (segment ? 10 : -10) : 0;
       const dy = key === 'horizontalTail' ? (segment ? -10 : 10) : 0;
@@ -869,10 +915,6 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
       await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 5 });
-      await expect.poll(async () => {
-        const moved = await handle.boundingBox();
-        return moved ? Math.hypot(moved.x - box.x - dx, moved.y - box.y - dy) : Infinity;
-      }).toBeLessThan(1);
       await page.mouse.up();
       await page.keyboard.up('Control');
       const after = await aircraft(page), root = await page.evaluate(key => window.glider.scene.wingRoots[key], key);

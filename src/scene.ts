@@ -83,8 +83,8 @@ export class SceneView {
   private readonly editProjection = new THREE.Vector3();
   private readonly editorOverlay = document.createElementNS(SVG_NS, 'svg');
   private readonly editorPolygons: SVGPolygonElement[] = [];
-  private readonly editorHandles: { group: SVGGElement; index: number; side: number; x: number; y: number }[] = [];
-  private readonly editorSegments: { group: SVGGElement; index: number; side: number; x1: number; y1: number; x2: number; y2: number }[] = [];
+  private readonly editorHandles: { group: SVGGElement; leader: SVGLineElement; index: number; side: number; x: number; y: number; ax: number; ay: number }[] = [];
+  private readonly editorSegments: { group: SVGGElement; index: number; side: number; x: number; y: number; x1: number; y1: number; x2: number; y2: number }[] = [];
   private editorSegmentDrag = -1;
   private readonly editorSnap: { active: boolean; kind: 'grid' | 'vertex' | 'mount' | null; value: number | null; disabled: boolean } = { active: false, kind: null, value: null, disabled: false };
   private editorTarget: EditorTarget = null;
@@ -156,7 +156,7 @@ export class SceneView {
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   constructor(private readonly host: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setClearColor(0xd4e3e4);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -423,7 +423,24 @@ export class SceneView {
         if (!hit) line.style.pointerEvents = 'none';
         group.appendChild(line);
       }
-      this.editorSegments.push({ group, index: i === 0 ? 0 : 1, side: i === 2 ? -1 : 1, x1: 0, y1: 0, x2: 0, y2: 0 });
+      const leader = document.createElementNS(SVG_NS, 'line');
+      leader.setAttribute('stroke', '#a33f24');
+      leader.setAttribute('stroke-dasharray', '3 3');
+      leader.style.pointerEvents = 'none';
+      group.appendChild(leader);
+      const knob = document.createElementNS(SVG_NS, 'circle');
+      knob.setAttribute('r', '9');
+      knob.setAttribute('fill', '#fafbf6');
+      knob.setAttribute('stroke', '#a33f24');
+      knob.setAttribute('stroke-width', '3');
+      knob.setAttribute('data-segment-knob', '');
+      const hit = knob.cloneNode() as SVGCircleElement;
+      hit.removeAttribute('data-segment-knob');
+      hit.setAttribute('r', '22');
+      hit.setAttribute('fill', 'transparent');
+      hit.setAttribute('stroke', 'none');
+      group.append(hit, knob);
+      this.editorSegments.push({ group, index: i === 0 ? 0 : 1, side: i === 2 ? -1 : 1, x: 0, y: 0, x1: 0, y1: 0, x2: 0, y2: 0 });
       group.addEventListener('pointerdown', e => this.beginEditorDrag(e, i, true));
       group.addEventListener('keydown', e => this.keyEditor(e, i, true));
       group.addEventListener('focus', () => group.lastElementChild!.setAttribute('stroke-width', '6'));
@@ -450,8 +467,13 @@ export class SceneView {
       text.setAttribute('paint-order', 'stroke'); text.setAttribute('stroke', '#fafbf6');
       text.setAttribute('stroke-width', '3');
       text.style.pointerEvents = 'none';
+      const leader = document.createElementNS(SVG_NS, 'line');
+      leader.setAttribute('stroke', '#a33f24');
+      leader.setAttribute('stroke-dasharray', '3 3');
+      leader.style.pointerEvents = 'none';
+      overlay.appendChild(leader);
       group.append(hit, point, text);
-      const handle = { group, index: i < 4 ? i : i - 3, side: i < 4 ? 1 : -1, x: 0, y: 0 };
+      const handle = { group, leader, index: i < 4 ? i : i - 3, side: i < 4 ? 1 : -1, x: 0, y: 0, ax: 0, ay: 0 };
       this.editorHandles.push(handle);
       group.addEventListener('pointerdown', e => this.beginEditorDrag(e, i));
       group.addEventListener('focus', () => { point.setAttribute('r', '9'); });
@@ -519,6 +541,8 @@ export class SceneView {
       this.body.localToWorld(this.editProjection).project(this.camera);
       handle.x = (this.editProjection.x + 1) * this.width / 2;
       handle.y = (1 - this.editProjection.y) * this.height / 2;
+      handle.ax = handle.x; handle.ay = handle.y;
+      handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
       const name = key === 'assembly' ? ['主翼位置', '水平尾翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点'][i] : `${label}${handle.side < 0 ? '左翼' : ''}顶点${handle.index + 1}`;
       handle.group.setAttribute('aria-label', name);
@@ -532,16 +556,66 @@ export class SceneView {
       if (!show) continue;
       const first = this.editorHandles[segment.side < 0 ? 4 : segment.index];
       const last = this.editorHandles[segment.side < 0 ? 5 : segment.index === 0 ? 3 : 2];
-      segment.x1 = first.x; segment.y1 = first.y;
-      segment.x2 = last.x; segment.y2 = last.y;
+      segment.x1 = first.ax; segment.y1 = first.ay;
+      segment.x2 = last.ax; segment.y2 = last.ay;
       const id = segment.index === 0 ? '14' : '23';
       segment.group.setAttribute('data-segment', id);
       segment.group.setAttribute('data-side', String(segment.side));
       const side = key === 'verticalTail' ? '' : segment.side > 0 ? '右翼' : '左翼';
       segment.group.setAttribute('aria-label', `${label}${segment.index === 0 ? '根弦线段1–4' : `${side}梢弦线段2–3`}`);
-      for (const line of segment.group.children) {
+      for (const line of Array.from(segment.group.children).slice(0, 2)) {
         line.setAttribute('x1', String(segment.x1)); line.setAttribute('y1', String(segment.y1));
         line.setAttribute('x2', String(segment.x2)); line.setAttribute('y2', String(segment.y2));
+      }
+      // Root and tip controls extend along opposite chord normals, in CSS pixels.
+      const dx = segment.x2 - segment.x1, dy = segment.y2 - segment.y1;
+      const length = Math.hypot(dx, dy) || 1;
+      const direction = segment.index === 0 ? -1 : segment.side;
+      segment.x = (segment.x1 + segment.x2) / 2 + dy / length * 52 * direction;
+      segment.y = (segment.y1 + segment.y2) / 2 - dx / length * 52 * direction;
+      const desiredX = segment.x, desiredY = segment.y;
+      let placed = false;
+      for (let radius = 0; radius <= Math.max(this.width, this.height) && !placed; radius += 26) {
+        for (let step = 0; step < 16; step++) {
+          const x = desiredX + Math.cos(step * Math.PI / 8) * radius;
+          const y = desiredY + Math.sin(step * Math.PI / 8) * radius;
+          if (x < 24 || x > this.width - 24 || y < 64 || y > this.height - 24) continue;
+          if (this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < 52)) continue;
+          segment.x = x; segment.y = y; placed = true; break;
+        }
+      }
+      const leader = segment.group.children[2];
+      leader.setAttribute('x1', String((segment.x1 + segment.x2) / 2));
+      leader.setAttribute('y1', String((segment.y1 + segment.y2) / 2));
+      leader.setAttribute('x2', String(segment.x)); leader.setAttribute('y2', String(segment.y));
+      for (const circle of Array.from(segment.group.children).slice(3)) {
+        circle.setAttribute('cx', String(segment.x)); circle.setAttribute('cy', String(segment.y));
+      }
+    }
+    if (key !== 'assembly') {
+      const handles = this.editorHandles.filter(h => h.group.style.display !== 'none');
+      const occupied = this.editorSegments.filter(s => s.group.style.display !== 'none').map(s => ({ x: s.x, y: s.y }));
+      for (const handle of handles) {
+        // Only crowded points move; leaders retain the actual geometry position.
+        const crowded = handles.some(other => other !== handle && Math.hypot(other.ax - handle.ax, other.ay - handle.ay) < 52);
+        if (crowded || handle.y < 64 || occupied.some(other => Math.hypot(other.x - handle.x, other.y - handle.y) < 52)) {
+          let found = false;
+          for (let radius = 52; radius <= Math.max(this.width, this.height) && !found; radius += 26) {
+            for (let step = 0; step < 16; step++) {
+              const angle = (handle.index < 2 ? -Math.PI / 2 : Math.PI / 2) + step * Math.PI / 8;
+              const x = handle.ax + Math.cos(angle) * radius, y = handle.ay + Math.sin(angle) * radius;
+              if (x < 24 || x > this.width - 24 || y < 64 || y > this.height - 24) continue;
+              if (occupied.some(other => Math.hypot(other.x - x, other.y - y) < 52)) continue;
+              if (handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < 52)) continue;
+              handle.x = x; handle.y = y; found = true; break;
+            }
+          }
+        }
+        occupied.push(handle);
+        handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
+        handle.leader.style.display = handle.x === handle.ax && handle.y === handle.ay ? 'none' : '';
+        handle.leader.setAttribute('x1', String(handle.ax)); handle.leader.setAttribute('y1', String(handle.ay));
+        handle.leader.setAttribute('x2', String(handle.x)); handle.leader.setAttribute('y2', String(handle.y));
       }
     }
     for (let side = 0; side < 2; side++) {
@@ -582,6 +656,10 @@ export class SceneView {
       for (let i = 0; i < this.editorSegments.length; i++) {
         const line = this.editorSegments[i];
         if (line.group.style.display === 'none') continue;
+        const knobDistance = (line.x - x) ** 2 + (line.y - y) ** 2;
+        if (knobDistance < nearest && knobDistance <= 22 ** 2) {
+          nearest = knobDistance; vertex = -1; edge = i; edgeDistance = -1;
+        }
         const dx = line.x2 - line.x1, dy = line.y2 - line.y1, squared = dx * dx + dy * dy;
         if (squared < 1e-6) continue;
         const t = ((x - line.x1) * dx + (y - line.y1) * dy) / squared;
@@ -589,7 +667,7 @@ export class SceneView {
         const distance = (x - line.x1 - t * dx) ** 2 + (y - line.y1 - t * dy) ** 2;
         if (distance < edgeDistance) { edgeDistance = distance; edge = i; }
       }
-      if (nearest > 36 && edge >= 0) { segment = true; index = edge; }
+      if (edgeDistance < 0 || nearest > 36 && edge >= 0) { segment = true; index = edge; }
       else if (vertex >= 0) { segment = false; index = vertex; }
     }
     this.editDefinition = clone(this.definition);
