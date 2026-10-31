@@ -71,13 +71,44 @@
  if(down&&screen==='flight'&&flightReady)keys.add(e.key.toLowerCase());else keys.delete(e.key.toLowerCase());
  if(down&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
  }
- onMount(()=>{scene=new SceneView(host);scene.updateAircraft(aircraft);sceneReady=true;let previous=performance.now(),accumulator=0,lastInstruments=0;let request=0;
- const tick=(now:number)=>{let elapsed=Math.min((now-previous)/1000,0.1);previous=now;if(!document.hidden){if(screen==='flight'&&simulation&&flightReady&&!paused){accumulator+=elapsed;let steps=0;while(accumulator>=1/60&&steps<5){controls.weight=Math.max(-1,Math.min(1,weight+(keys.has('arrowup')||keys.has('w')?1:0)-(keys.has('arrowdown')||keys.has('s')?1:0)));controls.rudder=Math.max(-1,Math.min(1,rudder+(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0)));controls.elevator=elevator;controls.aileron=aileron;simulation.step(controls,1/60);sampleFlight();accumulator-=1/60;steps++;if(simulation.ended){finish();accumulator=0;break;}}if(steps===5)accumulator=0;}else accumulator=0;scene.render(elapsed);if(screen==='flight')refreshHud();if(now-lastInstruments>150){refreshTrajectory();perf={...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0};lastInstruments=now;}}request=requestAnimationFrame(tick);};request=requestAnimationFrame(tick);
- const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,false),blur=clearControls;window.addEventListener('keydown',down);window.addEventListener('keyup',up);window.addEventListener('blur',blur);document.addEventListener('visibilitychange',blur);
+onMount(()=>{
+scene=new SceneView(host);scene.updateAircraft(aircraft);sceneReady=true;
+const fixedDt=1/60;
+let previous=performance.now(),accumulator=0,lastInstruments=0,request=0;
+const visibility=()=>{clearControls();previous=performance.now();accumulator=0;scene.captureFlightState();};
+const tick=(now:number)=>{
+  const elapsed=Math.min(Math.max((now-previous)/1000,0),0.1);previous=now;
+  if(!document.hidden){
+    const running=screen==='flight'&&simulation&&flightReady&&!paused;
+    if(running){
+      accumulator+=elapsed;
+      let steps=0;
+      while(accumulator>=fixedDt&&steps<5){
+        controls.weight=Math.max(-1,Math.min(1,weight+(keys.has('arrowup')||keys.has('w')?1:0)-(keys.has('arrowdown')||keys.has('s')?1:0)));
+        controls.rudder=Math.max(-1,Math.min(1,rudder+(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0)));
+        controls.elevator=elevator;controls.aileron=aileron;
+        scene.captureFlightState();
+        simulation!.step(controls,fixedDt);sampleFlight();
+        accumulator-=fixedDt;steps++;
+        if(simulation!.ended){finish();accumulator=0;break;}
+      }
+      // 过载时只丢弃整步积压，保留渲染插值所需的小数余量。
+      if(accumulator>=fixedDt)accumulator%=fixedDt;
+    }else{
+      accumulator=0;scene.captureFlightState();
+    }
+    scene.render(elapsed,running?accumulator/fixedDt:1);
+    if(screen==='flight')refreshHud();
+    if(now-lastInstruments>150){refreshTrajectory();perf={...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0};lastInstruments=now;}
+  }
+  request=requestAnimationFrame(tick);
+};
+request=requestAnimationFrame(tick);
+const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,false),blur=clearControls;window.addEventListener('keydown',down);window.addEventListener('keyup',up);window.addEventListener('blur',blur);document.addEventListener('visibilitychange',visibility);
  try{saved=listAircraft();best=readBest(mode);}catch(e){notify((e as Error).message);}
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get result(){return result}}});
- return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);scene.dispose();window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',blur);};});
+return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);scene.dispose();window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
  function touch(e:PointerEvent,key:'weight'|'rudder',value:number){if(!flightReady)return;e.currentTarget instanceof HTMLElement&&e.currentTarget.setPointerCapture(e.pointerId);if(key==='weight')weight=value;else rudder=value;}
 </script>
 <svelte:head><title>无动力滑翔 · 设计与飞行</title></svelte:head>

@@ -1,6 +1,10 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import type { AircraftDefinition } from '../src/model';
+import type * as SceneModule from '../src/scene';
+import type * as PhysicsModule from '../src/physics';
+import type * as ModelModule from '../src/model';
+import type { Camera } from 'three';
 
 type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string };
 declare global {
@@ -411,6 +415,100 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
     })).toBeGreaterThanOrEqual(0.549);
   }
   expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
+});
+
+test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', async ({ page, isMobile }) => {
+  test.skip(isMobile, '高刷新率回归在 desktop-chromium 项目运行');
+  const result = await page.evaluate(async () => {
+    // evaluate 在浏览器执行，必须从 Vite 加载真实模块，不能使用 Node 侧的静态值导入。
+    const scenePath = '/src/scene.ts', physicsPath = '/src/physics.ts', modelPath = '/src/model.ts';
+    const { SceneView } = await import(scenePath) as typeof SceneModule;
+    const { FlightSimulation } = await import(physicsPath) as typeof PhysicsModule;
+    const { defaultAircraft } = await import(modelPath) as typeof ModelModule;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:960px;height:600px;z-index:10000';
+    document.body.appendChild(host);
+    let view: InstanceType<typeof SceneView> | undefined;
+    try {
+      view = new SceneView(host);
+      view.setQuality('Low');
+      const sim = new FlightSimulation(defaultAircraft, 'standard', 0);
+      view.setFlight(sim);
+      view.cameraView('侧面');
+      const fixedDt = 1 / 60, renderDt = 1 / 120;
+      const controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+      let accumulator = 0;
+      const frame = () => {
+        accumulator += renderDt;
+        while (accumulator >= fixedDt) {
+          view!.captureFlightState();
+          sim.step(controls, fixedDt);
+          accumulator -= fixedDt;
+        }
+        view!.render(renderDt, accumulator / fixedDt);
+      };
+      // 只借用相机做屏幕投影；飞机位置来自公开诊断，不读取插值内部状态。
+      const projectionView = view as unknown as { camera: Camera };
+      const projectedX = () => {
+        const position = sim.position.clone().copy(view!.getDiagnostics().aircraft).project(projectionView.camera);
+        return (position.x + 1) * host.clientWidth / 2;
+      };
+      const positionError = (flight: InstanceType<typeof FlightSimulation>) =>
+        flight.position.clone().copy(view!.getDiagnostics().aircraft).distanceTo(flight.position);
+      for (let i = 0; i < 240; i++) frame();
+      const startX = sim.position.x;
+      const pixels = [projectedX()];
+      for (let i = 0; i < 120; i++) {
+        frame();
+        pixels.push(projectedX());
+      }
+      const travelled = sim.position.x - startX;
+      const active = !sim.ended && !sim.replayFinished;
+      // 忽略小于 0.02 CSS 像素的数值噪声，允许平滑轨迹出现少量自然转向。
+      const deltas = pixels.slice(1).map((x, i) => x - pixels[i]);
+      const reversals = deltas.slice(1).filter((dx, i) =>
+        dx * deltas[i] < 0 && Math.min(Math.abs(dx), Math.abs(deltas[i])) > 0.02).length;
+      const beforePause = sim.position.clone();
+      for (let i = 0; i < 12; i++) view.render(renderDt, 1);
+      const pausedError = positionError(sim);
+      const pausedSimulationError = sim.position.distanceTo(beforePause);
+      view.captureFlightState();
+      accumulator = 0;
+      frame(); // 恢复首个半步尚未推进物理，必须停留在暂停时的真实位置。
+      const resumedError = positionError(sim);
+      frame();
+      frame();
+      const resumedMidpoint = beforePause.clone().lerp(sim.position, 0.5);
+      const resumedMidpointError = resumedMidpoint.distanceTo(
+        sim.position.clone().copy(view.getDiagnostics().aircraft));
+      const fresh = new FlightSimulation(defaultAircraft, 'standard', 0);
+      const flightSeparation = fresh.position.distanceTo(sim.position);
+      view.setFlight(fresh);
+      view.render(renderDt, 0);
+      const freshStartError = positionError(fresh);
+      view.render(renderDt, 0.5);
+      return {
+        finite: pixels.every(Number.isFinite), frames: deltas.length, travelled, active, reversals,
+        pausedError, pausedSimulationError, resumedError, resumedMidpointError,
+        flightSeparation, freshStartError, freshMidpointError: positionError(fresh),
+      };
+    } finally {
+      view?.dispose();
+      host.remove();
+    }
+  });
+  expect(result.finite).toBe(true);
+  expect(result.frames).toBe(120);
+  expect(result.active).toBe(true);
+  expect(result.travelled).toBeGreaterThan(5);
+  expect(result.reversals, '飞机屏幕投影不得随物理步交替前后抖动').toBeLessThanOrEqual(2);
+  expect(result.flightSeparation).toBeGreaterThan(5);
+  for (const key of [
+    'pausedError', 'pausedSimulationError', 'resumedError', 'resumedMidpointError',
+    'freshStartError', 'freshMidpointError',
+  ] as const) {
+    expect(result[key], key).toBeLessThan(1e-10);
+  }
 });
 
 test('空格开始、暂停与继续，C键循环视角，输入焦点不触发快捷键', async ({ page }) => {
