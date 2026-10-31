@@ -601,6 +601,7 @@ test('拥挤翼型的外伸手柄可分别拖动且不改变弦长', async ({ pa
     await page.getByText('精确编辑四个顶点', { exact: true }).click();
     await number(page, '顶点2展向坐标', 0.25);
     await number(page, '顶点3后向坐标', 0.45);
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const overlay = page.locator('.scene-editor');
     const controls = await overlay.evaluate(svg => {
       const points = Array.from(svg.querySelectorAll<SVGGElement>('g[data-handle]')).filter(g => g.style.display !== 'none').map(g => {
@@ -626,6 +627,7 @@ test('拥挤翼型的外伸手柄可分别拖动且不改变弦长', async ({ pa
       expect(after[last].x - after[first].x).toBeCloseTo(before[last].x - before[first].x, 8);
       expect(after[first].x).not.toBe(before[first].x);
       await page.getByRole('button', { name: '撤销', exact: true }).click();
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     }
     const before = (await aircraft(page))[key].points;
     const vertex = overlay.locator('g[data-handle="1"] circle').nth(1);
