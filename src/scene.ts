@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
-import { LAUNCH, PLATFORM, launchHeight, derive, type FlightSimulation } from './physics';
+import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { LAUNCH, PLATFORM, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
 
@@ -34,9 +34,10 @@ export class SceneView {
   private readonly cockpit = new THREE.Group();
   private readonly engines: THREE.Group[] = [];
   private readonly engineSupports: THREE.Mesh[] = [];
-  private readonly exhausts: THREE.Mesh[] = [];
+  private readonly exhausts: THREE.Group[] = [];
   private readonly fuelTank = new THREE.Group();
   private exhaustStrength = 0;
+  private exhaustPulse = 1;
   private readonly propulsionBounds = new THREE.Box3();
   private readonly aircraftMaterials = {
     ivory: new THREE.MeshStandardMaterial({ color: 0xf4f0dc, roughness: 0.65, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
@@ -48,7 +49,9 @@ export class SceneView {
     canopy: new THREE.MeshStandardMaterial({ color: 0x6dabb9, roughness: 0.16, metalness: 0.35 }),
     engine: new THREE.MeshStandardMaterial({ color: 0x9ba9ad, roughness: 0.3, metalness: 0.8 }),
     intake: new THREE.MeshStandardMaterial({ color: 0x172127, roughness: 0.7, metalness: 0.25 }),
-    exhaust: new THREE.MeshBasicMaterial({ color: 0x86d7ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+    exhaust: new THREE.MeshBasicMaterial({ color: 0x247aff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    exhaustInner: new THREE.MeshBasicMaterial({ color: 0x64dfff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    exhaustCore: new THREE.MeshBasicMaterial({ color: 0xe5faff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
   };
   private readonly strutGeometry = new THREE.CylinderGeometry(1, 1, 1, 6);
   private readonly wingMeshes: THREE.Mesh[] = [];
@@ -90,6 +93,13 @@ export class SceneView {
   private readonly designLiftCenter = new THREE.Vector3();
   private readonly dragCenter = this.centerMarker('drag');
   private readonly centerMarkers = [this.cg, this.liftCenter, this.dragCenter];
+  private readonly fuelCgFull = new THREE.Group();
+  private readonly fuelCgEmpty = new THREE.Group();
+  private readonly fuelCgFullPosition = new THREE.Vector3();
+  private readonly fuelCgEmptyPosition = new THREE.Vector3();
+  private readonly fuelCgLineArray = new Float32Array(6);
+  private readonly fuelCgLine = new THREE.Line(new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0xffd52a, depthTest: false, depthWrite: false, toneMapped: false, fog: false }));
   private readonly designDragCenter = new THREE.Vector3();
   private readonly designLiftDirection = new THREE.Vector3();
   private readonly designDragDirection = new THREE.Vector3();
@@ -209,6 +219,7 @@ export class SceneView {
     this.environment.add(this.detail);
     this.cg.renderOrder = this.liftCenter.renderOrder = this.dragCenter.renderOrder = 20;
     this.buildEnvironment();
+    this.buildFuelCgRange();
     this.wingTrailGeometry.setAttribute('position', new THREE.BufferAttribute(this.wingTrailArray, 3).setUsage(THREE.DynamicDrawUsage));
     this.wingTrailGeometry.setAttribute('color', new THREE.BufferAttribute(this.wingTrailColors, 3).setUsage(THREE.DynamicDrawUsage));
     this.wingTrailGeometry.setDrawRange(0, 0);
@@ -311,6 +322,16 @@ export class SceneView {
       engines: this.engines.map((engine, index) => ({ visible: engine.visible, position: position(engine.position), supportVisible: this.engineSupports[index].visible, supportLength: this.engineSupports[index].scale.y })),
       fuelTank: { visible: this.fuelTank.visible, position: position(this.fuelTank.position) },
       exhaustStrength: this.exhaustStrength,
+      exhaust: { pulse: this.exhaustPulse, time: this.simulation?.time ?? 0, layers: this.exhausts.map((group, index) => ({
+        visible: group.visible, length: group.children[0].scale.y * this.engines[index].scale.x,
+        radius: group.children[0].scale.x * this.engines[index].scale.y, layers: 3, flameCells: 4,
+      })) },
+      fuelCgRange: {
+        visible: this.fuelCgLine.visible,
+        full: position(this.fuelCgFullPosition), empty: position(this.fuelCgEmptyPosition),
+        fullWorld: position(this.fuelCgFull.position), emptyWorld: position(this.fuelCgEmpty.position),
+        labels: ['满油圆点', '空油菱形'],
+      },
       controlSurfaces: this.wingMeshes.map((_mesh, index) => ({ fraction: this.surfaceParameters[index], angle: this.wingAngles[index], hingeVisible: this.hingeLines[index].visible })),
       centers: { cg: position(this.cg.position), lift: position(this.liftCenter.position), drag: position(this.dragCenter.position) },
       centerVisibility: { cg: this.cg.visible, lift: this.liftCenter.visible, drag: this.dragCenter.visible },
@@ -403,6 +424,42 @@ export class SceneView {
         ? (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height
         : 2 * Math.max(0.1, depth) * Math.tan(this.perspective.fov * DEG / 2) / this.height;
       marker.scale.setScalar(metresPerPixel * 16);
+    }
+  }
+
+  private buildFuelCgRange(): void {
+    const material = new THREE.MeshBasicMaterial({ color: 0xffd52a, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
+    this.fuelCgFull.add(new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 8), material));
+    this.fuelCgEmpty.add(new THREE.Mesh(new THREE.RingGeometry(0.28, 0.48, 4), material));
+    for (let index = 0; index < 2; index++) {
+      const marker = index === 0 ? this.fuelCgFull : this.fuelCgEmpty;
+      marker.name = index === 0 ? 'fuel-cg-full' : 'fuel-cg-empty';
+      for (const child of marker.children) child.renderOrder = 24;
+    }
+    this.fuelCgLine.geometry.setAttribute('position', new THREE.BufferAttribute(this.fuelCgLineArray, 3).setUsage(THREE.DynamicDrawUsage));
+    this.fuelCgLine.frustumCulled = false;
+    this.fuelCgLine.renderOrder = 22;
+    this.scene.add(this.fuelCgFull, this.fuelCgEmpty, this.fuelCgLine);
+  }
+
+  private updateFuelCgRange(): void {
+    const visible = !this.simulation && this.definition.engine.count > 0 && this.definition.fuelTank.capacity > 0;
+    this.fuelCgFull.visible = this.fuelCgEmpty.visible = this.fuelCgLine.visible = visible;
+    if (!visible) return;
+    this.fuelCgFull.position.copy(this.fuelCgFullPosition).sub(this.designCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+    this.fuelCgEmpty.position.copy(this.fuelCgEmptyPosition).sub(this.designCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+    this.fuelCgFull.position.toArray(this.fuelCgLineArray, 0);
+    this.fuelCgEmpty.position.toArray(this.fuelCgLineArray, 3);
+    this.fuelCgLine.geometry.getAttribute('position').needsUpdate = true;
+    this.camera.getWorldDirection(this.vector2);
+    for (let index = 0; index < 2; index++) {
+      const marker = index === 0 ? this.fuelCgFull : this.fuelCgEmpty;
+      marker.quaternion.copy(this.camera.quaternion);
+      const depth = this.vector.copy(marker.position).sub(this.camera.position).dot(this.vector2);
+      const metresPerPixel = this.camera === this.orthographic
+        ? (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height
+        : 2 * Math.max(0.1, depth) * Math.tan(this.perspective.fov * DEG / 2) / this.height;
+      marker.scale.setScalar(metresPerPixel * 14);
     }
   }
 
@@ -915,6 +972,9 @@ export class SceneView {
     this.editorDirty = true;
     const properties = derive(d);
     this.designCG.copy(properties.cg);
+    const cgRange = fuelCgRange(d);
+    this.fuelCgFullPosition.copy(cgRange.full);
+    this.fuelCgEmptyPosition.copy(cgRange.empty);
     this.designLiftVisible = !!properties.aerodynamics.liftCenter;
     this.designDragVisible = !!properties.aerodynamics.dragCenter;
     if (properties.aerodynamics.liftCenter) this.designLiftCenter.copy(properties.aerodynamics.liftCenter);
@@ -955,7 +1015,7 @@ export class SceneView {
     this.support.matrixWorldNeedsUpdate = true;
     this.beam.scale.y = d.fuselage.length;
     this.beam.position.x = d.fuselage.center;
-    this.nose.position.x = fuselageEnds(d).nose - 0.1;
+    this.nose.position.x = fuselageEnds(d).nose + BODY_GEOMETRY.nose.x;
     this.pilot.position.x = d.cockpit.position;
     this.cockpit.position.x = d.cockpit.position;
     this.pilot.visible = d.birdman;
@@ -1017,21 +1077,21 @@ export class SceneView {
     }
     const shell = this.mesh(new THREE.SphereGeometry(1, 24, 12), ivory, this.cockpit);
     shell.name = 'streamlined-cockpit-shell';
-    shell.scale.set(1.45, 0.4, 0.46);
-    shell.position.set(-0.15, 0.02, 0);
+    shell.scale.set(BODY_GEOMETRY.shell.xRadius, BODY_GEOMETRY.shell.yRadius, BODY_GEOMETRY.shell.zRadius);
+    shell.position.set(BODY_GEOMETRY.shell.x, BODY_GEOMETRY.shell.y, 0);
     const glass = this.mesh(new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), canopy, this.cockpit);
     glass.name = 'cockpit-canopy';
-    glass.scale.set(0.94, 0.52, 0.37);
-    glass.position.set(0.12, 0.2, 0);
-    this.beam = this.mesh(new THREE.CylinderGeometry(0.085, 0.12, 1, 8), graphite, this.body);
+    glass.scale.set(BODY_GEOMETRY.canopy.xRadius, BODY_GEOMETRY.canopy.yRadius, BODY_GEOMETRY.canopy.zRadius);
+    glass.position.set(BODY_GEOMETRY.canopy.x, BODY_GEOMETRY.canopy.y, 0);
+    this.beam = this.mesh(new THREE.CylinderGeometry(0.085, BODY_GEOMETRY.beamRadius, 1, 8), graphite, this.body);
     this.beam.rotation.z = Math.PI / 2;
     this.support = this.mesh(new THREE.BoxGeometry(1, 1, 0.06), graphite, this.body);
     this.support.name = 'main-wing-support';
     this.support.matrixAutoUpdate = false;
     this.support.visible = false;
     this.nose = this.mesh(new THREE.SphereGeometry(0.22, 10, 7), ivory, this.body);
-    this.nose.position.set(0, 0.02, 0);
-    this.nose.scale.set(1.6, 0.8, 0.75);
+    this.nose.position.set(0, BODY_GEOMETRY.nose.y, 0);
+    this.nose.scale.set(BODY_GEOMETRY.nose.xRadius / 0.22, BODY_GEOMETRY.nose.yRadius / 0.22, BODY_GEOMETRY.nose.zRadius / 0.22);
     const seat = this.mesh(new THREE.BoxGeometry(1.65, 0.11, 0.46), graphite, this.pilot);
     seat.position.set(-0.25, -0.15, 0);
     const torso = this.mesh(new THREE.CapsuleGeometry(0.18, 0.45, 3, 7), suit, this.driver);
@@ -1057,13 +1117,14 @@ export class SceneView {
   }
 
   private buildPropulsion(): void {
-    const { engine: metal, intake: dark, graphite, orange, exhaust } = this.aircraftMaterials;
+    const { engine: metal, intake: dark, graphite, orange, exhaust, exhaustInner, exhaustCore } = this.aircraftMaterials;
     const housingGeometry = new THREE.CylinderGeometry(1, 0.82, 0.8, 20, 1, true);
     const nozzleGeometry = new THREE.CylinderGeometry(0.75, 0.55, 0.2, 20, 1, true);
     const intakeGeometry = new THREE.CircleGeometry(0.92, 20);
     const rimGeometry = new THREE.TorusGeometry(0.96, 0.035, 6, 20);
     const hubGeometry = new THREE.ConeGeometry(0.24, 0.12, 12);
     const flameGeometry = new THREE.ConeGeometry(1, 1, 12, 1, true);
+    const flameCellGeometry = new THREE.OctahedronGeometry(1, 0);
     const supportGeometry = new THREE.BoxGeometry(1, 1, 0.06);
     for (let index = 0; index < 2; index++) {
       const group = new THREE.Group();
@@ -1085,11 +1146,19 @@ export class SceneView {
       const hub = this.mesh(hubGeometry, graphite, group);
       hub.rotation.z = -Math.PI / 2;
       hub.position.x = 0.44;
-      const plume = this.mesh(flameGeometry, exhaust, group);
+      const plume = new THREE.Group();
       plume.name = 'actual-thrust-exhaust';
-      plume.rotation.z = Math.PI / 2;
-      plume.castShadow = plume.receiveShadow = false;
+      for (const material of [exhaust, exhaustInner, exhaustCore]) {
+        const layer = this.mesh(flameGeometry, material, plume);
+        layer.rotation.z = Math.PI / 2;
+        layer.castShadow = layer.receiveShadow = false;
+      }
+      for (let cell = 0; cell < 4; cell++) {
+        const diamond = this.mesh(flameCellGeometry, exhaustCore, plume);
+        diamond.castShadow = diamond.receiveShadow = false;
+      }
       plume.visible = false;
+      group.add(plume);
       this.exhausts.push(plume);
       const support = this.mesh(supportGeometry, graphite, this.body);
       support.name = `engine-support-${index + 1}`;
@@ -1128,14 +1197,15 @@ export class SceneView {
       support.scale.set(mount.supportWidth, mount.supportLength, 1);
       support.quaternion.setFromUnitVectors(UP, this.vector);
     }
-    this.fuelTank.visible = d.fuelTank.capacity > 0;
-    this.fuelTank.position.set(d.fuelTank.x, d.fuelTank.y, 0);
+    this.fuelTank.visible = d.engine.count > 0 && d.fuelTank.capacity > 0;
+    const tankPosition = fuelTankPosition(d);
+    this.fuelTank.position.set(tankPosition.x, tankPosition.y, tankPosition.z);
     // A 3:1 ellipsoid holds exactly the configured litres; fuel burn does not resize its shell.
     const tank = fuelTankDimensions(d.fuelTank.capacity);
     this.fuelTank.scale.setScalar(tank.radius);
     if (this.fuelTank.visible) {
-      this.propulsionBounds.expandByPoint(this.vector.set(d.fuelTank.x - tank.length / 2, d.fuelTank.y - tank.radius, -tank.radius));
-      this.propulsionBounds.expandByPoint(this.vector.set(d.fuelTank.x + tank.length / 2, d.fuelTank.y + tank.radius, tank.radius));
+      this.propulsionBounds.expandByPoint(this.vector.set(tankPosition.x - tank.length / 2, tankPosition.y - tank.radius, -tank.radius));
+      this.propulsionBounds.expandByPoint(this.vector.set(tankPosition.x + tank.length / 2, tankPosition.y + tank.radius, tank.radius));
     }
     this.updateExhaust();
   }
@@ -1144,15 +1214,34 @@ export class SceneView {
     const sim = this.simulation, d = this.definition;
     const maximum = engineCatalog[d.engine.type].maxThrust * d.engine.count;
     const strength = sim && !sim.ended && maximum > 0 ? clamp(sim.telemetry.thrust / maximum, 0, 1) : 0;
+    const time = this.reducedMotion ? 0 : sim?.time ?? 0;
+    // Simulation time freezes pulsation while paused; no geometry or material allocation in flight.
+    const pulse = 1 + 0.065 * Math.sin(time * 29) + 0.035 * Math.sin(time * 47);
     this.exhaustStrength = strength;
-    this.aircraftMaterials.exhaust.opacity = strength * 0.7;
+    this.exhaustPulse = pulse;
+    this.aircraftMaterials.exhaust.opacity = strength * 0.38;
+    this.aircraftMaterials.exhaustInner.opacity = strength * 0.58;
+    this.aircraftMaterials.exhaustCore.opacity = strength * 0.82;
     for (let index = 0; index < this.exhausts.length; index++) {
       const plume = this.exhausts[index];
       plume.visible = this.engines[index].visible && strength > 0.001;
       if (!plume.visible) continue;
-      const length = 0.3 + 2 * strength, radius = Math.sqrt(strength) * 0.55;
-      plume.position.x = -0.5 - length / 2;
-      plume.scale.set(radius, length, radius);
+      const length = (0.45 + 6.5 * strength) * pulse;
+      const radius = Math.sqrt(strength) * 1.45 / pulse;
+      for (let layer = 0; layer < 3; layer++) {
+        const mesh = plume.children[layer];
+        const layerLength = length * (layer === 0 ? 1 : layer === 1 ? 0.78 : 0.48);
+        const layerRadius = radius * (layer === 0 ? 1 : layer === 1 ? 0.65 : 0.3);
+        mesh.position.x = -0.5 - layerLength / 2;
+        mesh.scale.set(layerRadius, layerLength, layerRadius);
+      }
+      for (let cell = 0; cell < 4; cell++) {
+        const mesh = plume.children[cell + 3];
+        const fraction = (cell + 1) / 5;
+        const size = radius * (0.24 - cell * 0.035);
+        mesh.position.x = -0.5 - length * fraction * 0.83;
+        mesh.scale.set(length * 0.065, size, size);
+      }
     }
   }
 
@@ -1314,6 +1403,7 @@ export class SceneView {
     if (this.controls.enabled) this.controls.update();
     this.constrainCamera();
     this.updateCenters();
+    this.updateFuelCgRange();
     this.updateEditorOverlay();
     this.light.target.position.copy(this.aircraft.position);
     this.light.position.copy(this.aircraft.position).add(this.vector.set(-55, 110, 65));
@@ -1949,7 +2039,7 @@ export class SceneView {
     }
     const strength = clamp((sim.telemetry.speed - 9) / 12, 0, 1);
     if (sim.time < this.wingTrailTime || sim.time - this.wingTrailTime > 0.15) this.clearWingTrail();
-    this.wingTrail.material.opacity = 0.65 + strength * 0.3;
+    this.wingTrail.material.opacity = 0.12 + strength * 0.14;
     const sample = this.wingTrailTime !== sim.time;
     this.wingTrailTime = sim.time;
     this.wingTrailActive = true;

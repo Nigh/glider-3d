@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { clone, defaultAircraft, presets, type Controls, type FlightMode } from '../src/model';
+import { clone, defaultAircraft, engineMounts, fuelTankLimits, presets, type Controls, type FlightMode } from '../src/model';
 import { derive, FlightSimulation } from '../src/physics';
 import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeTerrainGrid, challengeTerrainHeight } from '../src/challenges';
+import { engineCatalog } from '../src/engines';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
 function create(mode: FlightMode = 'standard') {
@@ -121,7 +122,7 @@ describe('低空计分与动力边界', () => {
   });
 
   it('转速和推力渐变、实际耗油改变质量/重心/惯量，燃油不驱动驾驶员', () => {
-    const d = clone(presets.find(d => d.engine.count > 0)!); d.fuelTank.x = 2;
+    const d = clone(presets.find(d => d.engine.count > 0)!); d.fuelTank.x = fuelTankLimits(d).max;
     const s = new FlightSimulation(d, 'standard', 'low-altitude', 0);
     const initialMass = s.aircraft.mass, initialX = s.aircraft.cg.x, initialInertia = s.aircraft.inertia.z;
     s.step({ ...neutral, throttle: 1 }, 0.25);
@@ -152,19 +153,29 @@ describe('低空计分与动力边界', () => {
     expect(replay.telemetry.fuelRemaining).toBe(s.telemetry.fuelRemaining); expect(replay.telemetry.engineRpm).toBe(s.telemetry.engineRpm);
   });
 
-  it('双发、侧距与支撑参与真实质量/惯量，低挂发动机纳入地形接触', () => {
+  it('双发固定侧距和支撑参与质量/惯量，低挂发动机纳入地形接触', () => {
     const one = clone(presets.find(d => d.engine.count > 0)!), twin = clone(one);
-    twin.engine.count = 2; twin.engine.z = 1;
+    twin.engine.count = 2; twin.engine.y = 0;
     expect(derive(twin).mass).toBeGreaterThan(derive(one).mass); expect(derive(twin).inertia.x).toBeGreaterThan(derive(one).inertia.x);
-    const near = clone(twin); near.engine.z = 0.35;
-    expect(derive(twin).mass).toBeGreaterThan(derive(near).mass); expect(derive(twin).inertia.y).toBeGreaterThan(derive(near).inertia.y);
+    const mounts = engineMounts(twin);expect(mounts[0].z).toBeCloseTo(-0.63);expect(mounts[1].z).toBeCloseTo(0.63);
+    expect(derive(twin).inertia.y).toBeGreaterThan(derive(one).inertia.y);
     const singleFlight = new FlightSimulation(one, 'standard', 'low-altitude', 0), twinFlight = new FlightSimulation(twin, 'standard', 'low-altitude', 0);
     singleFlight.step({ ...neutral, throttle: 1 }, 0.25); twinFlight.step({ ...neutral, throttle: 1 }, 0.25);
     expect(twinFlight.telemetry.thrust).toBeCloseTo(singleFlight.telemetry.thrust * 2, 10);
     expect(one.fuelTank.capacity - twinFlight.telemetry.fuelRemaining).toBeCloseTo((one.fuelTank.capacity - singleFlight.telemetry.fuelRemaining) * 2, 10);
-    one.engine.mount = 'below'; one.engine.y = 2;
+    one.engine.x = -2; one.engine.y = -0.5;
     const s = new FlightSimulation(one, 'standard', 'low-altitude', 0);
-    s.position.set(0, challengeTerrainHeight('low-altitude', 0, 0) + 1.5, 0); s.quaternion.identity(); s.step(neutral);
+    s.position.set(0, challengeTerrainHeight('low-altitude', 0, 0) + 0.4, 0); s.quaternion.identity(); s.step(neutral);
     expect(s.result?.landing).toBe('terrain');
+  });
+
+  it('每台引擎额定推力精确为360N，转速响应与耗油率不变', () => {
+    const d = clone(presets.find(d => d.engine.count > 0)!);
+    const s = new FlightSimulation(d, 'standard', 'low-altitude', 0), dt = 1 / 60, tau = 1.8;
+    expect(engineCatalog[d.engine.type].maxThrust).toBe(360);
+    expect(engineCatalog[d.engine.type].fuelFlow).toBe(0.012);
+    s.step({ ...neutral, throttle: 1 }, dt);
+    const integral = dt - 2 * tau * (1 - Math.exp(-dt / tau)) + tau / 2 * (1 - Math.exp(-2 * dt / tau));
+    expect(s.telemetry.thrust).toBeCloseTo(360 * integral / dt, 9);
   });
 });

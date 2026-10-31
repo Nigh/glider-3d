@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions } from '../src/model';
+import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions,engineLateralOffset,engineHeightRanges,normalizeEngineHeight,fuelTankLimits,fuelTankPosition,BODY_GEOMETRY } from '../src/model';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
@@ -85,21 +85,61 @@ describe('参数化几何与信任边界',()=>{
   for(const value of [0,0.201,NaN,Infinity]){const invalid=clone(d);invalid.controls.lateralTravel=value;expect(()=>validateAircraft(invalid)).toThrow();}
   for(const value of [0.01,0.2]){const valid=clone(d);valid.controls.lateralTravel=value;expect(validateAircraft(valid).controls.lateralTravel).toBe(value);}
  });
- it('单双发挂点和自动支撑共用尺寸，油箱体积对应升容量',()=>{
-  const d=clone(defaultAircraft);d.birdman=false;d.engine={type:'jet-01',count:2,mount:'below',x:-0.5,y:0.6,z:0.8};
-  const mounts=engineMounts(validateAircraft(d));expect(mounts.map(m=>m.z)).toEqual([-0.8,0.8]);expect(mounts.map(m=>m.y)).toEqual([-0.6,-0.6]);
+ it('单双发固定侧距和自动支撑共用尺寸，油箱体积对应升容量',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine={type:'jet-01',count:2,x:-0.5,y:0};
+  const mounts=engineMounts(validateAircraft(d)),offset=engineLateralOffset(d);
+  expect(offset).toBeCloseTo(0.63);expect(mounts.map(m=>m.z)).toEqual([-offset,offset]);expect(mounts.map(m=>m.y)).toEqual([0,0]);
   for(const mount of mounts){expect(mount.supportLength).toBeGreaterThan(0);expect(mount.supportMass).toBeGreaterThan(0);}
-  d.engine.count=1;d.engine.z=-0.8;expect(engineMounts(validateAircraft(d))[0].z).toBe(-0.8);
+  d.engine.count=1;d.engine.x=-2;d.engine.y=-0.5;expect(engineMounts(validateAircraft(d))[0]).toMatchObject({z:0,y:-0.5});
   const shape=fuelTankDimensions(12);expect(4*Math.PI*shape.radius**3).toBeCloseTo(0.012,12);expect(shape.length).toBe(6*shape.radius);
  });
- it('拒绝非法发动机与油箱，机身缩放保留动力挂点',()=>{
-  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=1;d.fuelTank.capacity=12;
-  for(const patch of [{engine:{...d.engine,type:'missing'}},{engine:{...d.engine,count:3}},{engine:{...d.engine,y:NaN}},{engine:{...d.engine,count:2,z:0.2}},{engine:{...d.engine,x:12}},{fuelTank:{...d.fuelTank,capacity:-1}},{fuelTank:{...d.fuelTank,capacity:40.1}},{fuelTank:{...d.fuelTank,x:12}}]){
+ it('单发高度跳过座舱、座舱盖及鼻锥，不存在的下方区不接受负高度',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=1;
+  d.engine.x=d.cockpit.position+BODY_GEOMETRY.shell.x;
+  const ranges=engineHeightRanges(d);expect(ranges).toHaveLength(1);expect(ranges[0].min).toBeCloseTo(0.89);expect(ranges[0].max).toBe(1);
+  expect(normalizeEngineHeight(d,-0.5)).toBe(ranges[0].min);expect(validateAircraft(d).engine.y).toBe(ranges[0].min);
+  d.engine.x=-2;
+  const rearRanges=engineHeightRanges(d);expect(rearRanges).toHaveLength(2);
+  expect(rearRanges[0].min).toBe(-0.5);expect(rearRanges[0].max).toBeCloseTo(-0.29);expect(rearRanges[1].min).toBeCloseTo(0.29);expect(rearRanges[1].max).toBe(1);
+  for(const y of [-0.5,1]){d.engine.y=y;expect(validateAircraft(d).engine.y).toBe(y);}
+  d.engine.x=fuselageEnds(d).nose;expect(normalizeEngineHeight(d,0.3)).toBeGreaterThan(0.35);
+  d.engine.count=2;expect(engineHeightRanges(d)).toEqual([{min:-0.5,max:1}]);expect(normalizeEngineHeight(d,0)).toBe(0);
+ });
+ it('油箱尺寸限制纵向位置，整个箱体保持在真实封闭座舱壳内',()=>{
+  const d=clone(presets.find(d=>d.engine.count>0)!),shell=BODY_GEOMETRY.shell;
+  let width=Infinity;
+  for(const capacity of [0.5,12,40]){
+   d.fuelTank.capacity=capacity;const limits=fuelTankLimits(d),shape=fuelTankDimensions(capacity);
+   expect(limits.max-limits.min).toBeLessThan(width);width=limits.max-limits.min;
+   for(const x of [limits.min,limits.max]){
+    d.fuelTank.x=x;const position=fuelTankPosition(d);expect(position).toEqual({x,y:shell.y,z:0});
+    for(let row=0;row<=12;row++)for(let ring=0;ring<16;ring++){
+     const angle=row*Math.PI/12,azimuth=ring*Math.PI/8;
+     const px=x+shape.length/2*Math.cos(angle)-(d.cockpit.position+shell.x);
+     const py=shape.radius*Math.sin(angle)*Math.cos(azimuth),pz=shape.radius*Math.sin(angle)*Math.sin(azimuth);
+     expect((px/shell.xRadius)**2+(py/shell.yRadius)**2+(pz/shell.zRadius)**2).toBeLessThanOrEqual(1+1e-10);
+    }
+   }
+  }
+  d.fuelTank.x=12;expect(validateAircraft(d).fuelTank.x).toBe(fuelTankLimits(d).max);
+  d.engine.count=0;const checked=validateAircraft(d);expect(checked.fuelTank.capacity).toBe(0);expect(fuelTankLimits(checked).min).toBeCloseTo(d.cockpit.position-0.15-1.45);
+ });
+ it('旧动力字段只在导入边界迁移，移除方向、侧距、油箱高度且不修改原对象',()=>{
+  const legacy:any=clone(defaultAircraft);legacy.birdman=false;
+  legacy.engine={type:'jet-01',count:1,mount:'below',x:-2,y:2,z:3};legacy.fuelTank={x:3,y:-0.8,capacity:12};
+  const checked=validateAircraft(legacy);
+  expect(checked.engine).toEqual({type:'jet-01',count:1,x:-2,y:-0.5});expect(checked.fuelTank).toEqual({x:fuelTankLimits(checked).max,capacity:12});
+  expect(legacy.engine.mount).toBe('below');expect(legacy.fuelTank.y).toBe(-0.8);expect(validateAircraft(checked)).toEqual(checked);
+  for(const mutate of [(d:any)=>d.engine.z=NaN,(d:any)=>d.fuelTank.y=Infinity]){const invalid=clone(legacy);mutate(invalid);expect(()=>validateAircraft(invalid)).toThrow();}
+ });
+ it('拒绝非法动力输入，机身缩放保留引擎挂点并重新适配内部油箱',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=1;d.engine.y=1;d.fuelTank.capacity=12;
+  for(const patch of [{engine:{...d.engine,type:'missing'}},{engine:{...d.engine,count:3}},{engine:{...d.engine,y:NaN}},{engine:{...d.engine,y:-0.5001}},{engine:{...d.engine,y:1.0001}},{engine:{...d.engine,x:12}},{fuelTank:{...d.fuelTank,capacity:-1}},{fuelTank:{...d.fuelTank,capacity:40.1}},{fuelTank:{...d.fuelTank,x:Infinity}}]){
    expect(()=>validateAircraft({...d,...patch})).toThrow();
   }
   expect(()=>validateAircraft({...d,birdman:true})).toThrow('鸟人间');
-  const ends=fuselageEnds(d);d.engine.x=ends.tail+0.1;d.fuelTank.x=ends.nose-0.1;
+  d.engine.x=fuselageEnds(d).tail+0.1;d.fuelTank.x=fuelTankLimits(d).max;
   resizeFuselage(d,'tail',100);resizeFuselage(d,'nose',-100);
-  expect(fuselageEnds(d).tail).toBeLessThanOrEqual(d.engine.x);expect(fuselageEnds(d).nose).toBeGreaterThanOrEqual(d.fuelTank.x);expect(validateAircraft(d)).toEqual(d);
+  expect(fuselageEnds(d).tail).toBeLessThanOrEqual(d.engine.x);expect(validateAircraft(d)).toEqual(d);
  });
 });

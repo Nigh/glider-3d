@@ -1,5 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type FlightMode, type Wing } from './model';
+import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type FlightMode, type Wing } from './model';
 import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
 import { engineCatalog, FUEL_DENSITY } from './engines';
 
@@ -234,7 +234,7 @@ function massLayout(d: AircraftDefinition): MassPart[] {
     const tank = d.fuelTank, shape = fuelTankDimensions(tank.capacity), radius2 = shape.radius ** 2, length2 = (shape.length / 2) ** 2;
     for (const fuel of [false, true]) {
       const mass = fuel ? tank.capacity * FUEL_DENSITY : 0.8 + tank.capacity * 0.035;
-      parts.push({ mass, x: tank.x, y: tank.y, z: 0, ix: mass * 2 * radius2 / 5,
+      parts.push({ mass, x: tank.x, y: BODY_GEOMETRY.shell.y, z: 0, ix: mass * 2 * radius2 / 5,
         iy: mass * (length2 + radius2) / 5, iz: mass * (length2 + radius2) / 5, fuel });
     }
   }
@@ -287,6 +287,22 @@ export function derive(d: AircraftDefinition, weight = 0, lateral = 0): Aircraft
   updateMass(d, massLayout(d), clamp(weight, -1, 1), out, neutral, planform(d.mainWing).chord, true, clamp(lateral, -1, 1));
   evaluateReference(out);
   return out;
+}
+
+/** Empty CG removes fuel only; the configured tank and its dry shell remain installed. */
+export function fuelCgRange(d: AircraftDefinition): { full: Vector3; empty: Vector3 } {
+ d = validateAircraft(d);
+ const full = new Vector3(), empty = new Vector3();
+ let fullMass = 0, emptyMass = 0;
+ for (const part of massLayout(d)) {
+  fullMass += part.mass;
+  full.x += part.mass * part.x; full.y += part.mass * part.y; full.z += part.mass * part.z;
+  if (!part.fuel) {
+   emptyMass += part.mass;
+   empty.x += part.mass * part.x; empty.y += part.mass * part.y; empty.z += part.mass * part.z;
+  }
+ }
+ return { full: full.divideScalar(fullMass), empty: empty.divideScalar(emptyMass) };
 }
 
 function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reynolds = 500_000, cambered = true): Polar {
@@ -569,7 +585,7 @@ function makeContacts(d: AircraftDefinition): Vector3[] {
       const angle = row / 8 * Math.PI;
       for (let ring = 0; ring < 16; ring++) {
         const azimuth = ring / 16 * Math.PI * 2, radius = shape.radius * Math.sin(angle);
-        points.push(new Vector3(tank.x + shape.length / 2 * Math.cos(angle), tank.y + radius * Math.cos(azimuth), radius * Math.sin(azimuth)));
+        points.push(new Vector3(tank.x + shape.length / 2 * Math.cos(angle), BODY_GEOMETRY.shell.y + radius * Math.cos(azimuth), radius * Math.sin(azimuth)));
       }
     }
   }
@@ -840,7 +856,7 @@ export class FlightSimulation {
     this.thrust = required > 0 ? count * spec.maxThrust * integral / dt * burned / required : 0;
     if (burned <= 0 || !this.fuelPart) return;
     const removedMass = burned * FUEL_DENSITY, tank = this.definition.fuelTank;
-    this.arm.set(tank.x, tank.y, 0).sub(this.aircraft.cg);
+    this.arm.set(tank.x, BODY_GEOMETRY.shell.y, 0).sub(this.aircraft.cg);
     this.localVelocity.crossVectors(this.omega, this.arm).applyQuaternion(this.quaternion).add(this.velocity);
     this.cross.copy(this.arm).applyQuaternion(this.quaternion).add(this.position);
     this.telemetry.fuelEnergyRemoved += removedMass * (GRAVITY * this.cross.y + this.localVelocity.lengthSq() / 2

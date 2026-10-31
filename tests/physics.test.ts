@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
-import { clone, defaultAircraft, DEG, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
-import { coefficients, derive, FlightSimulation, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
+import { clone, defaultAircraft, DEG, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
+import { coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
@@ -317,6 +317,30 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(derive(raised).cg.y).toBeGreaterThan(derive(flat).cg.y);
     const aft = definition(d => { d.fuselage.center -= 0.2; resizeFuselage(d, 'nose', 3.25); });
     expect(derive(aft).cg.x).not.toBe(p.cg.x);
+  });
+
+  it('满油空油CG保留油箱壳重，耗尽燃油后模拟重心与空油端点一致', () => {
+    const d = clone(presets.find(d => d.engine.count > 0)!); d.fuelTank.capacity = 0.001;
+    const range = fuelCgRange(d), full = derive(d), tank = fuelTankPosition(d), fuelMass = d.fuelTank.capacity * 0.8;
+    expect(range.full.distanceTo(full.cg)).toBeLessThan(1e-12);
+    const expectedEmpty = full.cg.clone().multiplyScalar(full.mass).sub(new Vector3(tank.x,tank.y,tank.z).multiplyScalar(fuelMass)).divideScalar(full.mass-fuelMass);
+    expect(range.empty.distanceTo(expectedEmpty)).toBeLessThan(1e-12);
+    const noTank = clone(d); noTank.fuelTank.capacity = 0;
+    expect(range.empty.distanceTo(derive(noTank).cg)).toBeGreaterThan(1e-5);
+    const s = new FlightSimulation(d,'standard','low-altitude',0);
+    s.launching = false; s.position.set(0,1000,0); s.velocity.set(30,0,0); s.quaternion.identity();
+    for(let i=0;i<100&&s.telemetry.fuelRemaining>0;i++)s.step({...neutral,throttle:1},0.25);
+    expect(s.telemetry.fuelRemaining).toBe(0);expect(s.aircraft.mass).toBeCloseTo(full.mass-fuelMass,10);
+    expect(s.aircraft.cg.distanceTo(range.empty)).toBeLessThan(1e-10);
+  });
+
+  it('无引擎所有物理入口自动移除油箱、燃油与油量CG区间', () => {
+    const d = clone(defaultAircraft); d.fuelTank.capacity = 12;
+    expect(derive(d).mass).toBe(derive(defaultAircraft).mass);
+    expect(fuelCgRange(d).full.toArray()).toEqual(fuelCgRange(d).empty.toArray());
+    const s = new FlightSimulation(d);
+    expect(s.definition.fuelTank.capacity).toBe(0);expect(s.telemetry.fuelRemaining).toBe(0);
+    expect(s.aircraft.mass).toBe(derive(defaultAircraft).mass);
   });
 
   it('面积/展弦比/操纵/尾臂改变实际受力，垂尾恢复侧滑', () => {

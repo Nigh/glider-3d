@@ -1,7 +1,7 @@
 <script lang="ts">
  import { onMount } from 'svelte';
- import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, resizeFuselage, mainWingMountLimits, mainWingSupport, PILOT_MASS, type AircraftDefinition, type Controls, type FlightMode, type Wing } from './model';
- import { FlightSimulation, derive, LAUNCH } from './physics';
+ import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, resizeFuselage, mainWingMountLimits, mainWingSupport, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Controls, type FlightMode, type Wing } from './model';
+ import { FlightSimulation, derive, fuelCgRange, LAUNCH } from './physics';
  import { challengeDefinitions, type ChallengeMode } from './challenges';
  import { SceneView } from './scene';
  import { listAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, readBest, writeBest, History, type SavedAircraft } from './storage';
@@ -22,6 +22,8 @@
  let cockpitMin=$derived(Math.max(-3,ends.tail)),cockpitMax=$derived(Math.min(4,ends.nose-0.95));
  let tailMin=$derived(Math.max(-6,ends.tail)),tailMax=$derived(Math.min(5,ends.nose));
  let mainMountLimits=$derived(mainWingMountLimits(aircraft)),support=$derived(mainWingSupport(aircraft));
+ let engineRanges=$derived(engineHeightRanges(aircraft)),tankLimits=$derived(fuelTankLimits(aircraft));
+ let fuelCenters=$derived(aircraft.engine.count>0&&aircraft.fuelTank.capacity>0?fuelCgRange(aircraft):null);
  let recording:ReturnType<FlightSimulation['getRecording']>|null=null;let recordedLength=$state(0);let isReplay=$state(false);let lastDefinition=$state.raw(clone(defaultAircraft)),lastMode=$state<FlightMode>('standard');
  let weight=$state(0),lateral=$state(0),rudder=$state(0),elevator=$state(0),aileron=$state(0);const keys=new Set<string>();const controls:Controls={weight:0,lateral:0,rudder:0,elevator:0,aileron:0};
  let throttle=$state(0.6);
@@ -204,16 +206,13 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  {#if aircraft.birdman}<Parameter label="重心前后行程" value={aircraft.controls.travel} min={0.1} max={0.8} step={0.05} unit="m" onchange={n=>change(d=>d.controls.travel=n)} oncommit={commit}/><Parameter label="重心左右行程" value={aircraft.controls.lateralTravel} min={0.01} max={0.2} step={0.01} unit="m" onchange={n=>change(d=>d.controls.lateralTravel=n)} oncommit={commit}/>{/if}
  {:else if tab==='动力'}
  {#if aircraft.birdman}<p>鸟人间飞机不可安装引擎。关闭“鸟人间飞机”后设置动力。</p>{:else}
- <label class="fixed-parameter">喷气引擎<select aria-label="引擎数量" value={aircraft.engine.count} onchange={e=>{change(d=>{d.engine.count=Number(e.currentTarget.value) as 0|1|2;if(d.engine.count){d.engine.z=d.engine.count===2?Math.max(0.6,d.engine.z):0;if(!d.fuelTank.capacity)d.fuelTank.capacity=12;}});commit();}}><option value={0}>无引擎</option><option value={1}>单发 · Jet 01</option><option value={2}>双发 · Jet 01</option></select></label>
+ <label class="fixed-parameter">喷气引擎<select aria-label="引擎数量" value={aircraft.engine.count} onchange={e=>{change(d=>{const previous=d.engine.count;d.engine.count=Number(e.currentTarget.value) as 0|1|2;if(d.engine.count){if(d.engine.count===2&&previous!==2)d.engine.y=0;if(!d.fuelTank.capacity)d.fuelTank.capacity=12;}else d.fuelTank.capacity=0;});commit();}}><option value={0}>无引擎</option><option value={1}>单发 · Jet 01</option><option value={2}>双发 · Jet 01</option></select></label>
  {#if aircraft.engine.count}
- {#if aircraft.engine.count===1}<label class="fixed-parameter">安装方向<select aria-label="单发安装方向" value={aircraft.engine.mount} onchange={e=>{change(d=>d.engine.mount=e.currentTarget.value as 'above'|'below');commit();}}><option value="above">机身上方</option><option value="below">机身下方</option></select></label>{/if}
  <Parameter label="引擎纵向位置" value={aircraft.engine.x} min={ends.tail} max={ends.nose} step={0.05} unit="m" onchange={n=>change(d=>d.engine.x=n)} oncommit={commit}/>
- <Parameter label="引擎离机身高度" value={aircraft.engine.y} min={0.2} max={2} step={0.05} unit="m" onchange={n=>change(d=>d.engine.y=n)} oncommit={commit}/>
- <Parameter label={aircraft.engine.count===2?'双发侧向间距':'引擎侧向偏移'} value={aircraft.engine.z} min={aircraft.engine.count===2?0.35:0} max={4} step={0.05} unit="m" onchange={n=>change(d=>d.engine.z=n)} oncommit={commit} hint={aircraft.engine.count===2?'每台引擎到机身中心线的距离，左右对称安装。':'0 m 为机身中心线上方或下方。'}/>
- {/if}
- <Parameter label="油箱容量" value={aircraft.fuelTank.capacity} min={0} max={40} step={0.5} unit="L" onchange={n=>change(d=>d.fuelTank.capacity=n)} oncommit={commit} hint="起飞时装满；燃油消耗会改变质量与重心，耗尽后引擎无推力。"/>
- <Parameter label="油箱纵向位置" value={aircraft.fuelTank.x} min={ends.tail} max={ends.nose} step={0.05} unit="m" onchange={n=>change(d=>d.fuelTank.x=n)} oncommit={commit}/>
- <Parameter label="油箱垂直位置" value={aircraft.fuelTank.y} min={-1} max={1} step={0.05} unit="m" onchange={n=>change(d=>d.fuelTank.y=n)} oncommit={commit}/>
+ <Parameter label="引擎垂直偏移" value={aircraft.engine.y} min={-0.5} max={1} step={0.01} unit="m" onchange={n=>change(d=>d.engine.y=n)} oncommit={commit} hint={`负值在下，正值在上。可用范围：${engineRanges.map(r=>`${r.min.toFixed(3)} 至 ${r.max.toFixed(3)} m`).join('；')}。自动跳过机身重叠区；单发居中，双发固定在机身两侧。`}/>
+ <Parameter label="油箱容量" value={aircraft.fuelTank.capacity} min={0} max={40} step={0.5} unit="L" onchange={n=>change(d=>d.fuelTank.capacity=n)} oncommit={commit} hint="油箱固定在机身内部，起飞装满；燃油消耗改变质量与重心，耗尽后引擎无推力。"/>
+ <Parameter label="油箱纵向位置" value={aircraft.fuelTank.x} min={tankLimits.min} max={tankLimits.max} step={0.01} unit="m" onchange={n=>change(d=>d.fuelTank.x=n)} oncommit={commit} hint="位置范围随容量和机身空间调整，油箱整体始终位于机身内部。"/>
+ {:else}<p class="help">未安装引擎，油箱已自动取消。</p>{/if}
  {/if}
  {:else if tab==='组装'}
  <div class="assembly-positions" aria-label="组装位置精确值">
@@ -238,6 +237,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  <div class="scene-hint"><span><i class="cg"></i> 重心 CG <output aria-label="重心X">{stats.cg.x.toFixed(2)}</output> m</span><span><i class="lift"></i> 全机升力中心 <output aria-label="全机升力中心X">{stats.aerodynamics.liftCenter?stats.aerodynamics.liftCenter.x.toFixed(2)+' m':'无合力'}</output></span><span><i class="drag"></i> 全机阻力中心 <output aria-label="全机阻力中心X">{stats.aerodynamics.dragCenter?stats.aerodynamics.dragCenter.x.toFixed(2)+' m':'无合力'}</output></span></div>
  <div class="trim-values"><span>静稳定裕度 <output aria-label="静稳定裕度">{(stats.staticMargin*100).toFixed(1)}% MAC</output></span><span>中性点 X {stats.neutralPoint.toFixed(2)} m</span><span>CG {((stats.mainQuarterChord.x+main.chord*0.25-stats.cg.x)/main.chord*100).toFixed(1)}% MAC</span><span>MAC {main.chord.toFixed(2)} m</span></div>
  <p class="trim-advice">{stats.staticMargin<0?'重心偏后，可能俯仰失稳。':stats.staticMargin>0.35?'重心偏前，可能难以抬头。':'正稳定裕度不代表已配平。'} 建议 5–20% MAC；合力中心不表示力矩为零。</p>
+ {#if fuelCenters}<p class="fuel-cg-range" aria-label="燃油重心范围">燃油重心范围 · 满油 X <output aria-label="满油重心X">{fuelCenters.full.x.toFixed(4)}</output> m · 空油 X <output aria-label="空油重心X">{fuelCenters.empty.x.toFixed(4)}</output> m <small>三维连线标出满油圆点与空油菱形；空油仍保留油箱质量。</small></p>{/if}
  </section>
  <section class="aero-preview" aria-label="三翼气动力预览">
  <div class="aero-heading"><h2>三翼气动力预览</h2><p>自由空气 · 无地效 · 空速 {stats.aerodynamics.speed.toFixed(0)} m/s · 机身攻角 {(stats.aerodynamics.alpha*180/Math.PI).toFixed(0)}° · 侧滑 {(stats.aerodynamics.beta*180/Math.PI).toFixed(0)}° · 无操纵</p></div>
