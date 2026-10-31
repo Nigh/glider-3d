@@ -940,3 +940,47 @@ test('底部主按钮启动飞行，实时能耗及结算机械能曲线使用�
   await insideViewport(page, chart.getByText('0%', { exact: true }));
   await noOverflow(page);
 });
+
+test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再次试飞保持正确位置', async ({ page, isMobile }) => {
+  test.skip(isMobile, '三维弹射状态在桌面运行，几何与移动端共用');
+  const result = await page.evaluate(async () => {
+    const scenePath = '/src/scene.ts', physicsPath = '/src/physics.ts', modelPath = '/src/model.ts';
+    const { SceneView } = await import(scenePath) as typeof SceneModule;
+    const { FlightSimulation, LAUNCH } = await import(physicsPath) as typeof PhysicsModule;
+    const { defaultAircraft } = await import(modelPath) as typeof ModelModule;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;width:960px;height:600px';
+    document.body.appendChild(host);
+    const view = new SceneView(host);
+    const sim = new FlightSimulation(defaultAircraft, 'standard', 0);
+    const tree = view as unknown as { scene: import('three').Scene };
+    const shuttle = tree.scene.getObjectByName('catapult-shuttle')!;
+    const input = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+    const position = () => shuttle.getWorldPosition(sim.position.clone()).toArray();
+    const advance = (frames: number) => {
+      for (let i = 0; i < frames; i++) { view.captureFlightState(); sim.step(input); }
+      view.render(1 / 60, 1);
+      return position();
+    };
+    try {
+      view.setQuality('Low');
+      view.setFlight(sim);
+      view.render(1 / 60, 1);
+      const start = position(), moving = advance(60);
+      for (let i = 0; i < 12; i++) view.render(1 / 60, 1);
+      const paused = position();
+      const end = advance(60), later = advance(60), plane = sim.position.toArray();
+      view.setFlight(new FlightSimulation(defaultAircraft, 'standard', 0));
+      view.render(1 / 60, 1);
+      return { start, moving, paused, end, later, plane, reset: position(), endX: LAUNCH.endX, height: LAUNCH.height };
+    } finally { view.dispose(); host.remove(); }
+  });
+  expect(result.moving[0]).toBeGreaterThan(result.start[0]);
+  expect(result.moving[0]).toBeLessThan(result.endX);
+  expect(result.paused).toEqual(result.moving);
+  expect(result.end[0]).toBeCloseTo(result.endX, 10);
+  expect(result.end[1]).toBeCloseTo(result.height, 10);
+  expect(result.later).toEqual(result.end);
+  expect(result.plane[0]).toBeGreaterThan(result.later[0] + 3);
+  expect(result.reset).toEqual(result.start);
+});

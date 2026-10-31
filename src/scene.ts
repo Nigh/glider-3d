@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { clamp, clone, DEG, defaultAircraft, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, PILOT_MASS, type AircraftDefinition, type Wing, type WingKey } from './model';
-import { LAUNCH, launchHeight, derive, type FlightSimulation } from './physics';
+import { LAUNCH, PLATFORM, launchHeight, derive, type FlightSimulation } from './physics';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
 const UP = new THREE.Vector3(0, 1, 0);
@@ -49,6 +49,16 @@ export class SceneView {
   private readonly detail = new THREE.Group();
   private readonly debugGroup = new THREE.Group();
   private readonly environment = new THREE.Group();
+  private readonly catapult = new THREE.Group();
+  private readonly shuttle = new THREE.Group();
+  private towArm!: THREE.Mesh;
+  private readonly towJaws: THREE.Mesh[] = [];
+  private readonly steam = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 7, 5),
+    new THREE.MeshBasicMaterial({ color: 0xf2f6f4, transparent: true, opacity: 0.22, depthWrite: false }),
+    24,
+  );
+  private readonly steamParticle = new THREE.Object3D();
   private readonly environmentFog = new THREE.FogExp2(0xd4e3e4, 0.00165);
   private readonly light = new THREE.DirectionalLight(0xffedcf, 3.3);
   private readonly cg = this.centerMarker('cg');
@@ -1051,6 +1061,7 @@ export class SceneView {
     this.updateEditorOverlay();
     this.light.target.position.copy(this.aircraft.position);
     this.light.position.copy(this.aircraft.position).add(this.vector.set(-55, 110, 65));
+    this.updateCatapult();
     this.renderer.render(this.scene, this.camera);
     this.metrics.renderMs = performance.now() - start;
     this.metrics.drawCalls = this.renderer.info.render.calls;
@@ -1167,20 +1178,38 @@ export class SceneView {
     lake.castShadow = false;
     this.terrain.push(lake);
     const ground = new THREE.MeshStandardMaterial({ color: 0x9caa81, roughness: 1, flatShading: true });
-    const bank = this.mesh(new THREE.BoxGeometry(115, 10, 180), ground, this.environment);
-    bank.position.set(-75, 3, 0);
-    this.terrain.push(bank);
-    const cliff = new THREE.MeshStandardMaterial({ color: 0xb7b59b, roughness: 1, flatShading: true });
+    // The bank and shoreline share vertices; the central approach meets the rear deck exactly.
     const vertices: number[] = [], indices: number[] = [];
-    for (let i = 0; i <= 30; i++) {
-      const z = -100 + i * 6.7;
-      const edge = -18 + Math.sin(i * 1.8) * 3;
-      vertices.push(edge, 8, z, edge + 9 + Math.sin(i * 2.1) * 2, 0, z);
-      if (i < 30) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    const shore: number[] = [];
+    for (let i = 0; i <= 60; i++) {
+      const z = -100 + i * (200 / 60);
+      const approach = Math.exp(-((Math.max(0, Math.abs(z) - 6.5) / 13) ** 4));
+      const edge = THREE.MathUtils.lerp(-18 + Math.sin(i * 0.9) * 2, LAUNCH.startX, approach);
+      const height = 8 + approach * (LAUNCH.height + LAUNCH.length * Math.sin(LAUNCH.slope) - 8);
+      shore.push(edge, height, z, edge + 9, 0, z);
+      for (let j = 0; j <= 24; j++) {
+        const t = j / 24, blend = t * t * (3 - 2 * t);
+        vertices.push(THREE.MathUtils.lerp(-132.5, edge, t), THREE.MathUtils.lerp(8, height, blend), z);
+        if (i < 60 && j < 24) {
+          const a = i * 25 + j;
+          indices.push(a, a + 25, a + 1, a + 1, a + 25, a + 26);
+        }
+      }
+    }
+    const bankGeometry = new THREE.BufferGeometry();
+    bankGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    bankGeometry.setIndex(indices);
+    bankGeometry.computeVertexNormals();
+    this.terrain.push(this.mesh(bankGeometry, ground, this.environment));
+    const cliff = new THREE.MeshStandardMaterial({ color: 0xb7b59b, roughness: 1, flatShading: true });
+    const shoreIndices: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      const a = i * 2;
+      shoreIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
     }
     const cliffGeometry = new THREE.BufferGeometry();
-    cliffGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    cliffGeometry.setIndex(indices);
+    cliffGeometry.setAttribute('position', new THREE.Float32BufferAttribute(shore, 3));
+    cliffGeometry.setIndex(shoreIndices);
     cliffGeometry.computeVertexNormals();
     const cliffMaterial = cliff.clone(); cliffMaterial.side = THREE.DoubleSide;
     this.terrain.push(this.mesh(cliffGeometry, cliffMaterial, this.environment));
@@ -1222,7 +1251,12 @@ export class SceneView {
     runway.position.set(LAUNCH.endX, LAUNCH.height, 0);
     runway.rotation.z = -LAUNCH.slope;
     this.environment.add(runway);
-    const platformGeometry = new THREE.BoxGeometry(LAUNCH.length, 0.6, 13);
+    runway.add(this.catapult);
+    this.catapult.name = 'steam-catapult';
+    this.steam.name = 'catapult-steam';
+    this.steam.frustumCulled = false;
+    this.catapult.add(this.steam);
+    const platformGeometry = new THREE.BoxGeometry(LAUNCH.length, PLATFORM.thickness, (PLATFORM.width - PLATFORM.slotWidth) / 2);
     const positions = platformGeometry.getAttribute('position');
     const normals = platformGeometry.getAttribute('normal');
     const uv = platformGeometry.getAttribute('uv');
@@ -1231,10 +1265,36 @@ export class SceneView {
       const end = Math.abs(normals.getX(i)) > 0.5;
       uv.setXY(i, (end ? positions.getZ(i) : positions.getX(i)) / 2, (top ? positions.getZ(i) : positions.getY(i)) / 2);
     }
-    const platform = this.mesh(platformGeometry, concrete, runway);
-    platform.name = 'launch-platform';
-    platform.position.set(-LAUNCH.length / 2, -0.3, 0);
-    this.terrain.push(platform);
+    for (const side of [-1, 1]) {
+      const platform = this.mesh(platformGeometry, concrete, runway);
+      platform.name = 'launch-platform';
+      platform.position.set(-LAUNCH.length / 2, -PLATFORM.thickness / 2, side * (PLATFORM.width + PLATFORM.slotWidth) / 4);
+      this.terrain.push(platform);
+    }
+    const steel = new THREE.MeshStandardMaterial({ color: 0x48565b, roughness: 0.42, metalness: 0.75 });
+    const darkSteel = new THREE.MeshStandardMaterial({ color: 0x202c30, roughness: 0.6, metalness: 0.65 });
+    const brass = new THREE.MeshStandardMaterial({ color: 0xd49a4b, roughness: 0.4, metalness: 0.7 });
+    const trough = this.mesh(new THREE.BoxGeometry(LAUNCH.length, PLATFORM.slotFloorThickness, PLATFORM.slotWidth), darkSteel, this.catapult);
+    trough.position.set(-LAUNCH.length / 2, -PLATFORM.slotDepth - PLATFORM.slotFloorThickness / 2, 0);
+    for (const side of [-1, 1]) {
+      const rail = this.mesh(new THREE.BoxGeometry(LAUNCH.length, 0.12, 0.075), steel, this.catapult);
+      rail.position.set(-LAUNCH.length / 2, -0.02, side * 0.27);
+      const pipe = this.mesh(new THREE.CylinderGeometry(0.07, 0.07, LAUNCH.length, 8), brass, this.catapult);
+      pipe.rotation.z = Math.PI / 2;
+      pipe.position.set(-LAUNCH.length / 2, -0.22, side * 0.19);
+    }
+    this.shuttle.name = 'catapult-shuttle';
+    this.catapult.add(this.shuttle);
+    const sled = this.mesh(new THREE.BoxGeometry(0.8, 0.18, 0.46), steel, this.shuttle);
+    sled.position.y = -0.03;
+    this.towArm = this.mesh(this.strutGeometry, brass, this.shuttle);
+    for (const side of [-1, 1]) {
+      const jaw = this.mesh(new THREE.BoxGeometry(0.32, 0.12, 0.09), steel, this.shuttle);
+      jaw.userData.side = side;
+      this.towJaws.push(jaw);
+    }
+    const stop = this.mesh(new THREE.BoxGeometry(0.18, 0.2, 0.68), brass, this.catapult);
+    stop.position.set(0.05, 0, 0);
     const supportGeometry = new THREE.BoxGeometry(0.5, 1, 0.5);
     for (const fraction of [0.2, 0.6, 0.9]) for (const z of [-5.4, 5.4]) {
       const x = -LAUNCH.length * fraction * Math.cos(LAUNCH.slope);
@@ -1244,12 +1304,7 @@ export class SceneView {
       support.scale.y = height;
     }
     const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const stripeGeometry = new THREE.PlaneGeometry(0.95, 0.2);
-    for (let x = -LAUNCH.length + 1; x < -0.5; x += 1.6) {
-      const stripe = this.mesh(stripeGeometry, stripeMaterial, runway);
-      stripe.rotation.x = -Math.PI / 2;
-      stripe.position.set(x, 0.015, 0);
-    }
+    // The recessed steam slot replaces the painted centerline.
     const edgeGeometry = new THREE.BoxGeometry(LAUNCH.length, 0.08, 0.14);
     for (const z of [-6.2, 6.2]) {
       const edge = this.mesh(edgeGeometry, stripeMaterial, runway);
@@ -1261,10 +1316,20 @@ export class SceneView {
       threshold.rotation.x = -Math.PI / 2;
       threshold.position.set(x, 0.02, 0);
     }
-    const sign = this.label('跑道 10 m · 坡度 3.5°', '#37483e', '#f5eedb', 512, 80);
-    sign.position.set(-5, 9.4, 6.65);
-    sign.scale.set(8, 1.25, 1);
-    this.environment.add(sign);
+    for (const side of [-1, 1]) {
+      const plate = this.mesh(new THREE.BoxGeometry(7.4, 1.05, 0.12), steel, runway);
+      plate.name = 'runway-specification-sign';
+      plate.position.set(-5, -1.4, side * 6.52);
+      for (const x of [-8, -2]) {
+        const hanger = this.mesh(new THREE.BoxGeometry(0.08, 0.8, 0.08), steel, runway);
+        hanger.position.set(x, -0.75, side * 6.52);
+      }
+      const sign = this.label('跑道 10 m · 坡度 3.5°', '#37483e', '#f5eedb', 512, 80, true);
+      sign.position.set(-5, -1.4, side * 6.59);
+      sign.rotation.y = side < 0 ? Math.PI : 0;
+      sign.scale.set(7.1, 0.85, 1);
+      runway.add(sign);
+    }
     const mountainMaterials = [0xa4b7a7, 0x8ba89c, 0xb2bfae, 0x7f9e92].map(color => new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true }));
     const mountainGeometry = new THREE.ConeGeometry(1, 1, 5, 1);
     for (let i = 0; i < 38; i++) {
@@ -1288,15 +1353,17 @@ export class SceneView {
     trunks.receiveShadow = trees.receiveShadow = true;
     this.detail.add(trunks, trees);
     const instance = new THREE.Object3D();
+    this.environment.updateMatrixWorld(true);
     for (let i = 0; i < 48; i++) {
       const x = -27 - (i % 8) * 11 + Math.sin(i * 7.2) * 3;
       const z = (i < 24 ? -1 : 1) * (15 + Math.floor((i % 24) / 8) * 22 + Math.sin(i * 2.2) * 8);
       const scale = 0.8 + (Math.sin(i * 8.2) + 1) * 0.8;
-      instance.position.set(x, 8.8, z);
+      const groundY = this.surfaceHeight(x, z);
+      instance.position.set(x, groundY + 0.8, z);
       instance.scale.setScalar(1);
       instance.updateMatrix();
       trunks.setMatrixAt(i, instance.matrix);
-      instance.position.set(x, 10 + scale * 1.1, z);
+      instance.position.set(x, groundY + 2 + scale * 1.1, z);
       instance.scale.setScalar(scale);
       instance.updateMatrix();
       trees.setMatrixAt(i, instance.matrix);
@@ -1316,6 +1383,45 @@ export class SceneView {
     }
     this.scene.add(this.cg, this.liftCenter, this.dragCenter);
     this.scene.updateMatrixWorld(true);
+  }
+
+  private updateCatapult(): void {
+    const attached = !this.simulation || this.simulation.launching;
+    this.catapult.updateWorldMatrix(true, false);
+    this.aircraft.updateWorldMatrix(true, false);
+    this.vector.copy(this.aircraft.position);
+    this.catapult.worldToLocal(this.vector);
+    this.shuttle.position.set(attached ? clamp(this.vector.x, -LAUNCH.length, 0) : 0, 0, 0);
+    // A telescopic tow arm reaches the fuselage for every editable CG and wing height.
+    this.vector.set(this.definition.fuselage.center, 0, 0).sub(this.simulation ? this.renderCG : this.designCG);
+    this.aircraft.localToWorld(this.vector);
+    this.catapult.worldToLocal(this.vector).sub(this.shuttle.position);
+    if (!attached) this.vector.set(0, 0.16, 0);
+    this.vector2.set(0, 0.04, 0);
+    this.placeStrut(this.towArm, this.vector2, this.vector, 0.055);
+    for (const jaw of this.towJaws) {
+      jaw.position.copy(this.vector);
+      jaw.position.z += jaw.userData.side * (attached ? 0.11 : 0.26);
+      jaw.rotation.x = attached ? 0 : jaw.userData.side * 0.65;
+    }
+    const time = this.simulation?.time ?? 0;
+    const releaseAge = time - LAUNCH.speed / LAUNCH.acceleration;
+    this.steam.visible = time > 0 && releaseAge < 0.8 && !this.simulation?.ended;
+    if (this.steam.visible) {
+      for (let i = 0; i < this.steam.count; i++) {
+        const age = (time * 1.8 + i / this.steam.count) % 1;
+        const fade = releaseAge > 0 ? Math.max(0, 1 - releaseAge / 0.8) : 1;
+        this.steamParticle.position.set(
+          clamp(this.shuttle.position.x - age * 2.5, -LAUNCH.length, 0),
+          0.05 + age * 0.85,
+          Math.sin(i * 2.4) * age * 0.5,
+        );
+        this.steamParticle.scale.setScalar((0.12 + age * 0.7) * (1 - age * 0.5) * fade);
+        this.steamParticle.updateMatrix();
+        this.steam.setMatrixAt(i, this.steamParticle.matrix);
+      }
+      this.steam.instanceMatrix.needsUpdate = true;
+    }
   }
 
   private label(text: string, color: string, background: string, width: number, height: number, flat = false): THREE.Sprite | THREE.Mesh {
