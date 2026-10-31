@@ -6,6 +6,21 @@ export const AIR_DENSITY = 1.225;
 /** 官方跑道几何；10 m/s 离台速度与两秒匀加速是游戏假设，不是官方速度。 */
 export const LAUNCH = { length: 10, slope: 3.5 * DEG, startX: -10 * Math.cos(3.5 * DEG), endX: 0, height: 10, speed: 10, acceleration: 5 } as const;
 export function runwayHeight(x: number) { return LAUNCH.height - x * Math.tan(LAUNCH.slope); }
+/** 与可见坡面共用的有限厚度刚性平台，尺寸为游戏近似。 */
+export const PLATFORM = { thickness: 0.6, width: 13, slotWidth: 0.6, slotDepth: 0.305, slotFloorThickness: 0.15 } as const;
+const PLATFORM_COS = Math.cos(LAUNCH.slope), PLATFORM_SIN = Math.sin(LAUNCH.slope);
+const CONTACT_TOLERANCE = 2e-6;
+const PLATFORM_NORMALS = [
+  new Vector3(-PLATFORM_COS, PLATFORM_SIN, 0), new Vector3(PLATFORM_COS, -PLATFORM_SIN, 0),
+  new Vector3(-PLATFORM_SIN, -PLATFORM_COS, 0), new Vector3(PLATFORM_SIN, PLATFORM_COS, 0),
+  new Vector3(0, 0, -1), new Vector3(0, 0, 1),
+];
+const PLATFORM_BOXES = [
+  [new Vector3(-LAUNCH.length, -PLATFORM.thickness, -PLATFORM.width / 2), new Vector3(0, 0, -PLATFORM.slotWidth / 2)],
+  [new Vector3(-LAUNCH.length, -PLATFORM.thickness, PLATFORM.slotWidth / 2), new Vector3(0, 0, PLATFORM.width / 2)],
+  [new Vector3(-LAUNCH.length, -PLATFORM.slotDepth - PLATFORM.slotFloorThickness, -PLATFORM.slotWidth / 2),
+    new Vector3(0, -PLATFORM.slotDepth, PLATFORM.slotWidth / 2)],
+];
 /** 整段助跑逐渐施加的滚转扰动上限（rad）。 */
 export const LAUNCH_ROLL_LIMIT = DEG;
 export const SURFACE_STEP = 0.8;
@@ -122,7 +137,7 @@ export interface FlightResult {
   maxSpeed: number;
   minSpeed: number;
   maxHeight: number;
-  landing: 'water' | 'boundary' | 'platform' | 'terrain';
+  landing: 'water' | 'boundary';
 }
 export interface FlightTelemetry {
   speed: number; altitude: number; distance: number;
@@ -549,6 +564,15 @@ export class FlightSimulation {
   private readonly launchAltitude: number;
   private readonly bodyVelocity = new Vector3();
   private readonly contacts: Vector3[];
+  private readonly platformFaces: Int8Array;
+  private readonly platformGaps: Float64Array;
+  private readonly platformImpulses: Float64Array;
+  private readonly platformAxes: Vector3[];
+  private readonly platformActive: Int32Array;
+  private platformCount = 0;
+  private readonly platformStart = new Vector3();
+  private readonly platformEnd = new Vector3();
+  private readonly contactNormal = new Vector3();
   private readonly inverse = new Quaternion();
   private readonly rotation = new Quaternion();
   private readonly arm = new Vector3();
@@ -585,6 +609,12 @@ export class FlightSimulation {
     this.surfaces = makeSurfaces(this.definition);
     this.aerodynamics = new AerodynamicSummary(this.surfaces);
     this.contacts = makeContacts(this.definition);
+    const contactCount = this.contacts.length * PLATFORM_BOXES.length;
+    this.platformFaces = new Int8Array(contactCount);
+    this.platformGaps = new Float64Array(contactCount);
+    this.platformImpulses = new Float64Array(contactCount);
+    this.platformAxes = Array.from({ length: contactCount }, () => new Vector3());
+    this.platformActive = new Int32Array(contactCount);
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     evaluateReference(this.aircraft);
     this.flightInertia.copy(this.aircraft.inertia);
@@ -772,6 +802,8 @@ export class FlightSimulation {
     if (this.ended) return;
     const initialLanding = this.landingAt(this.position, this.quaternion);
     if (initialLanding) { this.updateTelemetry(); this.finish(initialLanding); return; }
+    this.preparePlatformContacts();
+    this.resolvePlatformImpact();
     const mass = this.aircraft.mass, inertia = this.aircraft.inertia;
     this.previousVelocity.copy(this.velocity); this.previousOmega.copy(this.omega);
     this.midpointVelocity.copy(this.velocity); this.midpointOmega.copy(this.omega);
@@ -794,6 +826,7 @@ export class FlightSimulation {
         this.previousOmega.x + dt / 2 * (this.torque.x + (inertia.y - inertia.z) * w.y * w.z) / inertia.x,
         this.previousOmega.y + dt / 2 * (this.torque.y + (inertia.z - inertia.x) * w.z * w.x) / inertia.y,
         this.previousOmega.z + dt / 2 * (this.torque.z + (inertia.x - inertia.y) * w.x * w.y) / inertia.z);
+      this.constrainPlatformMidpoint(dt);
       const residual = this.candidateVelocity.distanceToSquared(this.midpointVelocity)
         + this.candidateOmega.distanceToSquared(this.midpointOmega);
       if (residual <= 1e-28 * (1 + this.midpointVelocity.lengthSq() + this.midpointOmega.lengthSq())) {
@@ -817,6 +850,13 @@ export class FlightSimulation {
       this.candidateQuaternion.multiply(this.rotation).normalize();
     }
     const landing = this.landingAt(this.candidatePosition, this.candidateQuaternion);
+    const platformHit = this.sweepsPlatform();
+    if ((platformHit && dt > 1e-8) || angle > 0.1) {
+      // 先推进到首次接触附近；静止支撑用中点约束，不靠微小反弹消耗整帧。
+      this.integrateFlight(input, dt / 2);
+      this.integrateFlight(input, dt / 2);
+      return;
+    }
     if (landing && dt > 1e-7) {
       // 重新求解接触时刻，不插值/抬升终点，也不修补能量账本。
       this.integrateFlight(input, dt / 2);
@@ -830,14 +870,137 @@ export class FlightSimulation {
     this.position.copy(this.candidatePosition);
     this.quaternion.copy(this.candidateQuaternion);
     this.telemetry.dissipatedEnergy -= this.telemetry.aeroPower * dt;
+    for (let i = 0; i < this.platformCount; i++) {
+      const index = this.platformActive[i], normal = PLATFORM_NORMALS[this.platformFaces[index] % 6];
+      const contactSpeed = normal.dot(this.midpointVelocity) + this.platformAxes[index].dot(this.midpointOmega);
+      this.telemetry.dissipatedEnergy -= 2 * this.platformImpulses[index] * contactSpeed;
+    }
     this.time += dt;
     const currentSpeed = this.velocity.length();
     this.travelled += (speed + currentSpeed) * 0.5 * dt;
     this.maxSpeed = Math.max(this.maxSpeed, currentSpeed); this.minSpeed = Math.min(this.minSpeed, currentSpeed);
     this.maxHeight = Math.max(this.maxHeight, this.position.y);
+    if (platformHit) { this.preparePlatformContacts(); this.resolvePlatformImpact(); }
     this.updateTelemetry();
     if (landing) this.finish(landing);
     else if (Math.abs(this.position.x) >= 2000 || Math.abs(this.position.z) >= 800 || this.position.y >= 300) this.finish('boundary');
+  }
+
+  /** 世界坐标转为坡面坐标；两侧板和槽底共用同一有限盒接触路径。 */
+  private platformPoint(point: Vector3, position: Vector3, orientation: Quaternion, out: Vector3) {
+    out.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+    const x = out.x - LAUNCH.endX, y = out.y - LAUNCH.height;
+    out.set(PLATFORM_COS * x - PLATFORM_SIN * y, PLATFORM_SIN * x + PLATFORM_COS * y, out.z);
+  }
+
+  private preparePlatformContacts() {
+    this.platformCount = 0;
+    this.platformFaces.fill(-1);
+    for (let point = 0; point < this.contacts.length; point++) {
+      this.platformPoint(this.contacts[point], this.position, this.quaternion, this.platformStart);
+      const p = this.platformStart;
+      for (let box = 0; box < PLATFORM_BOXES.length; box++) {
+        const index = point * PLATFORM_BOXES.length + box;
+        const [low, high] = PLATFORM_BOXES[box];
+        if (p.x < low.x - CONTACT_TOLERANCE || p.x > high.x + CONTACT_TOLERANCE
+          || p.y < low.y - CONTACT_TOLERANCE || p.y > high.y + CONTACT_TOLERANCE
+          || p.z < low.z - CONTACT_TOLERANCE || p.z > high.z + CONTACT_TOLERANCE) continue;
+        let face = 0, gap = low.x - p.x;
+        for (let axis = 0; axis < 3; axis++) {
+          const value = p.getComponent(axis);
+          if (low.getComponent(axis) - value > gap) { gap = low.getComponent(axis) - value; face = axis * 2; }
+          if (value - high.getComponent(axis) > gap) { gap = value - high.getComponent(axis); face = axis * 2 + 1; }
+        }
+        this.platformFaces[index] = box * 6 + face;
+        this.platformGaps[index] = gap;
+        this.platformActive[this.platformCount++] = index;
+      }
+    }
+  }
+
+  /** 无摩擦、完全非弹性冲量；每次冲量的动能损失直接进入耗散账本。 */
+  private resolvePlatformImpact() {
+    const mass = this.aircraft.mass, inertia = this.aircraft.inertia;
+    this.inverse.copy(this.quaternion).invert();
+    for (let iteration = 0; iteration < 32; iteration++) {
+      let closing = false;
+      for (let i = 0; i < this.platformCount; i++) {
+        const index = this.platformActive[i], normal = PLATFORM_NORMALS[this.platformFaces[index] % 6];
+        this.arm.copy(this.contacts[Math.floor(index / PLATFORM_BOXES.length)]).sub(this.aircraft.cg);
+        this.contactNormal.copy(normal).applyQuaternion(this.inverse);
+        this.cross.crossVectors(this.arm, this.contactNormal);
+        const speed = this.velocity.dot(normal) + this.cross.dot(this.omega);
+        if (speed >= -1e-10) continue;
+        const inverseMass = 1 / mass + this.cross.x ** 2 / inertia.x + this.cross.y ** 2 / inertia.y + this.cross.z ** 2 / inertia.z;
+        const impulse = -speed / inverseMass;
+        this.velocity.addScaledVector(normal, impulse / mass);
+        this.omega.x += impulse * this.cross.x / inertia.x;
+        this.omega.y += impulse * this.cross.y / inertia.y;
+        this.omega.z += impulse * this.cross.z / inertia.z;
+        this.telemetry.dissipatedEnergy += -(impulse * speed + 0.5 * impulse ** 2 * inverseMass);
+        closing = true;
+      }
+      if (!closing) break;
+    }
+  }
+
+  /** 离散接触雅可比与四元数位移一致，约束功等于真实机械能变化。 */
+  private constrainPlatformMidpoint(dt: number) {
+    if (!this.platformCount) return;
+    const mass = this.aircraft.mass, inertia = this.aircraft.inertia;
+    const halfAngle = this.midpointOmega.length() * dt / 2;
+    const sinc = halfAngle > 1e-8 ? Math.sin(halfAngle) / halfAngle : 1 - halfAngle ** 2 / 6;
+    this.inverse.copy(this.midpointQuaternion).invert();
+    for (let i = 0; i < this.platformCount; i++) {
+      const index = this.platformActive[i];
+      this.arm.copy(this.contacts[Math.floor(index / PLATFORM_BOXES.length)]).sub(this.aircraft.cg);
+      this.contactNormal.copy(PLATFORM_NORMALS[this.platformFaces[index] % 6]).applyQuaternion(this.inverse);
+      this.platformAxes[index].crossVectors(this.arm, this.contactNormal).multiplyScalar(sinc);
+      this.platformImpulses[index] = 0;
+    }
+    for (let iteration = 0; iteration < 128; iteration++) {
+      let change = 0;
+      for (let i = 0; i < this.platformCount; i++) {
+        const index = this.platformActive[i], axis = this.platformAxes[index], normal = PLATFORM_NORMALS[this.platformFaces[index] % 6];
+        const speed = normal.dot(this.candidateVelocity) + axis.dot(this.candidateOmega);
+        const inverseMass = 1 / mass + axis.x ** 2 / inertia.x + axis.y ** 2 / inertia.y + axis.z ** 2 / inertia.z;
+        const previous = this.platformImpulses[index];
+        const impulse = Math.max(0, previous + (-Math.max(0, this.platformGaps[index]) / dt - speed) / inverseMass);
+        const delta = impulse - previous;
+        this.platformImpulses[index] = impulse;
+        this.candidateVelocity.addScaledVector(normal, delta / mass);
+        this.candidateOmega.x += delta * axis.x / inertia.x;
+        this.candidateOmega.y += delta * axis.y / inertia.y;
+        this.candidateOmega.z += delta * axis.z / inertia.z;
+        change = Math.max(change, Math.abs(delta));
+      }
+      if (change < 1e-12) break;
+    }
+  }
+
+  /** 逐采样点做线段/长方体扫掠，能检测一帧内完全穿过薄板的情况。 */
+  private sweepsPlatform() {
+    for (let index = 0; index < this.contacts.length; index++) {
+      this.platformPoint(this.contacts[index], this.position, this.quaternion, this.platformStart);
+      this.platformPoint(this.contacts[index], this.candidatePosition, this.candidateQuaternion, this.platformEnd);
+      for (let box = 0; box < PLATFORM_BOXES.length; box++) {
+        if (this.platformFaces[index * PLATFORM_BOXES.length + box] >= 0) continue;
+        const [low, high] = PLATFORM_BOXES[box];
+        let entry = 0, exit = 1;
+        for (let axis = 0; axis < 3; axis++) {
+          const start = this.platformStart.getComponent(axis), delta = this.platformEnd.getComponent(axis) - start;
+          if (Math.abs(delta) < 1e-15) {
+            if (start < low.getComponent(axis) || start > high.getComponent(axis)) { entry = Infinity; break; }
+          } else {
+            const a = (low.getComponent(axis) - start) / delta, b = (high.getComponent(axis) - start) / delta;
+            entry = Math.max(entry, Math.min(a, b));
+            exit = Math.min(exit, Math.max(a, b));
+          }
+        }
+        if (entry <= exit && exit >= 0 && entry <= 1) return true;
+      }
+    }
+    return false;
   }
 
   private updateTelemetry() {
@@ -865,15 +1028,11 @@ export class FlightSimulation {
   }
 
   private landingAt(position: Vector3, orientation: Quaternion): FlightResult['landing'] | null {
-    let landing: FlightResult['landing'] | null = null;
     for (const point of this.contacts) {
       this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
-      if (this.cross.x >= LAUNCH.startX && this.cross.x <= LAUNCH.endX && Math.abs(this.cross.z) <= 6.5
-        && this.cross.y <= runwayHeight(this.cross.x)) return 'platform';
-      if (this.cross.x >= -132.5 && this.cross.x <= -17.5 && Math.abs(this.cross.z) <= 90 && this.cross.y <= 8) landing = 'terrain';
-      else if (this.cross.y <= 0 && !landing) landing = 'water';
+      if (this.cross.y <= 0) return 'water';
     }
-    return landing;
+    return null;
   }
 
   private tailDistance() {

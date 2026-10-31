@@ -110,9 +110,12 @@ export class GameAudio {
     if (this.releasePlayed || !this.inFlight()) return;
     this.releasePlayed = true;
     if (!this.canPlay()) return;
-     this.noiseBurst(0.055, 0.13, true);
-     this.tone(1800, 1100, 0.045, 0.035, true, 'triangle');
-     this.tone(240, 150, 0.075, 0.04, true, 'triangle');
+    // Original synthesis: latch snap, heavy coupling impact, inharmonic metal ring and steam vent.
+    this.noiseBurst(0.13, 0.19, true);
+    this.tone(2100, 900, 0.035, 0.14, true, 'sawtooth');
+    this.tone(165, 52, 0.19, 0.32, true);
+    this.tone(920, 900, 0.34, 0.095, true);
+    this.tone(1477, 1450, 0.27, 0.06, true);
   }
 
   ui(kind: 'click' | 'success' | 'error'): void {

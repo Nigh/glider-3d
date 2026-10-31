@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
-import { coefficients, derive, FlightSimulation, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, runwayHeight, SURFACE_STEP } from '../src/physics';
+import { coefficients, derive, FlightSimulation, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
@@ -42,6 +42,41 @@ function keelPoints(d: AircraftDefinition) {
     for (const point of d[key].points) for (const side of [-1, 1]) points.push(new Vector3(origin.x - point.x * Math.cos(angle), origin.y - point.x * Math.sin(angle) + point.y * Math.tan(d[key].dihedral * DEG), side * point.y));
   }
   return points;
+}
+function compactAircraft() {
+  return definition(d => {
+    d.mainWing = wing(0.5, 0.3, 0.3); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.6, 0.3, 0.2);
+    d.assembly.mainWingHeight = 0; d.assembly.mainIncidence = 0;
+  });
+}
+// 验证完整接触代理（含翼型厚度），不只验证重心或机身下缘。
+function contacts(s: FlightSimulation) { return Reflect.get(s, 'contacts') as Vector3[]; }
+function platformLocal(point: Vector3) {
+  return point.clone().sub(new Vector3(LAUNCH.endX, LAUNCH.height, 0)).applyAxisAngle(new Vector3(0, 0, 1), LAUNCH.slope);
+}
+function outsidePlatform(s: FlightSimulation) {
+  const boxes = [
+    [-LAUNCH.length, 0, -PLATFORM.thickness, 0, -PLATFORM.width / 2, -PLATFORM.slotWidth / 2],
+    [-LAUNCH.length, 0, -PLATFORM.thickness, 0, PLATFORM.slotWidth / 2, PLATFORM.width / 2],
+    [-LAUNCH.length, 0, -PLATFORM.slotDepth - PLATFORM.slotFloorThickness, -PLATFORM.slotDepth, -PLATFORM.slotWidth / 2, PLATFORM.slotWidth / 2],
+  ];
+  for (const point of contacts(s)) {
+    const p = platformLocal(world(s, point));
+    for (const box of boxes) expect(Math.max(box[0] - p.x, p.x - box[1], box[2] - p.y, p.y - box[3], box[4] - p.z, p.z - box[5])).toBeGreaterThan(-3e-6);
+  }
+}
+function approachingPlatform(axis: number, sign: number, speed = 3, gap = 0.01) {
+  const s = new FlightSimulation(compactAircraft(), 'standard', 0);
+  s.launching = false;
+  s.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), -LAUNCH.slope);
+  const values = contacts(s).map(point => point.getComponent(axis) - s.aircraft.cg.getComponent(axis));
+  const boundary = axis === 0 ? (sign > 0 ? 0 : -LAUNCH.length)
+    : axis === 1 ? (sign > 0 ? 0 : -PLATFORM.thickness) : sign * PLATFORM.width / 2;
+  const position = new Vector3(-5, -0.3, 1.5);
+  position.setComponent(axis, boundary - (sign > 0 ? Math.min(...values) : Math.max(...values)) + sign * gap);
+  s.position.copy(position).applyQuaternion(s.quaternion).add(new Vector3(LAUNCH.endX, LAUNCH.height, 0));
+  s.velocity.set(0, 0, 0).setComponent(axis, -sign * speed).applyQuaternion(s.quaternion);
+  return s;
 }
 
 describe('展向条带与完整翼面', () => {
@@ -178,7 +213,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
       expect(s.ended).toBe(false);
     }
     expect(s.aircraft.cg.x).toBeCloseTo(derive(d, 1).cg.x, 10);
-    for (let i = 0; i < 3; i++) { s.step(neutral); expect(s.result?.landing).not.toBe('platform'); budget(s); }
+    for (let i = 0; i < 3; i++) { s.step(neutral); expect(s.ended).toBe(false); budget(s); }
   });
 
   it('最后尾而非CG计距，横向飞行与偏航使用同一径向几何标准，距离非负', () => {
@@ -194,16 +229,77 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
     expect(edge.telemetry.distance).toBe(0);
   });
 
-  it('接水时定位首次接触，终点不明显穿水；接触平台按斜坡而非水平面判定', () => {
+  it('接水时定位首次接触，终点不明显穿水；不存在旧岸地box的幽灵终止', () => {
     const s = new FlightSimulation(defaultAircraft, 'standard', 0); s.launching = false; s.quaternion.identity();
     s.position.set(40, 2, 0); s.velocity.set(0, -20, 0);
     while (!s.ended) s.step(neutral, 0.25);
     expect(s.result?.landing).toBe('water');
     const minY = Math.min(...keelPoints(defaultAircraft).map(point => world(s, point).y));
     expect(minY).toBeGreaterThan(-0.001); expect(minY).toBeLessThan(0.15); budget(s);
-    const platform = probe(undefined, s => { s.position.set(-8, 10.3, 0); s.velocity.set(0, 0, 0); });
-    expect(platform.result?.landing).toBe('platform');
-    const terrain = probe(undefined, s => { s.position.set(-40, 7.8, 0); }); expect(terrain.result?.landing).toBe('terrain');
+    const shore = probe(undefined, s => { s.position.set(-40, 7.8, 0); });
+    expect(shore.ended).toBe(false); expect(shore.result).toBeNull();
+  });
+
+  it.each([[0, -1], [0, 1], [1, -1], [1, 1], [2, -1], [2, 1]])('平台轴%d、法向%d真实碰撞，改变平动/转动，不终止或穿透', (axis, sign) => {
+    const s = approachingPlatform(axis, sign), normal = new Vector3().setComponent(axis, sign).applyQuaternion(s.quaternion);
+    outsidePlatform(s);
+    s.step(neutral, 0.08);
+    expect(s.ended).toBe(false); expect(s.result).toBeNull(); expect(s.time).toBeCloseTo(0.08, 12);
+    expect(s.velocity.dot(normal)).toBeGreaterThan(-2.8);
+    expect(s.omega.length()).toBeGreaterThan(1e-6);
+    outsidePlatform(s); budget(s);
+  });
+
+  it('平台支撑持续推进时间且不造能；滑离平台后仍正常落水结算', () => {
+    const s = approachingPlatform(1, 1, 0.2);
+    for (let i = 0; i < 120; i++) {
+      s.step(neutral);
+      expect(s.ended).toBe(false); outsidePlatform(s); budget(s);
+    }
+    expect(s.time).toBeCloseTo(2, 10);
+    for (let i = 0; i < 1800 && !s.ended; i++) { s.step(neutral); budget(s); }
+    expect(s.result?.landing).toBe('water');
+    expect(s.time).toBeGreaterThan(2);
+  });
+
+  it('高速扫掠不能从底面穿过0.6m薄平台，接触耗散只记真实动能损失', () => {
+    const s = approachingPlatform(1, -1, 80);
+    s.step(neutral);
+    expect(s.ended).toBe(false);
+    expect(s.telemetry.dissipatedEnergy).toBeGreaterThan(s.telemetry.initialEnergy * 0.05);
+    expect(s.velocity.y).toBeLessThan(70);
+    outsidePlatform(s); budget(s);
+  });
+
+  it('蒸汽槽不是整块平台顶面；进入槽内后接触真实槽底', () => {
+    const s = approachingPlatform(1, 1, 0, 0.03);
+    const lowest = Math.min(...contacts(s).map(point => point.y - s.aircraft.cg.y));
+    s.position.set(-5, -PLATFORM.slotDepth - lowest + 0.03, 0).applyQuaternion(s.quaternion).add(new Vector3(0, LAUNCH.height, 0));
+    s.step(neutral, 0.02);
+    const minY = Math.min(...contacts(s).map(point => platformLocal(world(s, point)).y));
+    expect(minY).toBeLessThan(0); expect(minY).toBeGreaterThan(-PLATFORM.slotDepth);
+    for (let i = 0; i < 30; i++) { s.step(neutral); expect(s.ended).toBe(false); outsidePlatform(s); budget(s); }
+  });
+
+  it('碰撞子步不丢失时间；批量步进与60Hz逐步结果一致', () => {
+    const coarse = approachingPlatform(1, 1), fine = approachingPlatform(1, 1);
+    coarse.step(neutral, 0.25);
+    for (let i = 0; i < 15; i++) fine.step(neutral);
+    expect(coarse.time).toBeCloseTo(0.25, 12); expect(fine.time).toBeCloseTo(0.25, 12);
+    expect(coarse.position.distanceTo(fine.position)).toBeLessThan(1e-9);
+    expect(coarse.velocity.distanceTo(fine.velocity)).toBeLessThan(1e-9);
+    expect(coarse.omega.distanceTo(fine.omega)).toBeLessThan(1e-9);
+    expect(coarse.telemetry.dissipatedEnergy).toBeCloseTo(fine.telemetry.dissipatedEnergy, 8);
+    outsidePlatform(coarse); outsidePlatform(fine); budget(coarse); budget(fine);
+  });
+
+  it('槽底与侧壁可同时接触，不把槽底支撑当成忽略侧板的理由', () => {
+    const s = approachingPlatform(1, 1, 0, 0.01);
+    const lowest = Math.min(...contacts(s).map(point => point.y - s.aircraft.cg.y));
+    s.position.set(-5, -PLATFORM.slotDepth - lowest + 0.01, 0).applyQuaternion(s.quaternion).add(new Vector3(0, LAUNCH.height, 0));
+    s.velocity.set(0, 0, 1.5);
+    for (let i = 0; i < 30; i++) { s.step(neutral); expect(s.ended).toBe(false); outsidePlatform(s); budget(s); }
+    expect(s.velocity.z).toBeLessThan(1.4);
   });
 });
 
