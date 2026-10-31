@@ -65,4 +65,21 @@ describe('参数化几何与信任边界',()=>{
    (d:typeof defaultAircraft)=>{d.assembly.verticalTail=5;},
   ]){const d=clone(defaultAircraft);mutate(d);expect(()=>validateAircraft(d)).toThrow();}
  });
+ it('旧存档补齐鸟人间、左右行程和默认垂尾，不修改导入对象',()=>{
+  const legacy:any=clone(defaultAircraft);delete legacy.birdman;delete legacy.controls.lateralTravel;
+  for(const key of ['mainWing','horizontalTail','verticalTail'])delete legacy[key].controlSurface;
+  const checked=validateAircraft(legacy);
+  expect(checked.birdman).toBe(true);expect(checked.controls.lateralTravel).toBe(0.1);
+  expect(checked.mainWing.controlSurface).toBe(0);expect(checked.horizontalTail.controlSurface).toBe(0);expect(checked.verticalTail.controlSurface).toBe(1);
+  expect(legacy.birdman).toBeUndefined();expect(legacy.verticalTail.controlSurface).toBeUndefined();
+ });
+ it('鸟人间只允许垂尾操纵，非鸟人间控制面比例和侧移行程有有限边界',()=>{
+  const d=clone(defaultAircraft);d.mainWing.controlSurface=0.25;
+  expect(()=>validateAircraft(d)).toThrow('鸟人间');d.birdman=false;d.horizontalTail.controlSurface=1;
+  expect(validateAircraft(d).mainWing.controlSurface).toBe(0.25);
+  d.verticalTail.controlSurface=0.3;expect(validateAircraft(d).verticalTail.controlSurface).toBe(0.3);
+  for(const value of [-0.01,1.01,NaN,Infinity]){const invalid=clone(d);invalid.mainWing.controlSurface=value;expect(()=>validateAircraft(invalid)).toThrow();}
+  for(const value of [0,0.201,NaN,Infinity]){const invalid=clone(d);invalid.controls.lateralTravel=value;expect(()=>validateAircraft(invalid)).toThrow();}
+  for(const value of [0.01,0.2]){const valid=clone(d);valid.controls.lateralTravel=value;expect(validateAircraft(valid).controls.lateralTravel).toBe(value);}
+ });
 });

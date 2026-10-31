@@ -56,7 +56,7 @@ async function enterDesign(page: Page) {
 async function expectWaiting(page: Page) {
   await expect(page.getByRole('button', { name: '开始试飞', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '重心前移', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '低头', exact: true })).toBeDisabled();
   const storedInputs = await page.evaluate(() => window.glider.recordingLength);
   for (let check = 0; check < 2; check++) {
     expect(await page.evaluate(() => ({
@@ -252,7 +252,7 @@ test.describe('桌面完整交互', () => {
 
   test('键鼠飞控、暂停、着水结果、确定性重放、返回改进和再次飞行', async ({ page }) => {
     await enterDesign(page);
-    await page.getByRole('button', { name: '前往平台试飞' }).click();
+    await page.getByRole('button', { name: '前往挑战' }).click();
     await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('flight');
     await beginFlight(page);
     const initialCg = await page.evaluate(() => window.glider.telemetry!.cg.x);
@@ -262,7 +262,7 @@ test.describe('桌面完整交互', () => {
     await expect.poll(() => page.evaluate(() => window.glider.telemetry!.cg.x)).toBeGreaterThan(initialCg);
     await page.keyboard.up('w');
     await page.keyboard.up('d');
-    const button = page.getByRole('button', { name: '重心后移', exact: true });
+    const button = page.getByRole('button', { name: '抬头', exact: true });
     const box = await button.boundingBox();
     if (!box) throw new Error('鼠标飞控不可见');
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -296,7 +296,7 @@ test.describe('桌面完整交互', () => {
     await page.getByRole('button', { name: '返回设计改进', exact: true }).click();
     await page.getByRole('tab', { name: '机身', exact: true }).click();
     await number(page, '驾驶舱位置精确值', 1.3);
-    await page.getByRole('button', { name: '前往平台试飞' }).click();
+    await page.getByRole('button', { name: '前往挑战' }).click();
     await beginFlight(page);
     await waitResult(page);
     await page.getByRole('button', { name: '再试一次', exact: true }).click();
@@ -320,15 +320,15 @@ test('手机竖屏与横屏无页面溢出，真实浏览器触摸事件可操�
   await page.getByRole('button', { name: '机库', exact: true }).tap();
   await noOverflow(page);
   await page.getByRole('region', { name: '本地机库' }).getByRole('button', { name: '关闭', exact: true }).tap();
-  await insideViewport(page, page.getByRole('button', { name: '前往平台试飞' }));
-  await page.getByRole('button', { name: '前往平台试飞' }).tap();
+  await insideViewport(page, page.getByRole('button', { name: '前往挑战' }));
+  await page.getByRole('button', { name: '前往挑战' }).tap();
   await beginFlight(page);
   await noOverflow(page);
   const session = await context.newCDPSession(page);
   let touchActive = false;
   try {
     for (const [name, progress, expected] of [
-      ['重心前移', '重心操纵输入', '2'], ['重心后移', '重心操纵输入', '0'],
+      ['低头', '重心操纵输入', '2'], ['抬头', '重心操纵输入', '0'],
       ['向左转向', '方向操纵输入', '0'], ['向右转向', '方向操纵输入', '2'],
     ]) {
       const control = page.getByRole('button', { name, exact: true });
@@ -403,7 +403,7 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
     })).toBeGreaterThanOrEqual(0.549);
   }
   await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
-  await page.getByRole('button', { name: '前往平台试飞' }).click();
+  await page.getByRole('button', { name: '前往挑战' }).click();
   await beginFlight(page);
   await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0), { timeout: 20_000 }).toBeGreaterThan(30);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
@@ -432,7 +432,7 @@ test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', 
     try {
       view = new SceneView(host);
       view.setQuality('Low');
-      const sim = new FlightSimulation(defaultAircraft, 'standard', 0);
+      const sim = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
       view.setFlight(sim);
       view.cameraView('侧面');
       const fixedDt = 1 / 60, renderDt = 1 / 120;
@@ -481,7 +481,7 @@ test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', 
       const resumedMidpoint = beforePause.clone().lerp(sim.position, 0.5);
       const resumedMidpointError = resumedMidpoint.distanceTo(
         sim.position.clone().copy(view.getDiagnostics().aircraft));
-      const fresh = new FlightSimulation(defaultAircraft, 'standard', 0);
+      const fresh = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
       const flightSeparation = fresh.position.distanceTo(sim.position);
       view.setFlight(fresh);
       view.render(renderDt, 0);
@@ -512,7 +512,7 @@ test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', 
 });
 
 test('空格开始、暂停与继续，C键循环视角，输入焦点不触发快捷键', async ({ page }) => {
-  await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
+  await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
   await expectWaiting(page);
   await page.keyboard.down('w');
   await page.keyboard.down('d');
@@ -930,7 +930,7 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
 });
 
 test('底部主按钮启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
-  await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
+  await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
   await expectWaiting(page);
   const start = page.getByRole('button', { name: '开始试飞', exact: true });
   const box = await start.boundingBox(), viewport = page.viewportSize()!;
@@ -996,7 +996,7 @@ test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再�
     host.style.cssText = 'position:fixed;inset:0;width:960px;height:600px';
     document.body.appendChild(host);
     const view = new SceneView(host);
-    const sim = new FlightSimulation(defaultAircraft, 'standard', 0);
+    const sim = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
     const tree = view as unknown as { scene: import('three').Scene };
     const shuttle = tree.scene.getObjectByName('catapult-shuttle')!;
     const input = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -1014,7 +1014,7 @@ test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再�
       for (let i = 0; i < 12; i++) view.render(1 / 60, 1);
       const paused = position();
       const end = advance(60), later = advance(60), plane = sim.position.toArray();
-      view.setFlight(new FlightSimulation(defaultAircraft, 'standard', 0));
+      view.setFlight(new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0));
       view.render(1 / 60, 1);
       return { start, moving, paused, end, later, plane, reset: position(), endX: LAUNCH.endX, height: LAUNCH.height };
     } finally { view.dispose(); host.remove(); }

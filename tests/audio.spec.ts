@@ -29,7 +29,7 @@ test.beforeEach(async ({ page }) => {
 
 test('原生音频随速度增强，静音有效，暂停恢复不阻断播放', async ({ page }) => {
  await page.goto('/');
- await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
+ await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
  const result = await page.evaluate(async () => {
   const path = '/src/audio.ts';
    // Browser execution must load Vite's module; Node-side static imports cannot cross page.evaluate.
@@ -81,7 +81,7 @@ test('原生音频随速度增强，静音有效，暂停恢复不阻断播放',
 
 test('分离音有低频冲击、机械高频与衰减余振，每次飞行只响一次并遵守音效音量', async ({ page }) => {
  await page.goto('/');
- await page.getByRole('button', { name: '先试飞默认飞机', exact: true }).click();
+ await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
  const result = await page.evaluate(async () => {
   const path = '/src/audio.ts';
   // page.evaluate runs in the browser; static Node imports cannot load Vite's audio module there.
