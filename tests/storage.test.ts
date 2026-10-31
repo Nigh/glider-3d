@@ -192,6 +192,15 @@ describe('最远纪录', () => {
     expect(readBest('assisted', 'downhill')).toBe(0);
   });
 
+  it('低空扣分允许负成绩，只保留较高分且与时间距离隔离', () => {
+    expect(writeBest('standard', -50, 'low-altitude')).toBe(-50);
+    expect(writeBest('standard', -80, 'low-altitude')).toBe(-50);
+    expect(writeBest('standard', 100, 'low-altitude')).toBe(100);
+    expect(readBest('standard', 'low-altitude')).toBe(100);
+    expect(readBest('standard', 'downhill')).toBe(0);
+    expect(readBest('standard')).toBe(0);
+  });
+
   it('损坏纪录不被静默覆盖', () => {
     storage.setItem('lakewind.best.official-v1.standard', 'broken');
     expect(() => readBest('standard')).toThrow('纪录已损坏');

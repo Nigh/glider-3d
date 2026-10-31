@@ -79,6 +79,40 @@ test('原生音频随速度增强，静音有效，暂停恢复不阻断播放',
  expect(result.advanced).toBe(true);
 });
 
+test('喷气引擎随实际转速提高音量与音高，停机后静音', async ({ page }) => {
+ await page.goto('/');
+ await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
+ const result = await page.evaluate(async () => {
+  const path = '/src/audio.ts';
+  // page.evaluate loads Vite's browser module; a static Node import cannot cross that execution boundary.
+  const { GameAudio } = await import(path) as typeof AudioModule;
+  const audio = new GameAudio();
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false, engineRpm: 0.25 };
+  audio.setPreferences({ muted: false, music: 0, effects: 1 });
+  audio.update(state); audio.unlock();
+  const { context, meter } = window.audioProbes.at(-1)!;
+  const measure = async () => {
+   const { promise, resolve } = Promise.withResolvers<void>();
+   setTimeout(resolve, 900); await promise;
+   const signal = new Float32Array(meter.fftSize), spectrum = new Float32Array(meter.frequencyBinCount);
+   meter.getFloatTimeDomainData(signal); meter.getFloatFrequencyData(spectrum);
+   const binHz = context.sampleRate / meter.fftSize;
+   let peak = Math.ceil(80 / binHz);
+   for (let bin = peak + 1; bin * binHz < 600; bin++) if (spectrum[bin] > spectrum[peak]) peak = bin;
+   return { rms: Math.sqrt(signal.reduce((sum, value) => sum + value * value, 0) / signal.length), pitch: peak * binHz };
+  };
+  try {
+   const low = await measure();
+   audio.update({ ...state, engineRpm: 1 }); const high = await measure();
+   audio.update({ ...state, engineRpm: 0 }); const stopped = await measure();
+   return { low, high, stopped };
+  } finally { audio.dispose(); }
+ });
+ expect(result.high.rms).toBeGreaterThan(result.low.rms * 2);
+ expect(result.high.pitch).toBeGreaterThan(result.low.pitch + 100);
+ expect(result.stopped.rms).toBeLessThan(0.0001);
+});
+
 test('分离音有低频冲击、机械高频与衰减余振，每次飞行只响一次并遵守音效音量', async ({ page }) => {
  await page.goto('/');
  await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();

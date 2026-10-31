@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingOrigin,mainWingSupport,mainWingMountLimits,DEG } from '../src/model';
+import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions } from '../src/model';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
@@ -67,11 +67,14 @@ describe('参数化几何与信任边界',()=>{
  });
  it('旧存档补齐鸟人间、左右行程和默认垂尾，不修改导入对象',()=>{
   const legacy:any=clone(defaultAircraft);delete legacy.birdman;delete legacy.controls.lateralTravel;
+  delete legacy.engine;delete legacy.fuelTank;
   for(const key of ['mainWing','horizontalTail','verticalTail'])delete legacy[key].controlSurface;
   const checked=validateAircraft(legacy);
   expect(checked.birdman).toBe(true);expect(checked.controls.lateralTravel).toBe(0.1);
   expect(checked.mainWing.controlSurface).toBe(0);expect(checked.horizontalTail.controlSurface).toBe(0);expect(checked.verticalTail.controlSurface).toBe(1);
   expect(legacy.birdman).toBeUndefined();expect(legacy.verticalTail.controlSurface).toBeUndefined();
+  expect(checked.engine.count).toBe(0);expect(checked.fuelTank.capacity).toBe(0);
+  expect(legacy.engine).toBeUndefined();expect(legacy.fuelTank).toBeUndefined();
  });
  it('鸟人间只允许垂尾操纵，非鸟人间控制面比例和侧移行程有有限边界',()=>{
   const d=clone(defaultAircraft);d.mainWing.controlSurface=0.25;
@@ -81,5 +84,22 @@ describe('参数化几何与信任边界',()=>{
   for(const value of [-0.01,1.01,NaN,Infinity]){const invalid=clone(d);invalid.mainWing.controlSurface=value;expect(()=>validateAircraft(invalid)).toThrow();}
   for(const value of [0,0.201,NaN,Infinity]){const invalid=clone(d);invalid.controls.lateralTravel=value;expect(()=>validateAircraft(invalid)).toThrow();}
   for(const value of [0.01,0.2]){const valid=clone(d);valid.controls.lateralTravel=value;expect(validateAircraft(valid).controls.lateralTravel).toBe(value);}
+ });
+ it('单双发挂点和自动支撑共用尺寸，油箱体积对应升容量',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine={type:'jet-01',count:2,mount:'below',x:-0.5,y:0.6,z:0.8};
+  const mounts=engineMounts(validateAircraft(d));expect(mounts.map(m=>m.z)).toEqual([-0.8,0.8]);expect(mounts.map(m=>m.y)).toEqual([-0.6,-0.6]);
+  for(const mount of mounts){expect(mount.supportLength).toBeGreaterThan(0);expect(mount.supportMass).toBeGreaterThan(0);}
+  d.engine.count=1;d.engine.z=-0.8;expect(engineMounts(validateAircraft(d))[0].z).toBe(-0.8);
+  const shape=fuelTankDimensions(12);expect(4*Math.PI*shape.radius**3).toBeCloseTo(0.012,12);expect(shape.length).toBe(6*shape.radius);
+ });
+ it('拒绝非法发动机与油箱，机身缩放保留动力挂点',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=1;d.fuelTank.capacity=12;
+  for(const patch of [{engine:{...d.engine,type:'missing'}},{engine:{...d.engine,count:3}},{engine:{...d.engine,y:NaN}},{engine:{...d.engine,count:2,z:0.2}},{engine:{...d.engine,x:12}},{fuelTank:{...d.fuelTank,capacity:-1}},{fuelTank:{...d.fuelTank,capacity:40.1}},{fuelTank:{...d.fuelTank,x:12}}]){
+   expect(()=>validateAircraft({...d,...patch})).toThrow();
+  }
+  expect(()=>validateAircraft({...d,birdman:true})).toThrow('鸟人间');
+  const ends=fuselageEnds(d);d.engine.x=ends.tail+0.1;d.fuelTank.x=ends.nose-0.1;
+  resizeFuselage(d,'tail',100);resizeFuselage(d,'nose',-100);
+  expect(fuselageEnds(d).tail).toBeLessThanOrEqual(d.engine.x);expect(fuselageEnds(d).nose).toBeGreaterThanOrEqual(d.fuelTank.x);expect(validateAircraft(d)).toEqual(d);
  });
 });

@@ -77,3 +77,94 @@ describe('三轴操纵与高山路径边界', () => {
     shortcut.step(neutral); expect(shortcut.result?.landing).toBe('boundary'); expect(shortcut.result?.completed).toBe(false);
   });
 });
+
+function lowAltitude(powered = false) {
+  const d = clone(presets.find(d => d.engine.count > 0)!);
+  if (!powered) { d.engine.count = 0; d.fuelTank.capacity = 0; }
+  return new FlightSimulation(d, 'standard', 'low-altitude', 0);
+}
+
+describe('低空计分与动力边界', () => {
+  it('相同首次前进距离，贴地更近、完成更快分更高', () => {
+    const fast = lowAltitude(), slow = lowAltitude(), high = lowAltitude();
+    for (const s of [fast, slow, high]) { s.position.set(0, 45, 0); s.quaternion.identity(); }
+    fast.velocity.set(40, 0, 0); slow.velocity.set(20, 0, 0); high.velocity.set(40, 0, 0); high.position.y = 55;
+    fast.step(neutral, 0.0001); slow.step(neutral, 0.0002); high.step(neutral, 0.0001);
+    expect(fast.position.x).toBeCloseTo(slow.position.x, 5);
+    expect(fast.telemetry.score).toBeGreaterThan(slow.telemetry.score * 1.9);
+    expect(fast.telemetry.score).toBeGreaterThan(high.telemetry.score);
+  });
+
+  it('倒飞再重走同一段不刷新前进距离，经过时间继续压低分数', () => {
+    const s = lowAltitude(); s.position.set(0, 45, 0); s.quaternion.identity(); s.velocity.set(30, 0, 0);
+    s.step(neutral, 0.0001);
+    const score = s.telemetry.score, farthest = s.position.x;
+    s.velocity.set(-30, 0, 0); s.quaternion.set(0, 1, 0, 0); s.step(neutral, 0.0001);
+    s.velocity.set(30, 0, 0); s.quaternion.identity(); s.step(neutral, 0.0001);
+    expect(s.position.x).toBeCloseTo(farthest, 5);
+    expect(s.telemetry.score).toBeLessThan(score * 0.34);
+    expect(s.ended).toBe(false);
+  });
+
+  it('持续超高按真实秒数加重扣分，不夹零；低空也有真实碰撞和顺序终点', () => {
+    const s = lowAltitude(); s.position.y = 135; s.velocity.set(0, 0, 0); s.quaternion.identity();
+    for (let i = 0; i < 4; i++) s.step(neutral, 0.25);
+    const firstPenalty = -s.telemetry.score;
+    for (let i = 0; i < 4; i++) s.step(neutral, 0.25);
+    expect(s.telemetry.aboveHeightTime).toBeCloseTo(2, 10); expect(s.telemetry.score).toBeLessThan(0);
+    expect(-s.telemetry.score - firstPenalty).toBeGreaterThan(firstPenalty);
+    const crash = lowAltitude(); crash.position.y = challengeTerrainHeight('low-altitude', 0, 0) - 1; crash.step(neutral);
+    expect(crash.result?.landing).toBe('terrain'); expect(crash.result?.completed).toBe(false);
+    const gates = challengeCheckpoints('low-altitude'), last = gates[gates.length - 1], skipped = lowAltitude();
+    skipped.position.set(last.x - 0.1, last.y + 15, last.z); skipped.velocity.set(30, 0, 0); skipped.quaternion.identity(); skipped.step(neutral);
+    expect(skipped.result?.completed).toBe(false); expect(skipped.result?.landing).toBe('boundary');
+  });
+
+  it('转速和推力渐变、实际耗油改变质量/重心/惯量，燃油不驱动驾驶员', () => {
+    const d = clone(presets.find(d => d.engine.count > 0)!); d.fuelTank.x = 2;
+    const s = new FlightSimulation(d, 'standard', 'low-altitude', 0);
+    const initialMass = s.aircraft.mass, initialX = s.aircraft.cg.x, initialInertia = s.aircraft.inertia.z;
+    s.step({ ...neutral, throttle: 1 }, 0.25);
+    const firstThrust = s.telemetry.thrust, firstRpm = s.telemetry.engineRpm;
+    expect(firstThrust).toBeGreaterThan(0); expect(firstRpm).toBeGreaterThan(0); expect(firstRpm).toBeLessThan(1);
+    expect(s.telemetry.fuelRemaining).toBeLessThan(d.fuelTank.capacity);
+    expect(s.aircraft.mass).toBeLessThan(initialMass); expect(s.aircraft.cg.x).toBeLessThan(initialX);
+    expect(s.aircraft.inertia.z).toBeLessThan(initialInertia); expect(s.pilotOffset).toEqual({ x: 0, z: 0 });
+    s.step({ ...neutral, throttle: 1 }, 0.25);
+    expect(s.telemetry.thrust).toBeGreaterThan(firstThrust); expect(s.telemetry.engineRpm).toBeGreaterThan(firstRpm);
+    expect(s.telemetry.propulsionWork).toBeGreaterThan(0); expect(s.telemetry.fuelEnergyRemoved).toBeGreaterThan(0);
+    expect(() => s.step({ ...neutral, throttle: NaN })).toThrow();
+  });
+
+  it('空油停推但保留转速回落，重置恢复满箱；油门记录可确定重放', () => {
+    const d = clone(presets.find(d => d.engine.count > 0)!); d.fuelTank.capacity = 0.000001;
+    const empty = new FlightSimulation(d, 'standard', 'low-altitude', 0);
+    empty.step({ ...neutral, throttle: 1 }, 0.25);
+    expect(empty.telemetry.fuelRemaining).toBe(0); expect(empty.telemetry.thrust).toBe(0);
+    const rpm = empty.telemetry.engineRpm; empty.step({ ...neutral, throttle: 1 }, 0.25);
+    expect(empty.telemetry.engineRpm).toBeLessThan(rpm); expect(empty.telemetry.thrust).toBe(0);
+    empty.reset(); expect(empty.telemetry.fuelRemaining).toBe(d.fuelTank.capacity); expect(empty.telemetry.engineRpm).toBe(0);
+    const s = lowAltitude(true);
+    for (let i = 0; i < 20; i++) s.step({ ...neutral, throttle: i / 20 });
+    const replay = lowAltitude(true); replay.loadReplay(s.getRecording());
+    while (!replay.replayFinished) replay.step(neutral);
+    expect(replay.position.toArray()).toEqual(s.position.toArray()); expect(replay.omega.toArray()).toEqual(s.omega.toArray());
+    expect(replay.telemetry.fuelRemaining).toBe(s.telemetry.fuelRemaining); expect(replay.telemetry.engineRpm).toBe(s.telemetry.engineRpm);
+  });
+
+  it('双发、侧距与支撑参与真实质量/惯量，低挂发动机纳入地形接触', () => {
+    const one = clone(presets.find(d => d.engine.count > 0)!), twin = clone(one);
+    twin.engine.count = 2; twin.engine.z = 1;
+    expect(derive(twin).mass).toBeGreaterThan(derive(one).mass); expect(derive(twin).inertia.x).toBeGreaterThan(derive(one).inertia.x);
+    const near = clone(twin); near.engine.z = 0.35;
+    expect(derive(twin).mass).toBeGreaterThan(derive(near).mass); expect(derive(twin).inertia.y).toBeGreaterThan(derive(near).inertia.y);
+    const singleFlight = new FlightSimulation(one, 'standard', 'low-altitude', 0), twinFlight = new FlightSimulation(twin, 'standard', 'low-altitude', 0);
+    singleFlight.step({ ...neutral, throttle: 1 }, 0.25); twinFlight.step({ ...neutral, throttle: 1 }, 0.25);
+    expect(twinFlight.telemetry.thrust).toBeCloseTo(singleFlight.telemetry.thrust * 2, 10);
+    expect(one.fuelTank.capacity - twinFlight.telemetry.fuelRemaining).toBeCloseTo((one.fuelTank.capacity - singleFlight.telemetry.fuelRemaining) * 2, 10);
+    one.engine.mount = 'below'; one.engine.y = 2;
+    const s = new FlightSimulation(one, 'standard', 'low-altitude', 0);
+    s.position.set(0, challengeTerrainHeight('low-altitude', 0, 0) + 1.5, 0); s.quaternion.identity(); s.step(neutral);
+    expect(s.result?.landing).toBe('terrain');
+  });
+});

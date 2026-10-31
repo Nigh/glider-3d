@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, clamp, DEG, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type FlightMode, type Wing } from './model';
-import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeTerrainGrid, challengeTerrainHeight, type ChallengeMode } from './challenges';
+import { AIRFRAME_MASS, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type FlightMode, type Wing } from './model';
+import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
+import { engineCatalog, FUEL_DENSITY } from './engines';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.225;
@@ -50,8 +51,8 @@ const SECTION_POLAR = [
   [17, 1.5913, 0.08793, 1.6548, 0.07833],
 ] as const;
 const MAX_FRAMES = 36_000;
-const FRAME_WIDTH = 6;
-const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
+const FRAME_WIDTH = 7;
+const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 0 };
 const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
 
 export interface AircraftProperties {
@@ -73,7 +74,7 @@ export interface AircraftProperties {
   /** 自由空气、无地效：12 m/s、5°攻角、3°侧滑，零角速度、零操纵。 */
   aerodynamics: AerodynamicReference;
 }
-interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; moving?: boolean }
+interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; moving?: boolean; fuel?: boolean }
 interface Polar { cl: number; cd: number; inducedCd: number; profileCd: number }
 export interface WingAerodynamics {
   kind: AerodynamicSurface['kind'];
@@ -156,6 +157,10 @@ export interface FlightTelemetry {
   challengeProgress: number; groundClearance: number; score: number; completed: boolean;
   /** 侧向移动改变惯量时，驾驶员克服/吸收转动能所做的真实功；前后仍用原准静态近似。 */
   controlWork: number;
+  throttle: number; engineRpm: number; fuelRemaining: number; thrust: number; aboveHeightTime: number;
+  propulsionWork: number;
+  /** 燃油排出带走的机械能；不含燃料化学能。 */
+  fuelEnergyRemoved: number;
 }
 export interface InputRecording { frames: Float64Array; length: number; launchRoll: number }
 
@@ -211,6 +216,27 @@ function massLayout(d: AircraftDefinition): MassPart[] {
     const vy = ((support.frontY - support.backY) ** 2 + support.height ** 2) / 12;
     parts.push({ mass: support.mass, x: support.x, y: support.y, z: 0,
       ix: support.mass * vy, iy: support.mass * vx, iz: support.mass * (vx + vy) });
+  }
+  const engine = engineCatalog[d.engine.type];
+  for (const mount of engineMounts(d)) {
+    parts.push({ mass: engine.mass, x: mount.x, y: mount.y, z: mount.z,
+      ix: engine.mass * engine.radius ** 2 / 2,
+      iy: engine.mass * (3 * engine.radius ** 2 + engine.length ** 2) / 12,
+      iz: engine.mass * (3 * engine.radius ** 2 + engine.length ** 2) / 12 });
+    const radial = Math.hypot(mount.y, mount.z), uy = mount.y / radial, uz = mount.z / radial;
+    const half = mount.supportLength / 2, length2 = mount.supportLength ** 2, width2 = mount.supportWidth ** 2, thickness2 = 0.06 ** 2;
+    parts.push({ mass: mount.supportMass, x: mount.x, y: uy * half, z: uz * half,
+      ix: mount.supportMass * (length2 + thickness2) / 12,
+      iy: mount.supportMass * (width2 + length2 * uz ** 2 + thickness2 * uy ** 2) / 12,
+      iz: mount.supportMass * (width2 + length2 * uy ** 2 + thickness2 * uz ** 2) / 12 });
+  }
+  if (d.fuelTank.capacity > 0) {
+    const tank = d.fuelTank, shape = fuelTankDimensions(tank.capacity), radius2 = shape.radius ** 2, length2 = (shape.length / 2) ** 2;
+    for (const fuel of [false, true]) {
+      const mass = fuel ? tank.capacity * FUEL_DENSITY : 0.8 + tank.capacity * 0.035;
+      parts.push({ mass, x: tank.x, y: tank.y, z: 0, ix: mass * 2 * radius2 / 5,
+        iy: mass * (length2 + radius2) / 5, iz: mass * (length2 + radius2) / 5, fuel });
+    }
   }
   return parts;
 }
@@ -526,6 +552,27 @@ function makeContacts(d: AircraftDefinition): Vector3[] {
     points.push(new Vector3(support.frontX, support.frontY, 0), new Vector3(support.backX, support.backY, 0),
       new Vector3(support.frontX, support.frontY - support.height, 0), new Vector3(support.backX, support.backY - support.height, 0));
   }
+  const engine = engineCatalog[d.engine.type];
+  for (const mount of engineMounts(d)) {
+    for (const end of [-1, 1]) for (let ring = 0; ring < 16; ring++) {
+      const angle = ring / 16 * Math.PI * 2;
+      points.push(new Vector3(mount.x + end * engine.length / 2, mount.y + engine.radius * Math.cos(angle), mount.z + engine.radius * Math.sin(angle)));
+    }
+    const radial = Math.hypot(mount.y, mount.z), uy = mount.y / radial, uz = mount.z / radial;
+    for (const end of [-1, 1]) for (const distance of [0, mount.supportLength]) for (const face of [-1, 1]) {
+      points.push(new Vector3(mount.x + end * mount.supportWidth / 2, uy * distance - uz * face * 0.03, uz * distance + uy * face * 0.03));
+    }
+  }
+  if (d.fuelTank.capacity > 0) {
+    const tank = d.fuelTank, shape = fuelTankDimensions(tank.capacity);
+    for (let row = 0; row <= 8; row++) {
+      const angle = row / 8 * Math.PI;
+      for (let ring = 0; ring < 16; ring++) {
+        const azimuth = ring / 16 * Math.PI * 2, radius = shape.radius * Math.sin(angle);
+        points.push(new Vector3(tank.x + shape.length / 2 * Math.cos(angle), tank.y + radius * Math.cos(azimuth), radius * Math.sin(azimuth)));
+      }
+    }
+  }
   return points;
 }
 
@@ -552,6 +599,7 @@ export class FlightSimulation {
   readonly mode: FlightMode;
   readonly challenge: ChallengeMode;
   readonly controlDeflections = { aileron: 0, elevator: 0, rudder: 0 };
+  readonly pilotOffset = { x: 0, z: 0 };
   readonly position = new Vector3();
   readonly velocity = new Vector3();
   readonly quaternion = new Quaternion();
@@ -573,6 +621,19 @@ export class FlightSimulation {
   private replay: InputRecording | null = null;
   private replayIndex = 0;
   private readonly parts: MassPart[];
+  private readonly fuelPart: MassPart | undefined;
+  private readonly enginePositions: EngineMount[];
+  private readonly fuelLocalInertia = new Vector3();
+  private readonly cgShift = new Vector3();
+  private engineRpm = 0;
+  private fuelRemaining = 0;
+  private thrust = 0;
+  private propulsionPower = 0;
+  private lowAltitudeDistance = 0;
+  private farthestX = 0;
+  private heightPenalty = 0;
+  private aboveHeightTime = 0;
+  private aboveHeightStreak = 0;
   private readonly neutral: number;
   private readonly chord: number;
   private readonly aerodynamics: AerodynamicSummary;
@@ -621,11 +682,15 @@ export class FlightSimulation {
 
   constructor(d: AircraftDefinition, mode: FlightMode = 'standard', challenge: ChallengeMode = 'birdman', private readonly fixedLaunchRoll?: number) {
     this.definition = validateAircraft(d);
-    if (challenge !== 'birdman' && challenge !== 'downhill') throw new Error('未知飞行挑战');
-    if (challenge === 'birdman' && !this.definition.birdman) throw new Error('鸟人间比赛只允许鸟人间设计');
+    if (!Object.hasOwn(challengeDefinitions, challenge)) throw new Error('未知飞行挑战');
+    if (challenge === 'birdman' && (!this.definition.birdman || this.definition.engine.count > 0)) throw new Error('鸟人间比赛只允许无动力鸟人间设计');
     this.mode = mode;
     this.challenge = challenge;
     this.parts = massLayout(this.definition);
+    this.fuelPart = this.parts.find(part => part.fuel);
+    this.enginePositions = engineMounts(this.definition);
+    const shape = fuelTankDimensions(this.definition.fuelTank.capacity);
+    this.fuelLocalInertia.set(2 * shape.radius ** 2 / 5, ((shape.length / 2) ** 2 + shape.radius ** 2) / 5, ((shape.length / 2) ** 2 + shape.radius ** 2) / 5);
     this.aircraft = properties(this.definition);
     this.neutral = this.aircraft.neutralPoint;
     this.chord = planform(this.definition.mainWing).chord;
@@ -646,7 +711,8 @@ export class FlightSimulation {
       stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(),
       aeroPower: 0, energy: 0, staticMargin: 0, energyPerDistance: null, potentialEnergy: 0, kineticEnergy: 0,
       dissipatedEnergy: 0, initialEnergy: 0, liftDragRatio: 0, aerodynamics: this.aerodynamics,
-      challengeProgress: 0, groundClearance: 0, score: 0, completed: false, controlWork: 0 };
+      challengeProgress: 0, groundClearance: 0, score: 0, completed: false, controlWork: 0,
+      throttle: 0, engineRpm: 0, fuelRemaining: 0, thrust: 0, aboveHeightTime: 0, propulsionWork: 0, fuelEnergyRemoved: 0 };
     this.reset();
   }
 
@@ -660,10 +726,10 @@ export class FlightSimulation {
     this.omega.set(0, 0, 0);
     this.time = 0; this.ended = false; this.result = null;
     this.launching = true; this.flightStarted = false; this.launchTime = 0;
-    if (this.challenge === 'downhill') {
-      const start = challengeDefinitions.downhill, pitch = -9 * DEG;
-      const heading = Math.atan2(challengeCenter('downhill', 1) - challengeCenter('downhill', 0), 1);
-      this.position.set(0, start.startHeight, challengeCenter('downhill', 0));
+    if (this.challenge !== 'birdman') {
+      const start = challengeDefinitions[this.challenge], pitch = this.challenge === 'downhill' ? -9 * DEG : 0;
+      const heading = Math.atan2(challengeCenter(this.challenge, 1) - challengeCenter(this.challenge, 0), 1);
+      this.position.set(0, start.startHeight, challengeCenter(this.challenge, 0));
       this.quaternion.setFromAxisAngle(this.cross.set(0, 1, 0), -heading);
       this.rotation.setFromAxisAngle(this.cross.set(0, 0, 1), pitch);
       this.quaternion.multiply(this.rotation);
@@ -674,10 +740,20 @@ export class FlightSimulation {
     this.maxSpeed = this.minSpeed = this.challenge === 'birdman' ? LAUNCH.speed : this.velocity.length();
     this.maxHeight = this.position.y;
     this.travelled = 0; this.weight = 0; this.lateral = 0; this.checkpointIndex = 0; this.completed = false;
+    this.engineRpm = 0; this.thrust = 0; this.propulsionPower = 0;
+    this.fuelRemaining = this.definition.fuelTank.capacity;
+    this.lowAltitudeDistance = 0; this.farthestX = 0; this.heightPenalty = 0; this.aboveHeightTime = 0; this.aboveHeightStreak = 0;
+    this.pilotOffset.x = 0; this.pilotOffset.z = 0;
+    if (this.fuelPart) {
+      this.fuelPart.mass = this.fuelRemaining * FUEL_DENSITY;
+      this.fuelPart.ix = this.fuelPart.mass * this.fuelLocalInertia.x;
+      this.fuelPart.iy = this.fuelPart.mass * this.fuelLocalInertia.y;
+      this.fuelPart.iz = this.fuelPart.mass * this.fuelLocalInertia.z;
+    }
     Object.assign(this.effective, ZERO_CONTROLS);
     Object.assign(this.controlDeflections, { aileron: 0, elevator: 0, rudder: 0 });
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
-    this.aircraft.inertia.copy(this.flightInertia);
+    this.flightInertia.copy(this.aircraft.inertia);
     for (const surface of this.surfaces) {
       surface.force.set(0, 0, 0); surface.drag.set(0, 0, 0); surface.alpha = 0;
       surface.clearance = Infinity; surface.groundEffect = 1; surface.inducedDrag = 0;
@@ -685,6 +761,7 @@ export class FlightSimulation {
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0); this.telemetry.torque.set(0, 0, 0);
     this.telemetry.physicsMs = 0; this.telemetry.aeroPower = 0;
     this.telemetry.dissipatedEnergy = 0; this.telemetry.initialEnergy = 0; this.telemetry.liftDragRatio = 0; this.telemetry.controlWork = 0;
+    this.telemetry.propulsionWork = 0; this.telemetry.fuelEnergyRemoved = 0;
     this.aerodynamics.update(this.aircraft.cg, this.quaternion, this.velocity);
     this.updateTelemetry();
     if (!this.launching) this.beginFlight();
@@ -718,23 +795,27 @@ export class FlightSimulation {
       input.weight = this.replay.frames[offset + 1]; input.rudder = this.replay.frames[offset + 2];
       input.elevator = this.replay.frames[offset + 3]; input.aileron = this.replay.frames[offset + 4];
       input.lateral = this.replay.frames[offset + 5];
+      input.throttle = this.replay.frames[offset + 6];
       this.replayIndex++;
       this.replayFinished = this.replayIndex >= this.replay.length;
     } else {
       input.weight = controls.weight; input.rudder = controls.rudder;
       input.elevator = controls.elevator; input.aileron = controls.aileron;
       input.lateral = controls.lateral ?? 0;
+      input.throttle = controls.throttle ?? 0;
     }
     if (!Number.isFinite(dt) || dt <= 0 || dt > 0.25) throw new RangeError('步长须在 0 至 0.25 秒之间');
-    if (!Number.isFinite(input.weight + input.rudder + input.elevator + input.aileron + input.lateral!)) throw new RangeError('操纵输入必须为有限数');
+    if (!Number.isFinite(input.weight + input.rudder + input.elevator + input.aileron + input.lateral! + input.throttle!)) throw new RangeError('操纵输入必须为有限数');
     input.weight = clamp(input.weight, -1, 1); input.rudder = clamp(input.rudder, -1, 1);
     input.elevator = clamp(input.elevator, -1, 1); input.aileron = clamp(input.aileron, -1, 1);
     input.lateral = clamp(input.lateral!, -1, 1);
+    input.throttle = clamp(input.throttle!, 0, 1);
     if (!this.replay && this.recordingLength < MAX_FRAMES) {
       const offset = this.recordingLength++ * FRAME_WIDTH;
       this.recording[offset] = dt; this.recording[offset + 1] = input.weight;
       this.recording[offset + 2] = input.rudder; this.recording[offset + 3] = input.elevator; this.recording[offset + 4] = input.aileron;
       this.recording[offset + 5] = input.lateral;
+      this.recording[offset + 6] = input.throttle;
     }
     if (this.definition.birdman) { input.elevator = 0; input.aileron = 0; }
     this.controlDeflections.aileron = input.aileron * AILERON_LIMIT;
@@ -747,10 +828,50 @@ export class FlightSimulation {
     this.telemetry.physicsMs = performance.now() - started;
   }
 
+  private updatePropulsion(throttle: number, dt: number) {
+    const count = this.definition.engine.count, spec = engineCatalog[this.definition.engine.type];
+    if (count === 0) { this.engineRpm = 0; this.thrust = 0; return; }
+    const target = this.fuelRemaining > 0 ? throttle : 0, delta = this.engineRpm - target;
+    const decay = Math.exp(-dt / spec.spoolTime);
+    const integral = Math.max(0, target ** 2 * dt + 2 * target * delta * spec.spoolTime * (1 - decay)
+      + delta ** 2 * spec.spoolTime / 2 * (1 - decay * decay));
+    this.engineRpm = target + delta * decay;
+    const required = count * spec.fuelFlow * integral, burned = Math.min(this.fuelRemaining, required);
+    this.thrust = required > 0 ? count * spec.maxThrust * integral / dt * burned / required : 0;
+    if (burned <= 0 || !this.fuelPart) return;
+    const removedMass = burned * FUEL_DENSITY, tank = this.definition.fuelTank;
+    this.arm.set(tank.x, tank.y, 0).sub(this.aircraft.cg);
+    this.localVelocity.crossVectors(this.omega, this.arm).applyQuaternion(this.quaternion).add(this.velocity);
+    this.cross.copy(this.arm).applyQuaternion(this.quaternion).add(this.position);
+    this.telemetry.fuelEnergyRemoved += removedMass * (GRAVITY * this.cross.y + this.localVelocity.lengthSq() / 2
+      + (this.fuelLocalInertia.x * this.omega.x ** 2 + this.fuelLocalInertia.y * this.omega.y ** 2 + this.fuelLocalInertia.z * this.omega.z ** 2) / 2);
+    this.cgShift.copy(this.aircraft.cg);
+    this.fuelRemaining -= burned;
+    this.fuelPart.mass = this.fuelRemaining * FUEL_DENSITY;
+    this.fuelPart.ix = this.fuelPart.mass * this.fuelLocalInertia.x;
+    this.fuelPart.iy = this.fuelPart.mass * this.fuelLocalInertia.y;
+    this.fuelPart.iz = this.fuelPart.mass * this.fuelLocalInertia.z;
+    updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
+    this.flightInertia.copy(this.aircraft.inertia);
+    updateMass(this.definition, this.parts, this.weight, this.aircraft, this.neutral, this.chord, false, this.lateral);
+    const shift = this.lateral * this.definition.controls.lateralTravel;
+    const addition = PILOT_MASS * (1 - PILOT_MASS / this.aircraft.mass) * shift ** 2;
+    this.aircraft.inertia.x += addition; this.aircraft.inertia.y += addition;
+    // 质心随排出的燃油改变；保留机体几何和刚体速度场连续，不凭空推动剩余飞机。
+    this.cgShift.subVectors(this.aircraft.cg, this.cgShift);
+    this.cross.crossVectors(this.omega, this.cgShift).applyQuaternion(this.quaternion);
+    this.velocity.add(this.cross);
+    this.cgShift.applyQuaternion(this.quaternion);
+    this.position.add(this.cgShift);
+  }
+
   private integrate(input: Controls, dt: number) {
+    this.updatePropulsion(input.throttle!, dt);
     // 保留前后准静态模型。侧向移动改变CG与对角惯量，并守恒机体轴角动量。
     this.weight += clamp(input.weight - this.weight, -dt * 1.5, dt * 1.5);
     this.lateral += clamp(input.lateral! - this.lateral, -dt * 1.5, dt * 1.5);
+    this.pilotOffset.x = this.weight * this.definition.controls.travel;
+    this.pilotOffset.z = this.lateral * this.definition.controls.lateralTravel;
     const inertia = this.aircraft.inertia;
     const oldX = inertia.x, oldY = inertia.y;
     updateMass(this.definition, this.parts, this.weight, this.aircraft, this.neutral, this.chord, false, this.lateral);
@@ -835,6 +956,17 @@ export class FlightSimulation {
     this.localDrag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * speed * BODY_DRAG_AREA);
     this.telemetry.force.add(this.localDrag); this.telemetry.drag.add(this.localDrag);
     power += this.localDrag.dot(velocity);
+    const spec = engineCatalog[this.definition.engine.type];
+    for (const engine of this.enginePositions) {
+      this.arm.set(engine.x, engine.y, engine.z).sub(this.aircraft.cg);
+      this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
+      const area = Math.PI * spec.radius ** 2 * 0.22 + engine.supportLength * engine.supportWidth * 0.02;
+      this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * AIR_DENSITY * this.localVelocity.length() * area);
+      power += this.localDrag.dot(this.localVelocity);
+      this.cross.crossVectors(this.arm, this.localDrag); this.torque.add(this.cross);
+      this.localDrag.applyQuaternion(orientation);
+      this.telemetry.force.add(this.localDrag); this.telemetry.drag.add(this.localDrag);
+    }
     const damping = 0.25 * AIR_DENSITY * speed * this.aircraft.wingArea;
     this.cross.set(-damping * this.aircraft.span ** 2 * 0.015 * omega.x,
       -damping * this.aircraft.span ** 2 * 0.004 * omega.y,
@@ -846,11 +978,24 @@ export class FlightSimulation {
       power += this.cross.dot(omega); this.torque.add(this.cross);
     }
     this.telemetry.aeroPower = power;
-    this.telemetry.torque.copy(this.torque);
-    // 相对重心来流分解实际全机合力，区别于轨迹滑翔比和构型最佳估值。
+    // 推进力不属于气动升阻比。
     const drag = speed > 1e-9 ? -this.telemetry.force.dot(velocity) / speed : 0;
     this.telemetry.liftDragRatio = drag > 1e-9
       ? Math.sqrt(Math.max(0, this.telemetry.force.lengthSq() - drag ** 2)) / drag : 0;
+    this.propulsionPower = 0;
+    if (this.thrust > 0) {
+      const thrust = this.thrust / this.enginePositions.length;
+      for (const engine of this.enginePositions) {
+        this.arm.set(engine.x, engine.y, engine.z).sub(this.aircraft.cg);
+        this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
+        this.propulsionPower += thrust * this.localVelocity.x;
+        this.torque.y += this.arm.z * thrust;
+        this.torque.z -= this.arm.y * thrust;
+      }
+      this.cross.set(this.thrust, 0, 0).applyQuaternion(orientation);
+      this.telemetry.force.add(this.cross);
+    }
+    this.telemetry.torque.copy(this.torque);
   }
 
   private integrateFlight(input: Controls, dt: number) {
@@ -906,7 +1051,7 @@ export class FlightSimulation {
     }
     const landing = this.landingAt(this.candidatePosition, this.candidateQuaternion);
     const platformHit = this.challenge === 'birdman' && this.sweepsPlatform();
-    const terrainHit = this.challenge === 'downhill' && this.sweepsTerrain();
+    const terrainHit = this.challenge !== 'birdman' && this.sweepsTerrain();
     const finalGate = challengeCheckpoints(this.challenge)[this.checkpointIndex];
     const finishCrossing = finalGate && this.checkpointIndex === challengeCheckpoints(this.challenge).length - 1
       && this.position.x < finalGate.x && this.candidatePosition.x >= finalGate.x;
@@ -930,6 +1075,7 @@ export class FlightSimulation {
     this.position.copy(this.candidatePosition);
     this.quaternion.copy(this.candidateQuaternion);
     this.telemetry.dissipatedEnergy -= this.telemetry.aeroPower * dt;
+    this.telemetry.propulsionWork += this.propulsionPower * dt;
     for (let i = 0; i < this.platformCount; i++) {
       const index = this.platformActive[i], normal = PLATFORM_NORMALS[this.platformFaces[index] % 6];
       const contactSpeed = normal.dot(this.midpointVelocity) + this.platformAxes[index].dot(this.midpointOmega);
@@ -939,6 +1085,7 @@ export class FlightSimulation {
     if (!landing) this.advanceChallenge();
     const currentSpeed = this.velocity.length();
     this.travelled += (speed + currentSpeed) * 0.5 * dt;
+    if (this.challenge === 'low-altitude') this.updateLowAltitudeScore(dt);
     this.maxSpeed = Math.max(this.maxSpeed, currentSpeed); this.minSpeed = Math.min(this.minSpeed, currentSpeed);
     this.maxHeight = Math.max(this.maxHeight, this.position.y);
     if (platformHit) { this.preparePlatformContacts(); this.resolvePlatformImpact(); }
@@ -1078,14 +1225,32 @@ export class FlightSimulation {
     this.completed = this.checkpointIndex === challengeCheckpoints(this.challenge).length;
   }
 
+  private updateLowAltitudeScore(dt: number) {
+    const clearance = this.position.y - challengeTerrainHeight(this.challenge, this.position.x, this.position.z);
+    if (clearance > LOW_ALTITUDE.scoringHeight) {
+      this.aboveHeightTime += dt;
+      this.heightPenalty += (LOW_ALTITUDE.penaltyPerSecond + LOW_ALTITUDE.sustainedPenalty * (this.aboveHeightStreak + dt / 2)) * dt;
+      this.aboveHeightStreak += dt;
+    } else {
+      this.aboveHeightStreak = 0;
+    }
+    if (!this.outsideChallenge()) {
+      const x = clamp(this.position.x, 0, challengeDefinitions['low-altitude'].length);
+      const distance = Math.max(0, x - Math.max(this.farthestX, this.previousPosition.x));
+      this.lowAltitudeDistance += distance * clamp(1 - clearance / LOW_ALTITUDE.scoringHeight, 0, 1);
+      this.farthestX = Math.max(this.farthestX, x);
+    }
+  }
+
   private outsideChallenge() {
     if (this.challenge === 'birdman') return Math.abs(this.position.x) >= 2000 || Math.abs(this.position.z) >= 800 || this.position.y >= 300;
     const { x, y, z } = this.position;
     const next = challengeCheckpoints(this.challenge)[this.checkpointIndex];
-    // 整段航线也限制在谷道内；飞越山脊、超高抄近路或漏门都不能成为有效成绩。
-    return x < -100 || x > challengeDefinitions.downhill.length + 100
-      || Math.abs(z - challengeCenter(this.challenge, x)) > 65
-      || y - challengeTerrainHeight(this.challenge, x, z) > 125
+    // 两种航线均须顺序过门；低空超高扣分而非直接淘汰。
+    const downhill = this.challenge === 'downhill';
+    return x < -100 || x > challengeDefinitions[this.challenge].length + 100
+      || Math.abs(z - challengeCenter(this.challenge, x)) > (downhill ? 65 : 100)
+      || y - challengeTerrainHeight(this.challenge, x, z) > (downhill ? 125 : 1000)
       || (next !== undefined && x > next.x);
   }
 
@@ -1120,9 +1285,13 @@ export class FlightSimulation {
     t.speed = this.velocity.length(); t.altitude = this.position.y;
     t.distance = this.launching ? 0 : this.tailDistance();
     t.groundClearance = this.position.y - challengeTerrainHeight(this.challenge, this.position.x, this.position.z);
-    t.challengeProgress = this.challenge === 'downhill' ? this.checkpointIndex / challengeCheckpoints(this.challenge).length : 0;
+    t.challengeProgress = this.challenge !== 'birdman' ? this.checkpointIndex / challengeCheckpoints(this.challenge).length : 0;
     t.completed = this.completed;
-    t.score = this.challenge === 'birdman' ? t.distance : this.completed ? this.time : 0;
+    t.score = this.challenge === 'birdman' ? t.distance : this.challenge === 'low-altitude'
+      ? (this.time > 0 ? LOW_ALTITUDE.scoreScale * this.lowAltitudeDistance / this.time : 0) - this.heightPenalty : this.completed ? this.time : 0;
+    t.throttle = this.definition.engine.count > 0 ? this.effective.throttle ?? 0 : 0;
+    t.engineRpm = this.engineRpm; t.fuelRemaining = this.fuelRemaining; t.thrust = this.thrust;
+    t.aboveHeightTime = this.aboveHeightTime;
     const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     t.energyPerDistance = !this.launching && horizontalSpeed > 0.05 ? -t.aeroPower / horizontalSpeed : null;
     this.inverse.copy(this.quaternion).invert();
