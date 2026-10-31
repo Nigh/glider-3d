@@ -6,6 +6,7 @@ type AudioState = {
   hidden: boolean;
   speed: number;
   launching: boolean;
+  engineRpm?: number;
 };
 type Voice = { source: AudioScheduledSourceNode; gain: GainNode; flight: boolean };
 
@@ -29,6 +30,11 @@ export class GameAudio {
   private highGain: GainNode | null = null;
   private steamFilter: BiquadFilterNode | null = null;
   private steamGain: GainNode | null = null;
+  private engineTone: OscillatorNode | null = null;
+  private engineGain: GainNode | null = null;
+  private engineNoise: BiquadFilterNode | null = null;
+  private engineNoiseGain: GainNode | null = null;
+  private lastRpm = -1;
   private voices = new Set<Voice>();
    private preferences: AudioPreferences = { muted: false, music: 0.35, effects: 0.65 };
   private state: AudioState = {
@@ -93,6 +99,14 @@ export class GameAudio {
       this.smooth(this.lowWind!.frequency, 200 + speed * 22, 0.25);
       this.smooth(this.highWind!.frequency, 700 + speed * 55, 0.25);
     }
+    const rpm = isFlight && Number.isFinite(state.engineRpm) ? volume(state.engineRpm!) : 0;
+    if (Math.abs(rpm - this.lastRpm) >= 0.005 || rpm === 0 && this.lastRpm !== 0) {
+      this.lastRpm = rpm;
+      this.smooth(this.engineTone!.frequency, 65 + rpm * 310, 0.12);
+      this.smooth(this.engineGain!.gain, rpm > 0 ? 0.015 + rpm * 0.055 : 0, 0.12);
+      this.smooth(this.engineNoise!.frequency, 350 + rpm * 2400, 0.12);
+      this.smooth(this.engineNoiseGain!.gain, rpm * rpm * 0.2, 0.12);
+    }
     if (!isFlight || !state.launching) this.silenceSteam();
   }
 
@@ -149,6 +163,11 @@ export class GameAudio {
     this.lowGain?.disconnect();
     this.highGain?.disconnect();
     this.steamGain?.disconnect();
+    this.engineTone?.stop();
+    this.engineTone?.disconnect();
+    this.engineGain?.disconnect();
+    this.engineNoise?.disconnect();
+    this.engineNoiseGain?.disconnect();
     this.musicGain?.disconnect();
     this.effectsGain?.disconnect();
     this.master?.disconnect();
@@ -201,6 +220,18 @@ export class GameAudio {
     this.wind.connect(this.lowWind).connect(this.lowGain).connect(this.effectsGain);
     this.wind.connect(this.highWind).connect(this.highGain).connect(this.effectsGain);
     this.wind.connect(this.steamFilter).connect(this.steamGain).connect(this.effectsGain);
+    this.engineTone = context.createOscillator();
+    this.engineTone.type = 'sawtooth';
+    this.engineGain = context.createGain();
+    this.engineGain.gain.value = 0;
+    this.engineTone.connect(this.engineGain).connect(this.effectsGain);
+    this.engineNoise = context.createBiquadFilter();
+    this.engineNoise.type = 'lowpass';
+    this.engineNoise.Q.value = 0.7;
+    this.engineNoiseGain = context.createGain();
+    this.engineNoiseGain.gain.value = 0;
+    this.wind.connect(this.engineNoise).connect(this.engineNoiseGain).connect(this.effectsGain);
+    this.engineTone.start();
     this.wind.start();
     this.windStarted = true;
     this.lastSpeed = -1;

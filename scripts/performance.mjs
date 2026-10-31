@@ -49,7 +49,7 @@ async function design() {
   await page.waitForFunction(() => window.glider?.state === 'design');
 }
 async function flight() {
-  await page.getByRole('button', { name: '前往平台试飞' }).click();
+  await page.getByRole('button', { name: '前往挑战' }).click();
   await page.waitForFunction(() => window.glider?.state === 'flight');
 }
 async function heapSnapshot() {

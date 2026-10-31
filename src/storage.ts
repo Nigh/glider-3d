@@ -1,4 +1,5 @@
 import { clone, validateAircraft, type AircraftDefinition, type FlightMode } from './model';
+import type { ChallengeMode } from './challenges';
 
 export interface SavedAircraft {
   id: string;
@@ -124,20 +125,23 @@ export function importAircraft(json: string): AircraftDefinition {
   return checkedDefinition(value);
 }
 
-export function readBest(mode: FlightMode): number {
-  const raw = storageCall(storage => storage.getItem(BEST_PREFIX + mode));
+export function readBest(mode: FlightMode, challenge: ChallengeMode = 'birdman'): number {
+  const raw = storageCall(storage => storage.getItem(BEST_PREFIX + (challenge === 'birdman' ? mode : `${challenge}.${mode}`)));
   if (raw === null) return 0;
   const distance = Number(raw);
-  if (!raw.trim() || !Number.isFinite(distance) || distance < 0) {
+  if (!raw.trim() || !Number.isFinite(distance) || challenge !== 'low-altitude' && distance < 0) {
     throw new Error('本地最远纪录已损坏；原始数据仍然保留。');
   }
   return distance;
 }
 
-export function writeBest(mode: FlightMode, distance: number): number {
-  if (!Number.isFinite(distance) || distance < 0) throw new Error('飞行距离必须是非负有限数值。');
-  const best = Math.max(readBest(mode), distance);
-  storageCall(storage => storage.setItem(BEST_PREFIX + mode, String(best)));
+export function writeBest(mode: FlightMode, distance: number, challenge: ChallengeMode = 'birdman'): number {
+  if (!Number.isFinite(distance) || challenge !== 'low-altitude' && distance < 0) throw new Error('距离和时间须为非负有限数值，得分须为有限数值。');
+  const previous = readBest(mode, challenge);
+  const key = BEST_PREFIX + (challenge === 'birdman' ? mode : `${challenge}.${mode}`);
+  const first = storageCall(storage => storage.getItem(key)) === null;
+  const best = first ? distance : challenge === 'downhill' ? Math.min(previous, distance) : Math.max(previous, distance);
+  storageCall(storage => storage.setItem(key, String(best)));
   return best;
 }
 
