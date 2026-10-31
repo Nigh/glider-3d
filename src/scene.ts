@@ -22,6 +22,10 @@ export class SceneView {
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.perspective;
   private readonly controls: OrbitControls;
   private readonly aircraft = new THREE.Group();
+  private readonly previousPosition = new THREE.Vector3();
+  private readonly previousQuaternion = new THREE.Quaternion();
+  private readonly previousCG = new THREE.Vector3();
+  private readonly renderCG = new THREE.Vector3();
   private readonly body = new THREE.Group();
   private readonly pilot = new THREE.Group();
   private readonly driver = new THREE.Group();
@@ -339,9 +343,9 @@ export class SceneView {
     this.liftCenter.visible = visible && !!lift;
     this.dragCenter.visible = visible && !!drag;
     this.cg.position.copy(this.aircraft.position);
-    if (lift) this.liftCenter.position.copy(lift).sub(sim?.telemetry.cg ?? this.designCG)
+    if (lift) this.liftCenter.position.copy(lift).sub(sim ? this.renderCG : this.designCG)
       .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
-    if (drag) this.dragCenter.position.copy(drag).sub(sim?.telemetry.cg ?? this.designCG)
+    if (drag) this.dragCenter.position.copy(drag).sub(sim ? this.renderCG : this.designCG)
       .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
     this.cg.quaternion.copy(this.camera.quaternion);
     const aero = sim?.telemetry.aerodynamics;
@@ -899,6 +903,7 @@ export class SceneView {
     this.editorDirty = true;
     this.applyAircraft();
     this.simulation = sim;
+    this.captureFlightState();
     this.trailCount = this.trailIndex = 0;
     this.trailClock = 0;
     this.trailGeometry.setDrawRange(0, 0);
@@ -1006,7 +1011,17 @@ export class SceneView {
     this.updateCenters();
   }
 
-  render(dt: number): void {
+  /** 在每个物理步之前保存状态；显示插值不回写物理仿真。 */
+  captureFlightState(): void {
+    const sim = this.simulation;
+    if (!sim) return;
+    this.previousPosition.copy(sim.position);
+    this.previousQuaternion.copy(sim.quaternion);
+    this.previousCG.copy(sim.telemetry.cg);
+    this.renderCG.copy(sim.telemetry.cg);
+  }
+
+  render(dt: number, alpha = 1): void {
     if (this.disposed) return;
     const start = performance.now();
     this.applyAircraft();
@@ -1015,10 +1030,12 @@ export class SceneView {
     this.waterTime.value = this.reducedMotion ? 0 : this.elapsed;
     const sim = this.simulation;
     if (sim) {
-      this.aircraft.position.copy(sim.position);
-      this.aircraft.quaternion.copy(sim.quaternion);
-      this.body.position.copy(sim.telemetry.cg).negate();
-      this.driver.position.x = (sim.telemetry.cg.x - this.designCG.x) * sim.telemetry.mass / PILOT_MASS;
+      const blend = sim.ended || sim.replayFinished ? 1 : clamp(alpha, 0, 1);
+      this.aircraft.position.lerpVectors(this.previousPosition, sim.position, blend);
+      this.aircraft.quaternion.slerpQuaternions(this.previousQuaternion, sim.quaternion, blend);
+      this.renderCG.lerpVectors(this.previousCG, sim.telemetry.cg, blend);
+      this.body.position.copy(this.renderCG).negate();
+      this.driver.position.x = (this.renderCG.x - this.designCG.x) * sim.telemetry.mass / PILOT_MASS;
       this.followCamera(seconds, false);
       this.recordTrail(seconds);
       this.recordWingTrail();
@@ -1363,15 +1380,15 @@ export class SceneView {
       this.desiredPosition.set(-19, 7, 5);
       this.desiredTarget.set(7, 0.8, 0);
     }
-    this.desiredPosition.sub(sim.telemetry.cg);
-    this.desiredTarget.sub(sim.telemetry.cg);
-    this.desiredPosition.applyQuaternion(sim.quaternion).add(sim.position);
-    this.desiredTarget.applyQuaternion(sim.quaternion).add(sim.position);
+    this.desiredPosition.sub(this.renderCG);
+    this.desiredTarget.sub(this.renderCG);
+    this.desiredPosition.applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+    this.desiredTarget.applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
     this.desiredPosition.y = Math.max(0.45, this.desiredPosition.y);
     const blend = immediate || pilot || this.reducedMotion ? 1 : 1 - Math.exp(-dt * 4.2);
     this.camera.position.lerp(this.desiredPosition, blend);
     this.target.lerp(this.desiredTarget, blend);
-    this.camera.up.copy(pilot ? this.vector.copy(UP).applyQuaternion(sim.quaternion) : UP);
+    this.camera.up.copy(pilot ? this.vector.copy(UP).applyQuaternion(this.aircraft.quaternion) : UP);
     this.camera.lookAt(this.target);
   }
 
@@ -1423,6 +1440,12 @@ export class SceneView {
       const fraction = duration > 0 ? clamp((lifetime - (sim.time - this.wingTrailTimes[recent])) / duration, 0, 1) : 1;
       for (let side = 0; side < 2; side++) {
         this.wingTrailPoint.fromArray(this.wingTrailHistory, recent * 6 + side * 3);
+        if (recent === this.wingTrailIndex) {
+          this.wingTrailPoint.set(origin.x - chordX * Math.cos(incidence),
+            origin.y - chordX * Math.sin(incidence) + span * Math.tan(wing.dihedral * DEG),
+            (side === 0 ? -1 : 1) * span).sub(this.renderCG)
+            .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+        }
         this.wingTrailOlder.fromArray(this.wingTrailHistory, older * 6 + side * 3).lerp(this.wingTrailPoint, 1 - fraction);
         this.vector.copy(this.wingTrailOlder).sub(this.wingTrailPoint);
         if (this.vector.lengthSq() < 1e-12) continue;
@@ -1475,19 +1498,19 @@ export class SceneView {
     this.cg.visible = this.debug;
     if (!this.debug || !this.simulation) return;
     const sim = this.simulation;
-    this.cg.position.copy(sim.position);
+    this.cg.position.copy(this.aircraft.position);
     this.vector.copy(sim.telemetry.force).sub(sim.telemetry.drag);
-    this.setArrow(this.arrows[0], sim.position, this.vector, 0.005);
-    this.setArrow(this.arrows[1], sim.position, sim.telemetry.drag, 0.008);
+    this.setArrow(this.arrows[0], this.aircraft.position, this.vector, 0.005);
+    this.setArrow(this.arrows[1], this.aircraft.position, sim.telemetry.drag, 0.008);
     this.vector.set(0, -9.81 * sim.telemetry.mass, 0);
-    this.setArrow(this.arrows[2], sim.position, this.vector, 0.005);
-    this.setArrow(this.arrows[3], sim.position, sim.velocity, 0.3);
+    this.setArrow(this.arrows[2], this.aircraft.position, this.vector, 0.005);
+    this.setArrow(this.arrows[3], this.aircraft.position, sim.velocity, 0.3);
     for (let i = 0; i < this.applicationMarkers.length; i++) {
       const surface = sim.surfaces[i];
       const marker = this.applicationMarkers[i];
       marker.visible = !!surface;
       if (surface) {
-        marker.position.copy(surface.point).sub(sim.telemetry.cg).applyQuaternion(sim.quaternion).add(sim.position);
+        marker.position.copy(surface.point).sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
         this.setArrow(this.arrows[i + 4], marker.position, surface.force, 0.007);
       }
     }
