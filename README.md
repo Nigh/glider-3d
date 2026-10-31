@@ -75,7 +75,7 @@ npx vite preview --base /glider-3d/
 
  UI 点击、成功与错误提示、双层风声、蒸汽喷放和机械脱扣均由原生 Web Audio 合成，不引入音频依赖或第三方音效采样。风声响度与滤波频率随实际速度平滑变化；开始加速时播放蒸汽，物理状态从助跑变为离台时播放一次明显的机械卡扣、低频冲击、金属余振和短促蒸汽爆发。分离音参考火箭分级的清晰冲击感，不使用 KSP 音频素材。暂停、重放与再次试飞不依赖墙钟定时器。弹射沿用两秒匀加速模型，不增加蒸汽流体或压力求解。
 
- `tests/audio.spec.ts` 使用浏览器原生音频节点测量风声输出，覆盖速度变化、静音、暂停和恢复。运行：`npx playwright test tests/audio.spec.ts --project=desktop-chromium`。音频加载失败不影响飞行，声音设置内显示错误提示。
+ `tests/audio.spec.ts` 使用浏览器原生音频节点测量风声，覆盖速度变化、静音、暂停和恢复；分离音使用 AudioWorklet 连续录制真实输出，再离线测量高低频、冲击和余振，验证单次播放与音量控制，不依赖主线程轮询捕捉短瞬态。运行：`npx playwright test tests/audio.spec.ts --project=desktop-chromium`。音频加载失败不影响飞行，声音设置内显示错误提示。
 
 ## 保存与重放
 

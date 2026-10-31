@@ -1353,15 +1353,17 @@ export class SceneView {
     trunks.receiveShadow = trees.receiveShadow = true;
     this.detail.add(trunks, trees);
     const instance = new THREE.Object3D();
+    this.environment.updateMatrixWorld(true);
     for (let i = 0; i < 48; i++) {
       const x = -27 - (i % 8) * 11 + Math.sin(i * 7.2) * 3;
       const z = (i < 24 ? -1 : 1) * (15 + Math.floor((i % 24) / 8) * 22 + Math.sin(i * 2.2) * 8);
       const scale = 0.8 + (Math.sin(i * 8.2) + 1) * 0.8;
-      instance.position.set(x, 8.8, z);
+      const groundY = this.surfaceHeight(x, z);
+      instance.position.set(x, groundY + 0.8, z);
       instance.scale.setScalar(1);
       instance.updateMatrix();
       trunks.setMatrixAt(i, instance.matrix);
-      instance.position.set(x, 10 + scale * 1.1, z);
+      instance.position.set(x, groundY + 2 + scale * 1.1, z);
       instance.scale.setScalar(scale);
       instance.updateMatrix();
       trees.setMatrixAt(i, instance.matrix);
