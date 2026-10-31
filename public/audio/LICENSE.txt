@@ -1,0 +1,63 @@
+游戏背景音乐授权与署名
+======================
+
+文件：piano.mp3
+曲目：Gymnopedie No. 1
+作曲：Erik Satie
+录音作者／提供者：Kevin MacLeod（incompetech.com）
+录音标识：ISRC USUAN1100787
+
+必须保留的英文署名（作者官网曲目页的 Attribution Code）：
+
+"Gymnopedie No. 1" Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution 4.0 License
+http://creativecommons.org/licenses/by/4.0/
+
+授权
+----
+此录音采用 Creative Commons Attribution 4.0 International（CC BY 4.0，
+知识共享署名 4.0 国际）许可，可免费复制、修改及随网页游戏分发，包括商业用途。
+须保留适当署名、来源和许可证链接，并标明修改；不得暗示作者为本游戏背书，
+不得增加限制他人行使该许可权利的法律条款或技术措施。
+音乐录音单独适用上述许可，不因游戏代码的许可证而改变。
+
+许可证：https://creativecommons.org/licenses/by/4.0/
+完整法律文本：https://creativecommons.org/licenses/by/4.0/legalcode.en
+中文许可摘要：https://creativecommons.org/licenses/by/4.0/deed.zh-hans
+
+来源与许可依据
+--------------
+作者官网具体录音页面（列出曲名、钢琴乐器、录音 ISRC 和 CC BY 4.0 署名）：
+https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100787
+
+作者官网原始 MP3 下载：
+https://incompetech.com/music/royalty-free/mp3-royaltyfree/Gymnopedie%20No%201.mp3
+
+作者官网曲目数据（查找 ISRC USUAN1100787；乐器 Piano；描述注明 Erik Satie 作曲）：
+https://incompetech.com/music/royalty-free/pieces.json
+
+作者官网授权问答（明确音乐免费使用、录音仍受版权保护、可修改；游戏可在设置中的
+署名页面展示署名）：
+https://incompetech.com/music/royalty-free/faq.html
+
+上述许可针对 Kevin MacLeod 提供的具体录音；并非仅以 Satie 曲谱属于公有领域
+推定录音也属于公有领域。官网曲目详情由 JavaScript 加载 pieces.json 后显示。
+来源和许可核对日期：2026-10-31。
+
+本项目所作修改
+--------------
+从上述官方完整 MP3 转码为 128 kb/s、44.1 kHz、双声道 MP3；施加固定 -3.01 dB
+增益以降低背景音乐响度，保留原有动态。移除原编码器的过期响度／间隙元数据，
+写入曲名、录音作者、作曲者、许可和来源信息。未裁切、拼接、变速、变调或添加乐器；
+保留完整乐句和原始结尾。未使用游戏内合成钢琴或第三方替代采样。
+
+交付音频分析
+------------
+文件大小：2,994,616 字节（约 2.86 MiB）
+容器时长：187.088980 秒（约 3 分 7 秒）
+编码：MP3 / 128 kb/s / 44,100 Hz / 双声道
+FFmpeg 完整解码成功，无解码错误。
+EBU R128 综合响度：-23.44 LUFS
+真峰值：-3.56 dBTP
+响度范围：8.90 LU
+以上为最终交付文件的测量值，不是播放音量设置或转码目标值。
