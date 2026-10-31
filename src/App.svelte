@@ -5,6 +5,12 @@
  import { SceneView } from './scene';
  import { listAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, readBest, writeBest, History, type SavedAircraft } from './storage';
  import WingEditor from './WingEditor.svelte'; import Parameter from './Parameter.svelte';
+ import { GameAudio } from './audio';
+ import AudioSettings from './AudioSettings.svelte';
+ let audioError=$state('');
+ const audio=new GameAudio(message=>audioError=message);
+ function syncAudio(){audio.update({screen,ready:flightReady,paused:screen==='flight'&&paused,hidden:document.hidden,speed:simulation?.telemetry.speed??0,launching:simulation?.launching??false});}
+ $effect(()=>{screen;flightReady;paused;if(sceneReady)syncAudio();});
  type Tab='机身'|'主翼'|'水平尾翼'|'垂直尾翼'|'组装';
  let host:HTMLDivElement;let scene:SceneView;let sceneReady=$state(false);let simulation:FlightSimulation|null=null;let history=new History(clone(defaultAircraft));let historyVersion=$state(0);
  let aircraft=$state.raw<AircraftDefinition>(clone(defaultAircraft));let tab=$state<Tab>('主翼');let screen=$state<'menu'|'design'|'flight'|'result'>('menu');let mode=$state<FlightMode>('standard');let quality=$state<'Auto'|'High'|'Medium'|'Low'>('Auto');
@@ -38,27 +44,27 @@
  function refreshHud(){if(!simulation)return;const t=simulation.telemetry;hud={...t,alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching};}
  function refreshTrajectory(){if(trajectory.length!==samples.length)trajectory=samples.slice();}
  const hints:Record<Tab,string>={'机身':'驾驶舱的位置改变重心。过度靠后可能让飞机俯仰失稳。','主翼':'拖动四个顶点或 1–4 根弦、2–3 梢弦线段。沿屏幕垂直方向轻吸附，按住 Ctrl 取消。增加面积降低翼载荷，但增加重量与阻力。','水平尾翼':'拖动顶点或 1–4 根弦、2–3 梢弦线段。沿屏幕垂直方向轻吸附，按住 Ctrl 取消。增大尾翼或后移安装位置，通常提高俯仰稳定性。','垂直尾翼':'侧视拖动顶点或 1–4 根弦、2–3 梢弦线段。沿屏幕垂直方向轻吸附，按住 Ctrl 取消。垂直尾翼提供偏航恢复力矩，太小容易偏离航向。','组装':'侧视拖动主翼、尾翼或驾驶舱。主翼高度接近机身时吸附至 0 m，按住 Ctrl 绕过吸附。正 X 朝机头；尾翼位置以翼根中心为准。'};
- function notify(s:string){clearTimeout(messageTimeout);message=s;messageTimeout=setTimeout(()=>message='',5000);}
+ function notify(s:string,kind:'success'|'error'='error'){audio.ui(kind);clearTimeout(messageTimeout);message=s;messageTimeout=setTimeout(()=>message='',5000);}
  function commit(){try{aircraft=validateAircraft(aircraft);history.push(clone(aircraft));historyVersion++;}catch(e){notify((e as Error).message);}}
  function change(mutator:(d:AircraftDefinition)=>void){const d=clone(aircraft);mutator(d);try{aircraft=validateAircraft(d);scene?.updateAircraft(aircraft);}catch(e){notify((e as Error).message);}}
  function replace(d:AircraftDefinition){try{aircraft=validateAircraft(d);scene?.updateAircraft(aircraft);commit();}catch(e){notify((e as Error).message);}}
  function undo(){const d=history.undo();if(d){aircraft=clone(d);selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
  function redo(){const d=history.redo();if(d){aircraft=clone(d);selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
  function library(){try{saved=listAircraft();showLibrary=!showLibrary;}catch(e){notify((e as Error).message);}}
- function save(){try{const item=saveAircraft(aircraft,selectedId||undefined);selectedId=item.id;saved=listAircraft();notify('飞机已保存在此浏览器');}catch(e){notify((e as Error).message);}}
- function load(id:string){const item=saved.find(s=>s.id===id);if(item){replace(item.definition);selectedId=id;notify('已加载 '+item.name);}}
+ function save(){try{const item=saveAircraft(aircraft,selectedId||undefined);selectedId=item.id;saved=listAircraft();notify('飞机已保存在此浏览器','success');}catch(e){notify((e as Error).message);}}
+ function load(id:string){const item=saved.find(s=>s.id===id);if(item){replace(item.definition);selectedId=id;notify('已加载 '+item.name,'success');}}
  function renameSaved(id:string,name:string){try{const item=renameAircraft(id,name);saved=listAircraft();if(selectedId===id){change(d=>d.name=item.name);commit();}}catch(e){notify((e as Error).message);}}
  function fileExport(){const url=URL.createObjectURL(new Blob([exportAircraft(aircraft)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=aircraft.name+'.json';a.click();URL.revokeObjectURL(url);}
- async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');replace(importAircraft(await f.text()));selectedId='';notify('导入成功');}}catch(e){notify('导入失败：'+(e as Error).message);}input.value='';}
+ async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');replace(importAircraft(await f.text()));selectedId='';notify('导入成功','success');}}catch(e){notify('导入失败：'+(e as Error).message);}input.value='';}
  function clearControls(){keys.clear();weight=rudder=elevator=aileron=0;controls.weight=controls.rudder=controls.elevator=controls.aileron=0;}
  function start(replay=false){try{lastDefinition=replay?lastDefinition:clone(aircraft);lastMode=replay?lastMode:mode;simulation=new FlightSimulation(lastDefinition,lastMode);if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(debug||lastMode==='experimental');flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
- function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;}
+ function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;syncAudio();audio.launch();}
  function togglePause(){if(screen==='flight'&&flightReady)paused=!paused;}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;recordedLength=simulation.recordingLength;screen='result';if(!isReplay){recording=simulation.getRecording();try{best=writeBest(mode,result.distance);}catch(e){notify((e as Error).message);}}}
  function design(){screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
  function keyboard(e:KeyboardEvent,down:boolean){
  const target=e.target as HTMLElement;
- if(target.closest('input,select,textarea,[contenteditable="true"]'))return;
+ if(target.closest('input,select,textarea,summary,a,[contenteditable="true"]')||(e.code==='Space'&&target.closest('button')))return;
  if(screen==='flight'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.code==='Space'||e.code==='KeyC')){
  e.preventDefault();
  if(down&&!e.repeat){
@@ -72,10 +78,13 @@
  if(down&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
  }
 onMount(()=>{
-scene=new SceneView(host);scene.updateAircraft(aircraft);sceneReady=true;
+ scene=new SceneView(host);scene.updateAircraft(aircraft);sceneReady=true;
+ const unlock=()=>audio.unlock();
+ const click=(e:MouseEvent)=>{const target=e.target instanceof Element?e.target:null;if(target?.closest('button:not(:disabled),summary')&&!target.closest('.flight-controls'))audio.ui('click');};
+ document.addEventListener('pointerdown',unlock,true);document.addEventListener('keydown',unlock,true);document.addEventListener('click',click,true);
 const fixedDt=1/60;
 let previous=performance.now(),accumulator=0,lastInstruments=0,request=0;
-const visibility=()=>{clearControls();previous=performance.now();accumulator=0;scene.captureFlightState();};
+ const visibility=()=>{clearControls();previous=performance.now();accumulator=0;scene.captureFlightState();syncAudio();};
 const tick=(now:number)=>{
   const elapsed=Math.min(Math.max((now-previous)/1000,0),0.1);previous=now;
   if(!document.hidden){
@@ -88,7 +97,9 @@ const tick=(now:number)=>{
         controls.rudder=Math.max(-1,Math.min(1,rudder+(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0)));
         controls.elevator=elevator;controls.aileron=aileron;
         scene.captureFlightState();
-        simulation!.step(controls,fixedDt);sampleFlight();
+         const wasLaunching=simulation!.launching;
+         simulation!.step(controls,fixedDt);sampleFlight();
+         if(wasLaunching&&!simulation!.launching)audio.release();
         accumulator-=fixedDt;steps++;
         if(simulation!.ended){finish();accumulator=0;break;}
       }
@@ -98,6 +109,7 @@ const tick=(now:number)=>{
       accumulator=0;scene.captureFlightState();
     }
     scene.render(elapsed,running?accumulator/fixedDt:1);
+     syncAudio();
     if(screen==='flight')refreshHud();
     if(now-lastInstruments>150){refreshTrajectory();perf={...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0};lastInstruments=now;}
   }
@@ -108,7 +120,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  try{saved=listAircraft();best=readBest(mode);}catch(e){notify((e as Error).message);}
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get result(){return result}}});
-return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);scene.dispose();window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
+ return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
  function touch(e:PointerEvent,key:'weight'|'rudder',value:number){if(!flightReady)return;e.currentTarget instanceof HTMLElement&&e.currentTarget.setPointerCapture(e.pointerId);if(key==='weight')weight=value;else rudder=value;}
 </script>
 <svelte:head><title>无动力滑翔 · 设计与飞行</title></svelte:head>
@@ -145,7 +157,18 @@ return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);scene.disp
 {/snippet}
 <div class="app" class:flying={screen==='flight'} class:designing={screen==='design'} class:awaiting-flight={screen==='flight'&&!flightReady}>
  <div class="scene" bind:this={host} aria-label="三维滑空机与湖面场景"></div>
- <header class="topbar"><div class="brand-group"><button class="brand" onclick={()=>screen==='flight'?togglePause():screen='menu'} aria-label="返回主菜单"><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>无动力滑翔<small>UNPOWERED GLIDING</small></span></button><a class="github-link" href="https://github.com/Nigh/glider-3d" target="_blank" rel="noopener noreferrer" aria-label="GitHub 项目源码（新标签页）" title="GitHub 项目源码"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a></div><nav aria-label="游戏流程"><button class:active={screen==='design'} onclick={design}>设计</button><button class:active={screen==='flight'||screen==='result'} onclick={()=>start()}>试飞</button></nav><div class="top-actions"><label class="quality-label">画质 <select aria-label="画质" bind:value={quality} onchange={()=>scene?.setQuality(quality)}><option>Auto</option><option>High</option><option>Medium</option><option>Low</option></select></label><button class="text-button" onclick={()=>{debug=!debug;scene?.setDebug(debug);}} aria-pressed={debug}>性能</button></div></header>
+ <header class="topbar">
+  <div class="brand-group">
+   <button class="brand" onclick={()=>screen==='flight'?togglePause():screen='menu'} aria-label="返回主菜单"><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>无动力滑翔<small>UNPOWERED GLIDING</small></span></button>
+   <a class="github-link" href="https://github.com/Nigh/glider-3d" target="_blank" rel="noopener noreferrer" aria-label="GitHub 项目源码（新标签页）" title="GitHub 项目源码"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
+  </div>
+  <nav aria-label="游戏流程"><button class:active={screen==='design'} onclick={design}>设计</button><button class:active={screen==='flight'||screen==='result'} onclick={()=>start()}>试飞</button></nav>
+  <div class="top-actions">
+   <AudioSettings {audio} error={audioError}/>
+   <label class="quality-label">画质 <select aria-label="画质" bind:value={quality} onchange={()=>scene?.setQuality(quality)}><option>Auto</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+   <button class="text-button" onclick={()=>{debug=!debug;scene?.setDebug(debug);}} aria-pressed={debug}>性能</button>
+  </div>
+ </header>
  {#if screen==='menu'}
  <main class="welcome"><h1>让设计，<br/>乘风而起。</h1><p>一架轻盈的飞机，一片开阔的湖。<br/>从机翼的每一条线开始，寻找更远的可能。</p><button class="primary large" onclick={design}>开始设计 <span>↗</span></button><button class="secondary" onclick={()=>start()}>先试飞默认飞机</button><div class="welcome-note">{LAUNCH.height} m 平台 · 助跑后无动力滑翔 · 本地保存</div></main>
  <aside class="menu-caption"><span>湖风 01 / 均衡型</span><p>14.0 m 翼展 <b>·</b> 参数化轻型滑空机</p></aside>
