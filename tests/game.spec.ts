@@ -39,7 +39,7 @@ test.beforeEach(async ({ page }) => {
   errors.set(page, messages);
   page.on('pageerror', error => messages.push(error.message));
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await expect(page.getByRole('button', { name: '开始设计' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '鸟人间挑战' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.glider?.state)).toBe('menu');
 });
 test.afterEach(async ({ page }) => {
@@ -50,7 +50,7 @@ async function aircraft(page: Page) {
   return page.evaluate(() => window.glider.aircraft);
 }
 async function enterDesign(page: Page) {
-  await page.getByRole('button', { name: '开始设计' }).click();
+  await page.getByRole('button', { name: '鸟人间挑战' }).click();
   await expect(page.getByRole('heading', { name: '飞机工坊' })).toBeVisible();
 }
 async function expectWaiting(page: Page) {
@@ -407,7 +407,7 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   await beginFlight(page);
   await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0), { timeout: 20_000 }).toBeGreaterThan(30);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
-  for (const camera of ['追尾', '侧面', '驾驶员', '自由']) {
+  for (const camera of ['追尾', '原追尾', '侧面', '驾驶员', '自由']) {
     await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(camera);
     await expect.poll(() => page.evaluate(() => {
       const s = window.glider.scene;
@@ -432,7 +432,7 @@ test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', 
     try {
       view = new SceneView(host);
       view.setQuality('Low');
-      const sim = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
+      const sim = new FlightSimulation(defaultAircraft, 'birdman', 0);
       view.setFlight(sim);
       view.cameraView('侧面');
       const fixedDt = 1 / 60, renderDt = 1 / 120;
@@ -481,7 +481,7 @@ test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', 
       const resumedMidpoint = beforePause.clone().lerp(sim.position, 0.5);
       const resumedMidpointError = resumedMidpoint.distanceTo(
         sim.position.clone().copy(view.getDiagnostics().aircraft));
-      const fresh = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
+      const fresh = new FlightSimulation(defaultAircraft, 'birdman', 0);
       const flightSeparation = fresh.position.distanceTo(sim.position);
       view.setFlight(fresh);
       view.render(renderDt, 0);
@@ -512,7 +512,8 @@ test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', 
 });
 
 test('空格开始、暂停与继续，C键循环视角，输入焦点不触发快捷键', async ({ page }) => {
-  await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
+  await enterDesign(page);
+  await page.getByRole('button', { name: '前往挑战' }).click();
   await expectWaiting(page);
   await page.keyboard.down('w');
   await page.keyboard.down('d');
@@ -528,7 +529,7 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await expect(page.locator('.pause-banner')).toBeVisible();
   const stopped = await page.evaluate(() => window.glider.time);
   const camera = page.getByRole('combobox', { name: '飞行相机', exact: true });
-  for (const view of ['侧面', '驾驶员', '自由', '追尾']) {
+  for (const view of ['原追尾', '侧面', '驾驶员', '自由', '追尾']) {
     await page.keyboard.press('c');
     await expect(camera).toHaveValue(view);
   }
@@ -930,7 +931,8 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
 });
 
 test('底部主按钮启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
-  await page.getByRole('button', { name: '试飞当前飞机', exact: true }).click();
+  await enterDesign(page);
+  await page.getByRole('button', { name: '前往挑战' }).click();
   await expectWaiting(page);
   const start = page.getByRole('button', { name: '开始试飞', exact: true });
   const box = await start.boundingBox(), viewport = page.viewportSize()!;
@@ -996,7 +998,7 @@ test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再�
     host.style.cssText = 'position:fixed;inset:0;width:960px;height:600px';
     document.body.appendChild(host);
     const view = new SceneView(host);
-    const sim = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
+    const sim = new FlightSimulation(defaultAircraft, 'birdman', 0);
     const tree = view as unknown as { scene: import('three').Scene };
     const shuttle = tree.scene.getObjectByName('catapult-shuttle')!;
     const input = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -1014,7 +1016,7 @@ test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再�
       for (let i = 0; i < 12; i++) view.render(1 / 60, 1);
       const paused = position();
       const end = advance(60), later = advance(60), plane = sim.position.toArray();
-      view.setFlight(new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0));
+      view.setFlight(new FlightSimulation(defaultAircraft, 'birdman', 0));
       view.render(1 / 60, 1);
       return { start, moving, paused, end, later, plane, reset: position(), endX: LAUNCH.endX, height: LAUNCH.height };
     } finally { view.dispose(); host.remove(); }
@@ -1027,4 +1029,28 @@ test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再�
   expect(result.later).toEqual(result.end);
   expect(result.plane[0]).toBeGreaterThan(result.later[0] + 3);
   expect(result.reset).toEqual(result.start);
+});
+
+test('另存为保留多架飞机，刷新后可分别加载且保存不覆盖其他飞机', async ({ page }) => {
+  await enterDesign(page);
+  const name = page.getByRole('textbox', { name: '飞机名称', exact: true });
+  await name.fill('多机设计甲');
+  await name.press('Tab');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  const first = await aircraft(page);
+  await name.fill('多机设计乙');
+  await name.press('Tab');
+  await page.locator('.name-row').getByRole('button', { name: '另存为新飞机', exact: true }).click();
+  await name.fill('多机设计乙更新');
+  await name.press('Tab');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await enterDesign(page);
+  await page.getByRole('button', { name: '机库', exact: true }).click();
+  const library = page.getByRole('region', { name: '本地机库' });
+  await expect(library.locator('.saved-plane')).toHaveCount(2);
+  await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计甲', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
+  expect(await aircraft(page)).toEqual(first);
+  await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计乙更新', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
+  await expect(name).toHaveValue('多机设计乙更新');
 });

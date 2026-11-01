@@ -1,4 +1,4 @@
-import { clone, validateAircraft, type AircraftDefinition, type FlightMode } from './model';
+import { clone, validateAircraft, type AircraftDefinition } from './model';
 import type { ChallengeMode } from './challenges';
 
 export interface SavedAircraft {
@@ -9,8 +9,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 旧版重心计距与新版机体最后尾计距不可混榜；保留旧存储数据，不迁移为新成绩。
-const BEST_PREFIX = 'lakewind.best.official-v1.';
+// 新赛道与渐进舵面独立记录；保留旧版本数据，不混榜。
+const BEST_PREFIX = 'lakewind.best.challenge-v2.';
 
 function storageCall<T>(operation: (storage: Storage) => T): T {
   try {
@@ -125,8 +125,8 @@ export function importAircraft(json: string): AircraftDefinition {
   return checkedDefinition(value);
 }
 
-export function readBest(mode: FlightMode, challenge: ChallengeMode = 'birdman'): number {
-  const raw = storageCall(storage => storage.getItem(BEST_PREFIX + (challenge === 'birdman' ? mode : `${challenge}.${mode}`)));
+export function readBest(challenge: ChallengeMode = 'birdman'): number {
+  const raw = storageCall(storage => storage.getItem(BEST_PREFIX + challenge));
   if (raw === null) return 0;
   const distance = Number(raw);
   if (!raw.trim() || !Number.isFinite(distance) || challenge !== 'low-altitude' && distance < 0) {
@@ -135,10 +135,10 @@ export function readBest(mode: FlightMode, challenge: ChallengeMode = 'birdman')
   return distance;
 }
 
-export function writeBest(mode: FlightMode, distance: number, challenge: ChallengeMode = 'birdman'): number {
+export function writeBest(distance: number, challenge: ChallengeMode = 'birdman'): number {
   if (!Number.isFinite(distance) || challenge !== 'low-altitude' && distance < 0) throw new Error('距离和时间须为非负有限数值，得分须为有限数值。');
-  const previous = readBest(mode, challenge);
-  const key = BEST_PREFIX + (challenge === 'birdman' ? mode : `${challenge}.${mode}`);
+  const previous = readBest(challenge);
+  const key = BEST_PREFIX + challenge;
   const first = storageCall(storage => storage.getItem(key)) === null;
   const best = first ? distance : challenge === 'downhill' ? Math.min(previous, distance) : Math.max(previous, distance);
   storageCall(storage => storage.setItem(key, String(best)));

@@ -147,7 +147,7 @@ describe('飞机本地保存', () => {
     expect(() => listAircraft()).toThrow('无法访问浏览器本地存储');
     expect(() => saveAircraft(defaultAircraft)).toThrow('无法访问浏览器本地存储');
     expect(() => deleteAircraft('missing')).toThrow('无法访问浏览器本地存储');
-    expect(() => readBest('standard')).toThrow('无法访问浏览器本地存储');
+    expect(() => readBest()).toThrow('无法访问浏览器本地存储');
   });
 
   it('存储读取被拒绝时不伪装成空列表', () => {
@@ -170,49 +170,47 @@ describe('飞机本地保存', () => {
 });
 
 describe('最远纪录', () => {
-  it('按模式隔离，仅保留最大有限非负距离', () => {
-    expect(readBest('standard')).toBe(0);
-    expect(writeBest('standard', 84.88)).toBe(84.88);
-    expect(writeBest('standard', 20)).toBe(84.88);
-    expect(readBest('standard')).toBe(84.88);
-    expect(readBest('assisted')).toBe(0);
-    expect(writeBest('assisted', 100)).toBe(100);
-    expect(readBest('standard')).toBe(84.88);
+  it('仅保留最大有限非负距离，不与其他挑战混榜', () => {
+    expect(readBest()).toBe(0);
+    expect(writeBest(84.88)).toBe(84.88);
+    expect(writeBest(20)).toBe(84.88);
+    expect(readBest()).toBe(84.88);
+    expect(readBest('downhill')).toBe(0);
     for (const invalid of [-1, NaN, Infinity]) {
-      expect(() => writeBest('standard', invalid)).toThrow('非负有限数值');
+      expect(() => writeBest(invalid)).toThrow('非负有限数值');
     }
   });
 
   it('速降只保留最短时间，不与鸟人间距离混榜', () => {
-    writeBest('standard', 180);
-    expect(writeBest('standard', 75, 'downhill')).toBe(75);
-    expect(writeBest('standard', 90, 'downhill')).toBe(75);
-    expect(writeBest('standard', 68, 'downhill')).toBe(68);
-    expect(readBest('standard')).toBe(180);
-    expect(readBest('assisted', 'downhill')).toBe(0);
+    writeBest(180);
+    expect(writeBest(75, 'downhill')).toBe(75);
+    expect(writeBest(90, 'downhill')).toBe(75);
+    expect(writeBest(68, 'downhill')).toBe(68);
+    expect(readBest()).toBe(180);
+    expect(readBest('low-altitude')).toBe(0);
   });
 
   it('低空扣分允许负成绩，只保留较高分且与时间距离隔离', () => {
-    expect(writeBest('standard', -50, 'low-altitude')).toBe(-50);
-    expect(writeBest('standard', -80, 'low-altitude')).toBe(-50);
-    expect(writeBest('standard', 100, 'low-altitude')).toBe(100);
-    expect(readBest('standard', 'low-altitude')).toBe(100);
-    expect(readBest('standard', 'downhill')).toBe(0);
-    expect(readBest('standard')).toBe(0);
+    expect(writeBest(-50, 'low-altitude')).toBe(-50);
+    expect(writeBest(-80, 'low-altitude')).toBe(-50);
+    expect(writeBest(100, 'low-altitude')).toBe(100);
+    expect(readBest('low-altitude')).toBe(100);
+    expect(readBest('downhill')).toBe(0);
+    expect(readBest()).toBe(0);
   });
 
   it('损坏纪录不被静默覆盖', () => {
-    storage.setItem('lakewind.best.official-v1.standard', 'broken');
-    expect(() => readBest('standard')).toThrow('纪录已损坏');
-    expect(() => writeBest('standard', 90)).toThrow('纪录已损坏');
-    expect(storage.getItem('lakewind.best.official-v1.standard')).toBe('broken');
+    storage.setItem('lakewind.best.challenge-v2.birdman', 'broken');
+    expect(() => readBest()).toThrow('纪录已损坏');
+    expect(() => writeBest(90)).toThrow('纪录已损坏');
+    expect(storage.getItem('lakewind.best.challenge-v2.birdman')).toBe('broken');
   });
 
-  it('旧版重心距离不参与机体最后尾计距纪录，且不删除原始数据', () => {
-    storage.setItem('lakewind.best.standard', '900');
-    expect(readBest('standard')).toBe(0);
-    expect(writeBest('standard', 120)).toBe(120);
-    expect(storage.getItem('lakewind.best.standard')).toBe('900');
+  it('旧物理版本纪录不混榜，且不删除原始数据', () => {
+    storage.setItem('lakewind.best.official-v1.standard', '900');
+    expect(readBest()).toBe(0);
+    expect(writeBest(120)).toBe(120);
+    expect(storage.getItem('lakewind.best.official-v1.standard')).toBe('900');
   });
 });
 

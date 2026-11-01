@@ -16,7 +16,6 @@ export interface AircraftDefinition {
  fuelTank: { x: number; capacity: number };
 }
 export interface Controls { weight: number; lateral?: number; rudder: number; elevator: number; aileron: number; throttle?: number }
-export type FlightMode = 'standard' | 'assisted' | 'experimental';
 export const clone = <T>(v:T):T => structuredClone(v);
 export const clamp = (v:number,a:number,b:number) => Math.max(a,Math.min(b,v));
 export const DEG = Math.PI / 180;
