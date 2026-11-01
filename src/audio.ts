@@ -7,6 +7,7 @@ type AudioState = {
   speed: number;
   launching: boolean;
   engineRpm?: number;
+  checkpointProgress?: number;
 };
 type Voice = { source: AudioScheduledSourceNode; gain: GainNode; flight: boolean };
 
@@ -81,6 +82,8 @@ export class GameAudio {
     const wasFlight = this.state.screen === 'flight' && this.state.ready;
     const isFlight = state.screen === 'flight' && state.ready;
     const screenChanged = state.screen !== this.state.screen;
+    const passedCheckpoint = wasFlight && isFlight
+      && (state.checkpointProgress ?? 0) > (this.state.checkpointProgress ?? 0);
     this.state = state;
     if (!isFlight) {
       this.launchPlayed = false;
@@ -89,6 +92,7 @@ export class GameAudio {
     }
     if (screenChanged) this.applyVolumes();
     this.syncTransport();
+    if (passedCheckpoint && this.canPlay()) this.tone(880, 1175, 0.12, 0.035, false);
     if (!this.context || this.disposed) return;
     const speed = isFlight && Number.isFinite(state.speed) ? Math.max(0, Math.min(60, state.speed)) : 0;
     if (Math.abs(speed - this.lastSpeed) >= 0.15 || speed === 0 && this.lastSpeed !== 0) {

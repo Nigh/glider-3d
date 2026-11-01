@@ -1270,7 +1270,7 @@ export class FlightSimulation {
     const fraction = (gate.x - this.previousPosition.x) / (this.position.x - this.previousPosition.x);
     const z = this.previousPosition.z + (this.position.z - this.previousPosition.z) * fraction;
     const y = this.previousPosition.y + (this.position.y - this.previousPosition.y) * fraction;
-    if (Math.abs(z - gate.z) > gate.halfWidth || y < gate.y + gate.minHeight || y > gate.y + gate.maxHeight) return timed;
+    if (Math.abs(z - gate.z) > gate.halfWidth || y > gate.y + gate.maxHeight) return timed;
     if (!this.raceStarted) {
       this.raceStarted = true;
       this.farthestX = gate.x;
@@ -1307,7 +1307,8 @@ export class FlightSimulation {
     const downhill = this.challenge === 'downhill';
     return x < challengeLaunch(this.challenge)!.startX - 50 || x > challengeDefinitions[this.challenge].length + 100
       || Math.abs(z - challengeCenter(this.challenge, x)) > (downhill ? 65 : 100)
-      || y - challengeCollisionHeight(this.challenge, x, z) > (downhill ? 125 : 1000)
+      || (downhill ? this.raceStarted && y - challengeCollisionHeight(this.challenge, x, z) > 125
+        : y - challengeCollisionHeight(this.challenge, x, z) > 1000)
       || (next != null && x > next.x);
   }
 

@@ -4,7 +4,7 @@ import type { AircraftDefinition } from '../src/model';
 import type * as SceneModule from '../src/scene';
 import type * as PhysicsModule from '../src/physics';
 import type * as ModelModule from '../src/model';
-import type { Camera } from 'three';
+import type { BufferGeometry, Camera } from 'three';
 
 type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string };
 declare global {
@@ -15,7 +15,7 @@ declare global {
       readonly flightReady: boolean;
       readonly time: number;
       readonly recordingLength: number;
-      readonly trajectory: { distance: number; height: number; energyRatio: number; energyPerDistance: number | null }[];
+      readonly trajectory: { time: number; distance: number; height: number; speed: number; scoringHeight: number; energyRatio: number; energyPerDistance: number | null }[];
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
       readonly result: FlightResult | null;
@@ -1053,4 +1053,126 @@ test('另存为保留多架飞机，刷新后可分别加载且保存不覆盖�
   expect(await aircraft(page)).toEqual(first);
   await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计乙更新', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
   await expect(name).toHaveValue('多机设计乙更新');
+});
+
+test('三翼页整体位置手柄保留顶点，动力页引擎与油箱复用位置操纵', async ({ page }) => {
+  await page.getByRole('button', { name: '高山速降', exact: false }).click();
+  await expect(page.getByRole('tablist', { name: '部件编辑' }).getByRole('tab')).toHaveText(['机身', '主翼', '水平尾翼', '垂直尾翼', '动力', '组装']);
+  for (const [tab, key] of [['主翼', 'mainWing'], ['水平尾翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    const before = await aircraft(page);
+    const handle = page.getByRole('button', { name: tab + '位置', exact: true });
+    await expect(handle).toBeVisible();
+    await handle.press('ArrowRight');
+    const after = await aircraft(page);
+    expect(after.assembly[key]).toBeGreaterThan(before.assembly[key]);
+    expect(after[key].points).toEqual(before[key].points);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    expect(await aircraft(page)).toEqual(before);
+  }
+  await page.getByRole('tab', { name: '动力', exact: true }).click();
+  await page.getByRole('combobox', { name: '引擎数量', exact: true }).selectOption('2');
+  await expect.poll(() => page.evaluate(() => window.glider.scene.orthographic)).toBe(true);
+  for (const [label, key] of [['引擎位置', 'engine'], ['油箱位置', 'fuelTank']] as const) {
+    const before = await aircraft(page);
+    const handle = page.getByRole('button', { name: label, exact: true });
+    await expect(handle).toBeVisible();
+    await handle.press('ArrowRight');
+    expect((await aircraft(page))[key].x).toBeGreaterThan(before[key].x);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    expect(await aircraft(page)).toEqual(before);
+  }
+});
+
+for (const [mode, labels] of [
+  ['高山速降', ['空速', '下降率']],
+  ['低空飞行', ['空速', '离地高度', '剩余燃料']],
+] as const) {
+  test(`${mode}精简HUD与结果曲线记录真实空速和高度`, async ({ page }) => {
+    await page.getByRole('button', { name: mode, exact: false }).click();
+    await page.getByRole('button', { name: '前往挑战' }).click();
+    const hud = page.getByRole('region', { name: '飞行数据', exact: true });
+    await expect(hud.locator('small')).toHaveText([...labels]);
+    await expect(page.getByRole('region', { name: '离台能量守恒', exact: true })).toHaveCount(0);
+    await beginFlight(page);
+    if (mode === '低空飞行') await page.getByRole('slider', { name: '油门', exact: true }).fill('1');
+    await expect.poll(() => page.evaluate(() => window.glider.trajectory.length)).toBeGreaterThan(4);
+    await page.getByRole('button', { name: '暂停', exact: true }).click();
+    const frozen = await page.evaluate(() => window.glider.trajectory);
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => window.glider.trajectory)).toEqual(frozen);
+    await page.getByRole('button', { name: '继续飞行', exact: true }).click();
+    await page.keyboard.down('w');
+    await expect.poll(() => page.evaluate(() => window.glider.state), { timeout: 120_000 }).toBe('result');
+    await page.keyboard.up('w');
+    const { samples, telemetry } = await page.evaluate(() => ({ samples: window.glider.trajectory, telemetry: window.glider.telemetry! }));
+    expect(samples.length).toBeGreaterThan(5);
+    expect(samples.at(-1)!.speed).toBeCloseTo(telemetry.speed, 10);
+    expect(samples.at(-1)!.height).toBeCloseTo(telemetry.altitude, 10);
+    for (let index = 1; index < samples.length; index++) expect(samples[index].time).toBeGreaterThanOrEqual(samples[index - 1].time);
+    const speedChart = page.getByRole('region', { name: '空速曲线', exact: true });
+    await speedChart.scrollIntoViewIfNeeded();
+    const speedPoints = (await speedChart.locator('.chart-speed-line').getAttribute('points'))!.trim().split(/\s+/).map(point => point.split(',').map(Number));
+    expect(speedPoints).toHaveLength(samples.length);
+    const maxTime = Math.max(1, ...samples.map(sample => sample.time));
+    const maxSpeed = Math.max(1, ...samples.map(sample => sample.speed));
+    expect(speedPoints.at(-1)![0]).toBeCloseTo(38 + samples.at(-1)!.time / maxTime * 290, 2);
+    expect(speedPoints.at(-1)![1]).toBeCloseTo(98 - telemetry.speed / maxSpeed * 76, 2);
+    const heightChart = page.getByRole('region', { name: '距离高度曲线', exact: true });
+    await heightChart.scrollIntoViewIfNeeded();
+    await expect(heightChart.locator('.chart-energy-line,.chart-cost-line')).toHaveCount(0);
+    await expect(heightChart.locator('.chart-scoring-line')).toHaveCount(mode === '低空飞行' ? 1 : 0);
+    if (mode === '低空飞行') {
+      expect(samples.at(-1)!.scoringHeight).toBeCloseTo(telemetry.altitude - Number(telemetry.groundClearance) + 25, 10);
+      const reference = (await heightChart.locator('.chart-scoring-line').getAttribute('points'))!.trim().split(/\s+/).map(point => point.split(',').map(Number));
+      const maxHeight = Math.max(10, ...samples.flatMap(sample => [sample.height, sample.scoringHeight]));
+      expect(reference).toHaveLength(samples.length);
+      expect(reference.at(-1)![1]).toBeCloseTo(98 - samples.at(-1)!.scoringHeight / maxHeight * 76, 2);
+      await expect(heightChart.getByText('计分高度上限 · 接触表面 + 25.0 m', { exact: true })).toBeVisible();
+    }
+    await noOverflow(page);
+  });
+}
+
+test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ page, isMobile }) => {
+  test.skip(isMobile, '独立场景几何回归在桌面覆盖，触屏共用同一几何');
+  const result = await page.evaluate(async () => {
+    // page.evaluate runs in Chromium; static Node imports cannot cross this execution boundary.
+    const scenePath = '/src/scene.ts', physicsPath = '/src/physics.ts', modelPath = '/src/model.ts';
+    const { SceneView } = await import(scenePath) as typeof SceneModule;
+    const { FlightSimulation } = await import(physicsPath) as typeof PhysicsModule;
+    const { defaultAircraft } = await import(modelPath) as typeof ModelModule;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;width:960px;height:600px';
+    document.body.appendChild(host);
+    const view = new SceneView(host);
+    try {
+      view.setQuality('Low');
+      const sim = new FlightSimulation(defaultAircraft, 'birdman', 0);
+      view.setFlight(sim);
+      sim.launching = true;
+      sim.telemetry.speed = 5;
+      sim.telemetry.stall = false;
+      for (let index = 0; index < 240; index++) {
+        view.captureFlightState();
+        sim.time += 1 / 60;
+        sim.position.x += 0.2;
+        view.render(1 / 60, 1);
+      }
+      // Inspect private renderer geometry without exposing a production API.
+      const renderer = view as unknown as { wingTrailGeometry: BufferGeometry };
+      const geometry = renderer.wingTrailGeometry;
+      const color = geometry.getAttribute('color'), count = geometry.drawRange.count;
+      const alpha = Array.from({ length: count }, (_, index) => color.getW(index));
+      sim.telemetry.stall = true;
+      view.render(1 / 60, 1);
+      return { count, itemSize: color.itemSize, first: alpha[0], peak: Math.max(...alpha), last: alpha.at(-1), stalled: geometry.drawRange.count };
+    } finally { view.dispose(); host.remove(); }
+  });
+  expect(result.count).toBeGreaterThan(0);
+  expect(result.itemSize).toBe(4);
+  expect(result.first).toBe(0);
+  expect(result.peak).toBeGreaterThan(0.8);
+  expect(result.last).toBeCloseTo(0, 6);
+  expect(result.stalled).toBe(0);
 });
