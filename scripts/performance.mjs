@@ -45,7 +45,7 @@ const results = {
 
 async function design() {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: '开始设计' }).click();
+  await page.getByRole('button', { name: '鸟人间挑战' }).click();
   await page.waitForFunction(() => window.glider?.state === 'design');
 }
 async function flight() {

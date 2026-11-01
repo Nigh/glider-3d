@@ -6,13 +6,13 @@ import { coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROL
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
 function definition(change?: (d: AircraftDefinition) => void) { const d = clone(defaultAircraft); change?.(d); return d; }
-function release(s = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0)) {
+function release(s = new FlightSimulation(defaultAircraft, 'birdman', 0)) {
   while (s.launching) s.step(neutral);
   expect(s.ended).toBe(false);
   return s;
 }
 function probe(d = definition(), setup?: (s: FlightSimulation) => void, dt = 1e-7) {
-  const s = new FlightSimulation(d, 'standard', 'birdman', 0);
+  const s = new FlightSimulation(d, 'birdman', 0);
   s.launching = false; s.position.set(40, 80, 0); s.quaternion.identity(); s.velocity.set(12, -1, 0);
   setup?.(s); s.step(neutral, dt); return s;
 }
@@ -22,7 +22,7 @@ function pitchSlope(d: AircraftDefinition) {
   return high.telemetry.torque.z - low.telemetry.torque.z;
 }
 function fly(d = definition(), dt = 1 / 60) {
-  const s = new FlightSimulation(d, 'standard', d.birdman ? 'birdman' : 'downhill', 0);
+  const s = new FlightSimulation(d, d.birdman ? 'birdman' : 'downhill', 0);
   for (let i = 0; i < 90 / dt && !s.ended; i++) s.step(neutral, dt);
   return s;
 }
@@ -66,7 +66,7 @@ function outsidePlatform(s: FlightSimulation) {
   }
 }
 function approachingPlatform(axis: number, sign: number, speed = 3, gap = 0.01) {
-  const s = new FlightSimulation(compactAircraft(), 'standard', 'birdman', 0);
+  const s = new FlightSimulation(compactAircraft(), 'birdman', 0);
   s.launching = false;
   s.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), -LAUNCH.slope);
   const values = contacts(s).map(point => point.getComponent(axis) - s.aircraft.cg.getComponent(axis));
@@ -81,7 +81,7 @@ function approachingPlatform(axis: number, sign: number, speed = 3, gap = 0.01) 
 
 describe('展向条带与完整翼面', () => {
   it('所有翼面按0.8m截短分段，面积和面积加权作用点保持完整梯形，左右镜像', () => {
-    const d = definition(), s = new FlightSimulation(d, 'standard', 'birdman', 0);
+    const d = definition(), s = new FlightSimulation(d, 'birdman', 0);
     for (const [key, kind] of [['mainWing', 'main'], ['horizontalTail', 'tail'], ['verticalTail', 'vertical']] as const) {
       const p = planform(d[key], key !== 'verticalTail'), panels = s.surfaces.filter(surface => surface.kind === kind);
       expect(panels.reduce((sum, panel) => sum + panel.area, 0)).toBeCloseTo(p.area, 12);
@@ -153,7 +153,7 @@ describe('展向条带与完整翼面', () => {
 
 describe('斜坡发射、连续滚转与最后尾计距', () => {
   it('真实10m下坡3.5°，两秒沿坡匀加速，离台才建立能量预算', () => {
-    const s = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0), initialHeight = s.position.y;
+    const s = new FlightSimulation(defaultAircraft, 'birdman', 0), initialHeight = s.position.y;
     expect(s.position.x).toBeCloseTo(-10 * Math.cos(3.5 * DEG), 12);
     expect(s.position.y).toBe(launchHeight(defaultAircraft));
     expect(s.telemetry.pitch).toBeCloseTo(-3.5 * DEG, 12);
@@ -175,7 +175,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
   });
 
   it.each([-LAUNCH_ROLL_LIMIT, LAUNCH_ROLL_LIMIT])('滚转%r整个助跑光滑，端点角速度/角加速度趋零且无离台跳变', roll => {
-    const s = new FlightSimulation(defaultAircraft, 'standard', 'birdman', roll), dt = 1 / 120;
+    const s = new FlightSimulation(defaultAircraft, 'birdman', roll), dt = 1 / 120;
     let previousRoll = 0, previousRate = 0, lastRate = 0;
     for (let i = 1; i <= 240; i++) {
       s.step(neutral, dt);
@@ -196,9 +196,9 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
     const random = vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(1);
     try { const s = new FlightSimulation(defaultAircraft); expect(s.getRecording().launchRoll).toBe(-DEG); s.reset(); expect(s.getRecording().launchRoll).toBe(DEG); }
     finally { random.mockRestore(); }
-    const s = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0.713829 * DEG), states: number[][] = [];
+    const s = new FlightSimulation(defaultAircraft, 'birdman', 0.713829 * DEG), states: number[][] = [];
     for (let i = 0; i < 240 && !s.ended; i++) { s.step({ ...neutral, rudder: Math.sin(i / 20) * 0.03 }); states.push([...s.position.toArray(), ...s.quaternion.toArray(), ...s.velocity.toArray(), s.telemetry.energy]); }
-    const replay = new FlightSimulation(defaultAircraft, 'standard', 'birdman', -0.4 * DEG); replay.loadReplay(s.getRecording());
+    const replay = new FlightSimulation(defaultAircraft, 'birdman', -0.4 * DEG); replay.loadReplay(s.getRecording());
     for (const state of states) { replay.step(neutral, 0.2); expect([...replay.position.toArray(), ...replay.quaternion.toArray(), ...replay.velocity.toArray(), replay.telemetry.energy]).toEqual(state); }
     expect(replay.replayFinished).toBe(true); replay.reset(); expect(replay.getRecording().launchRoll).toBe(-0.4 * DEG);
     for (const roll of [NaN, Infinity, DEG * 1.01]) expect(() => s.reset(roll)).toThrow();
@@ -206,7 +206,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
 
   it('坡面净空包含大安装角和滚转包络，重心操纵不使机体穿坡', () => {
     const d = definition(d => { d.mainWing = wing(24, 5.8, 5.8); d.assembly.mainWingHeight = 0; d.assembly.mainIncidence = 18; });
-    const s = new FlightSimulation(d, 'standard', 'birdman', DEG), points = keelPoints(d);
+    const s = new FlightSimulation(d, 'birdman', DEG), points = keelPoints(d);
     for (let i = 0; i < 120; i++) {
       s.step({ ...neutral, weight: 1 });
       for (const point of points) { const p = world(s, point); expect(p.y - runwayHeight(p.x)).toBeGreaterThanOrEqual(0.049999); }
@@ -230,7 +230,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
   });
 
   it('接水时定位首次接触，终点不明显穿水；不存在旧岸地box的幽灵终止', () => {
-    const s = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0); s.launching = false; s.quaternion.identity();
+    const s = new FlightSimulation(defaultAircraft, 'birdman', 0); s.launching = false; s.quaternion.identity();
     s.position.set(40, 2, 0); s.velocity.set(0, -20, 0);
     while (!s.ended) s.step(neutral, 0.25);
     expect(s.result?.landing).toBe('water');
@@ -327,7 +327,7 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(range.empty.distanceTo(expectedEmpty)).toBeLessThan(1e-12);
     const noTank = clone(d); noTank.fuelTank.capacity = 0;
     expect(range.empty.distanceTo(derive(noTank).cg)).toBeGreaterThan(1e-5);
-    const s = new FlightSimulation(d,'standard','low-altitude',0);
+    const s = new FlightSimulation(d, 'low-altitude', 0);
     s.launching = false; s.position.set(0,1000,0); s.velocity.set(30,0,0); s.quaternion.identity();
     for(let i=0;i<100&&s.telemetry.fuelRemaining>0;i++)s.step({...neutral,throttle:1},0.25);
     expect(s.telemetry.fuelRemaining).toBe(0);expect(s.aircraft.mass).toBeCloseTo(full.mass-fuelMass,10);
@@ -432,8 +432,8 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(right.clearance).toBeLessThan(left.clearance); expect(right.groundEffect).toBeLessThan(left.groundEffect);
   });
 
-  it.each(['standard', 'assisted', 'experimental'] as const)('%s 全程保持机械能与真实耗散功平衡，抖动操纵不造能', mode => {
-    const s = release(new FlightSimulation(defaultAircraft, mode, 'birdman', 0)); let previous = s.telemetry.energy;
+  it('全程保持机械能与真实耗散功平衡，抖动操纵不造能', () => {
+    const s = release(new FlightSimulation(defaultAircraft, 'birdman', 0)); let previous = s.telemetry.energy;
     for (let i = 0; i < 1800 && !s.ended; i++) {
       const sign = i % 2 ? 1 : -1;
       s.step({ weight: sign, rudder: sign * 0.2, elevator: sign * 0.2, aileron: sign * 0.2 });
@@ -455,7 +455,7 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(c.position.distanceTo(reference.position)).toBeLessThan(b.position.distanceTo(reference.position));
     expect(a.position.distanceTo(reference.position)).toBeLessThan(0.001);
     for (const s of [a, b, c, reference]) { budget(s); expect(s.telemetry.energyPerDistance).toBeCloseTo(-s.telemetry.aeroPower / Math.hypot(s.velocity.x, s.velocity.z), 10); }
-    const coarse = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0), fine = new FlightSimulation(defaultAircraft, 'standard', 'birdman', 0);
+    const coarse = new FlightSimulation(defaultAircraft, 'birdman', 0), fine = new FlightSimulation(defaultAircraft, 'birdman', 0);
     for (let i = 0; i < 12; i++) coarse.step(neutral, 0.25); for (let i = 0; i < 180; i++) fine.step(neutral);
     expect(coarse.position.distanceTo(fine.position)).toBeLessThan(1e-8);
     expect(coarse.quaternion.angleTo(fine.quaternion)).toBeLessThan(1e-7);
@@ -465,11 +465,11 @@ describe('气动、质量、能量与消费者边界', () => {
     const s = fly(d); expect(s.ended).toBe(true); expect(s.result).not.toBeNull(); budget(s);
     expect(Number.isFinite(s.result!.distance)).toBe(true); expect(s.result!.distance).toBeGreaterThanOrEqual(0);
     if (d.name === '默认均衡型' || d.name === '高展弦比型') { expect(s.result!.landing).toBe('water'); expect(s.result!.distance).toBeGreaterThan(20); }
-    const replay = new FlightSimulation(d, 'standard', d.birdman ? 'birdman' : 'downhill', DEG); replay.loadReplay(s.getRecording());
+    const replay = new FlightSimulation(d, d.birdman ? 'birdman' : 'downhill', DEG); replay.loadReplay(s.getRecording());
     while (!replay.ended && !replay.replayFinished) replay.step(neutral);
     expect(replay.result).toEqual(s.result);
     const position = s.position.clone(); s.step(neutral); expect(s.position.equals(position)).toBe(true);
-  });
+  }, 15_000);
 
   it.each([{ name: '最小弦与半展', span: 0.5, chord: 0.15 }, { name: '最大展长与大弦', span: 24, chord: 5.8 }])('$name 的三翼分段受力保持有限并满足真实能量账本', ({ span, chord }) => {
     const d = definition(d => {

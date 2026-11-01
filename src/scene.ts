@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
-import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
+import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
@@ -76,6 +76,7 @@ export class SceneView {
   private readonly environment = new THREE.Group();
   private readonly mountainEnvironment = new THREE.Group();
   private environmentChallenge: ChallengeMode = 'birdman';
+  private mountainShuttle: THREE.Mesh | null = null;
   private readonly catapult = new THREE.Group();
   private readonly shuttle = new THREE.Group();
   private towArm!: THREE.Mesh;
@@ -161,6 +162,7 @@ export class SceneView {
   private readonly desiredPosition = new THREE.Vector3();
   private readonly desiredTarget = new THREE.Vector3();
   private readonly vector = new THREE.Vector3();
+  private readonly chaseHeading = new THREE.Vector3(1, 0, 0);
   private readonly vector2 = new THREE.Vector3();
   private wingTrailTime = -1;
   private readonly designCG = new THREE.Vector3();
@@ -184,6 +186,7 @@ export class SceneView {
   private wingTrailIndex = 0;
   private wingTrailCount = 0;
   private splashAge = -1;
+  private splashSurface = 0;
   private wasInWater = false;
   private disposed = false;
   private readonly coarsePointer = matchMedia('(pointer: coarse)').matches;
@@ -472,7 +475,7 @@ export class SceneView {
   }
 
   private surfaceHeight(x: number, z: number): number {
-    if (this.environmentChallenge !== 'birdman') return challengeTerrainHeight(this.environmentChallenge, x, z);
+    if (this.environmentChallenge !== 'birdman') return challengeCollisionHeight(this.environmentChallenge, x, z);
     this.groundRay.set(this.vector.set(x, 1000, z), DOWN);
     this.groundHits.length = 0;
     this.groundRay.intersectObjects(this.terrain, false, this.groundHits);
@@ -1307,7 +1310,7 @@ export class SceneView {
   }
 
   cameraView(name: string): void {
-    const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
+    const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '原追尾': 'legacy-chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
     this.view = names[name] ?? name;
     if (!this.simulation && this.editorTarget && this.editorTarget !== 'propulsion') this.view = this.editorTarget === 'verticalTail' || this.editorTarget === 'assembly' ? 'side' : 'top';
     const orthographic = ['top', 'side', 'front', 'rear'].includes(this.view);
@@ -1573,6 +1576,7 @@ export class SceneView {
     if (challenge === this.environmentChallenge) return;
     this.release(this.mountainEnvironment);
     this.mountainEnvironment.clear();
+    this.mountainShuttle = null;
     this.environmentChallenge = challenge;
     const mountain = challenge !== 'birdman';
     this.environmentFog.color.setHex(challenge === 'downhill' ? 0xc6d9e8 : challenge === 'birdman' ? 0xd4e3e4 : 0xc9ded7);
@@ -1586,12 +1590,35 @@ export class SceneView {
     this.metrics.memory = this.geometryMemory();
   }
 
+  private groundMaterial(color: number, vertexColors = false): THREE.MeshStandardMaterial {
+    const size = 128, pixels = new Uint8Array(size * size * 4);
+    let seed = 0x4a17b923;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const patch = Math.sin(x * Math.PI / 16) * Math.sin(y * Math.PI / 32);
+      const shade = Math.round(222 + patch * 16 + (seed / 0x100000000 - 0.5) * 28);
+      const offset = (y * size + x) * 4;
+      pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = shade;
+      pixels[offset + 3] = 255;
+    }
+    const texture = new THREE.DataTexture(pixels, size, size);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    texture.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({ color, vertexColors, map: texture, roughness: 1, side: THREE.DoubleSide });
+  }
+
   private buildMountainEnvironment(challenge: ChallengeMode): void {
     const downhill = challenge === 'downhill';
     const { minX, maxX, minZ, maxZ, step } = challengeTerrainGrid;
     const columns = Math.round((maxX - minX) / step) + 1;
     const rows = Math.round((maxZ - minZ) / step) + 1;
     const vertices = new Float32Array(columns * rows * 3);
+    const uvs = new Float32Array(columns * rows * 2);
     const colors = new Float32Array(vertices.length);
     const indices = new Uint32Array((columns - 1) * (rows - 1) * 6);
     const color = new THREE.Color(), grass = new THREE.Color(0x71856a), rock = new THREE.Color(0x8f928d), snow = new THREE.Color(0xeaf1ef);
@@ -1600,6 +1627,7 @@ export class SceneView {
       const x = minX + column * step, z = minZ + row * step;
       const y = challengeTerrainHeight(challenge, x, z);
       const vertex = row * columns + column, offset = vertex * 3;
+      uvs[vertex * 2] = x / 24; uvs[vertex * 2 + 1] = z / 24;
       vertices[offset] = x; vertices[offset + 1] = y; vertices[offset + 2] = z;
       const slope = Math.abs(challengeTerrainHeight(challenge, x, z + step) - challengeTerrainHeight(challenge, x, z - step)) / (step * 2);
       color.copy(grass).lerp(rock, clamp(slope * 0.9 + (y - 250) / 1000, 0, 1));
@@ -1614,19 +1642,24 @@ export class SceneView {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.computeVertexNormals();
-    const terrain = this.mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide }), this.mountainEnvironment);
+    const terrain = this.mesh(geometry, this.groundMaterial(0xffffff, true), this.mountainEnvironment);
     terrain.name = 'challenge-terrain';
     terrain.castShadow = false;
 
-    const course = challengeDefinitions[challenge], gates = challengeCheckpoints(challenge);
+    this.buildChallengeLaunch(challenge);
+    if (!downhill) this.buildChallengeRiver();
+    const course = challengeDefinitions[challenge], startGate = challengeStartGate(challenge), launch = challengeLaunch(challenge);
+    const checkpoints = challengeCheckpoints(challenge);
+    const gates = startGate ? [startGate, ...checkpoints] : checkpoints;
     const route: number[] = [], routeIndices: number[] = [];
     const clearance = downhill && gates.length ? (gates[0].minHeight + gates[0].maxHeight) / 2 : LOW_ALTITUDE.scoringHeight / 2;
     for (let x = 0, sample = 0; x <= course.length; x += step, sample++) {
       const z = challengeCenter(challenge, x);
-      const routeY = challengeTerrainHeight(challenge, x, z) + clearance;
-      const y = THREE.MathUtils.lerp(course.startHeight, routeY, clamp(x / 180, 0, 1));
+      const routeY = challengeCollisionHeight(challenge, x, z) + clearance;
+      const y = THREE.MathUtils.lerp(launch?.y ?? 0, routeY, clamp(x / 180, 0, 1));
       route.push(x, y, z - 1.5, x, y, z + 1.5);
       if (sample === 0) continue;
       const a = (sample - 1) * 2;
@@ -1642,21 +1675,24 @@ export class SceneView {
     const checkpointMaterial = new THREE.MeshBasicMaterial({ color: 0xf2ba62 });
     const frameThickness = downhill ? 1.6 : 0.6;
     const finishMaterial = new THREE.MeshBasicMaterial({ color: 0x83e4d8, side: THREE.DoubleSide });
+    const startMaterial = new THREE.MeshBasicMaterial({ color: 0x69caff });
     for (let index = 0; index < gates.length; index++) {
-      const gate = gates[index], finish = index === gates.length - 1;
+      const gate = gates[index], finish = index === gates.length - 1, timingStart = gate === startGate;
+      const material = timingStart ? startMaterial : finish ? finishMaterial : checkpointMaterial;
+      const checkpointIndex = index + (startGate ? 0 : 1);
       const group = new THREE.Group();
-      group.name = finish ? 'challenge-finish' : `checkpoint-${index + 1}`;
+      group.name = timingStart ? 'challenge-start' : finish ? 'challenge-finish' : `checkpoint-${checkpointIndex}`;
       group.position.set(gate.x, gate.y, gate.z);
       this.mountainEnvironment.add(group);
       const height = gate.maxHeight - gate.minHeight;
       for (const side of [-1, 1]) {
-        const post = this.mesh(frameGeometry, finish ? finishMaterial : checkpointMaterial, group);
+        const post = this.mesh(frameGeometry, material, group);
         post.position.set(0, (gate.minHeight + gate.maxHeight) / 2, side * gate.halfWidth);
         post.scale.set(frameThickness, height, frameThickness);
         post.castShadow = post.receiveShadow = false;
       }
       for (const y of [gate.minHeight, gate.maxHeight]) {
-        const bar = this.mesh(frameGeometry, finish ? finishMaterial : checkpointMaterial, group);
+        const bar = this.mesh(frameGeometry, material, group);
         bar.position.y = y;
         bar.scale.set(frameThickness, frameThickness, gate.halfWidth * 2);
         bar.castShadow = bar.receiveShadow = false;
@@ -1665,8 +1701,8 @@ export class SceneView {
         const targetVertices: number[] = [];
         for (let z = -gate.halfWidth; z < gate.halfWidth; z += step) {
           const nextZ = Math.min(gate.halfWidth, z + step);
-          const y = challengeTerrainHeight(challenge, gate.x, gate.z + z) - gate.y + LOW_ALTITUDE.scoringHeight;
-          const nextY = challengeTerrainHeight(challenge, gate.x, gate.z + nextZ) - gate.y + LOW_ALTITUDE.scoringHeight;
+          const y = challengeCollisionHeight(challenge, gate.x, gate.z + z) - gate.y + LOW_ALTITUDE.scoringHeight;
+          const nextY = challengeCollisionHeight(challenge, gate.x, gate.z + nextZ) - gate.y + LOW_ALTITUDE.scoringHeight;
           targetVertices.push(-0.6, y, z, 0.6, y, z, -0.6, nextY, nextZ,
             0.6, y, z, 0.6, nextY, nextZ, -0.6, nextY, nextZ);
         }
@@ -1675,15 +1711,104 @@ export class SceneView {
         target.name = 'low-altitude-scoring-height';
         group.add(target);
       }
-      const sign = this.label(finish ? '终点 FINISH' : `检查点 ${index + 1} · ${gate.x} m`, '#213d40', finish ? '#a6eee4' : '#ffe0a0', 512, 96);
+      const sign = this.label(timingStart ? '计时起点 START' : finish ? '终点 FINISH' : `检查点 ${checkpointIndex} · ${gate.x} m`, '#213d40', timingStart ? '#a7dfff' : finish ? '#a6eee4' : '#ffe0a0', 512, 96);
       sign.position.set(0, downhill ? gate.maxHeight + 9 : LOW_ALTITUDE.scoringHeight + 4, 0);
       sign.scale.set(downhill ? 40 : 24, downhill ? 7.5 : 4.5, 1);
       group.add(sign);
     }
-    const start = this.label(`${downhill ? '山顶起飞' : '低空起飞'} · 沿金色航线穿过全部检查点`, '#213d40', '#eef5f0', 768, 96);
-    start.position.set(10, course.startHeight + 14, challengeCenter(challenge, 0));
+    const start = this.label(downhill ? '20 m 高山弹射台 · 离地至少 50 m · 过蓝门计时' : '地面跑道起飞 · 沿河飞行 · 过蓝门计时', '#213d40', '#eef5f0', 1024, 96);
+    start.position.set(launch?.startX ?? 0, (launch?.y ?? 0) + 14, launch?.z ?? challengeCenter(challenge, 0));
     start.scale.set(40, 5, 1);
     this.mountainEnvironment.add(start);
+  }
+
+  private buildChallengeLaunch(challenge: ChallengeMode): void {
+    const launch = challengeLaunch(challenge);
+    if (!launch) return;
+    const catapult = launch.kind === 'catapult';
+    const unit = new THREE.BoxGeometry(1, 1, 1);
+    const steel = new THREE.MeshStandardMaterial({ color: 0x536571, metalness: 0.65, roughness: 0.5 });
+    const paint = new THREE.MeshStandardMaterial({ color: 0xf8e8ac, roughness: 0.85 });
+    const deckGeometry = new THREE.BoxGeometry(launch.length, launch.thickness, launch.width);
+    const positions = deckGeometry.getAttribute('position'), uv = deckGeometry.getAttribute('uv');
+    for (let i = 0; i < positions.count; i++) uv.setXY(i, positions.getX(i) / 24, positions.getZ(i) / 24);
+    const deckMaterial = this.groundMaterial(catapult ? 0x8f9796 : 0x525b60);
+    if (!catapult) {
+      deckMaterial.polygonOffset = true;
+      deckMaterial.polygonOffsetFactor = -1;
+      deckMaterial.polygonOffsetUnits = -1;
+    }
+    const deck = this.mesh(deckGeometry, deckMaterial, this.mountainEnvironment);
+    deck.name = catapult ? 'mountain-catapult-platform' : 'ground-runway';
+    deck.position.set((launch.startX + launch.endX) / 2, launch.y - launch.thickness / 2, launch.z);
+    for (const side of [-1, 1]) {
+      const edge = this.mesh(unit, paint, this.mountainEnvironment);
+      edge.position.set(deck.position.x, launch.y + 0.025, launch.z + side * (launch.width / 2 - 0.5));
+      edge.scale.set(launch.length, 0.05, 0.2);
+      if (catapult) {
+        const rail = this.mesh(unit, steel, this.mountainEnvironment);
+        rail.position.set(deck.position.x, launch.y + 0.12, launch.z + side * 0.45);
+        rail.scale.set(launch.length, 0.2, 0.12);
+        for (const x of [launch.startX + 1, deck.position.x, launch.endX - 1]) {
+          const z = launch.z + side * (launch.width / 2 - 1);
+          const ground = challengeTerrainHeight(challenge, x, z);
+          const height = launch.y - launch.thickness - ground;
+          const support = this.mesh(unit, steel, this.mountainEnvironment);
+          support.position.set(x, ground + height / 2, z);
+          support.scale.set(0.7, height, 0.7);
+        }
+      }
+    }
+    for (const x of [launch.startX + 2, launch.endX - 2]) {
+      const threshold = this.mesh(unit, paint, this.mountainEnvironment);
+      threshold.position.set(x, launch.y + 0.03, launch.z);
+      threshold.scale.set(0.5, 0.06, launch.width - 2);
+    }
+    if (catapult) {
+      this.mountainShuttle = this.mesh(unit, new THREE.MeshStandardMaterial({ color: 0xd99b47, metalness: 0.55, roughness: 0.5 }), this.mountainEnvironment);
+      this.mountainShuttle.name = 'mountain-catapult-shuttle';
+      this.mountainShuttle.position.set(launch.startX, launch.y + 0.32, launch.z);
+      this.mountainShuttle.scale.set(1.2, 0.25, 1.5);
+    } else {
+      for (let x = launch.startX + 12; x < launch.endX - 8; x += 24) {
+        const stripe = this.mesh(unit, paint, this.mountainEnvironment);
+        stripe.position.set(x, launch.y + 0.03, launch.z);
+        stripe.scale.set(10, 0.06, 0.35);
+      }
+      const number = this.label('09', '#f8e8ac', '#525b60', 192, 192, true);
+      number.name = 'runway-heading';
+      number.position.set(launch.startX + 24, launch.y + 0.07, launch.z);
+      number.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);
+      number.scale.set(7, 7, 1);
+      this.mountainEnvironment.add(number);
+    }
+  }
+
+  private buildChallengeRiver(): void {
+    const { minX, maxX, step } = challengeTerrainGrid;
+    const vertices: number[] = [], indices: number[] = [];
+    for (let x = minX, sample = 0; x <= maxX; x += step, sample++) {
+      const z = challengeRiverCenter(x), y = challengeRiverHeight(x);
+      vertices.push(x, y, z - CHALLENGE_RIVER.width / 2, x, y, z + CHALLENGE_RIVER.width / 2);
+      if (!sample) continue;
+      const a = (sample - 1) * 2;
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshStandardMaterial({ color: 0x3c9eaa, metalness: 0.25, roughness: 0.27, side: THREE.DoubleSide });
+    material.onBeforeCompile = shader => {
+      shader.uniforms.riverTime = this.waterTime;
+      shader.vertexShader = 'varying vec3 riverPosition;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nriverPosition = position;');
+      shader.fragmentShader = 'uniform float riverTime;\nvarying vec3 riverPosition;\n' + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\nfloat ripple = sin(riverPosition.x * 1.2 - riverTime * 2.0) * sin(riverPosition.z * 1.8 + riverTime * 0.7);\ndiffuseColor.rgb *= 1.0 + ripple * 0.1;');
+    };
+    const river = this.mesh(geometry, material, this.mountainEnvironment);
+    river.name = 'challenge-river';
+    river.castShadow = false;
   }
 
   private buildEnvironment(): void {
@@ -1700,9 +1825,10 @@ export class SceneView {
     lake.position.set(700, -0.035, 0);
     lake.castShadow = false;
     this.terrain.push(lake);
-    const ground = new THREE.MeshStandardMaterial({ color: 0x9caa81, roughness: 1, flatShading: true });
+    const ground = this.groundMaterial(0x9caa81);
     // The bank and shoreline share vertices; the central approach meets the rear deck exactly.
     const vertices: number[] = [], indices: number[] = [];
+    const groundUvs: number[] = [];
     const shore: number[] = [];
     for (let i = 0; i <= 60; i++) {
       const z = -100 + i * (200 / 60);
@@ -1713,6 +1839,7 @@ export class SceneView {
       for (let j = 0; j <= 24; j++) {
         const t = j / 24, blend = t * t * (3 - 2 * t);
         vertices.push(THREE.MathUtils.lerp(-132.5, edge, t), THREE.MathUtils.lerp(8, height, blend), z);
+        groundUvs.push(THREE.MathUtils.lerp(-132.5, edge, t) / 24, z / 24);
         if (i < 60 && j < 24) {
           const a = i * 25 + j;
           indices.push(a, a + 25, a + 1, a + 1, a + 25, a + 26);
@@ -1722,6 +1849,7 @@ export class SceneView {
     const bankGeometry = new THREE.BufferGeometry();
     bankGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     bankGeometry.setIndex(indices);
+    bankGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(groundUvs, 2));
     bankGeometry.computeVertexNormals();
     this.terrain.push(this.mesh(bankGeometry, ground, this.environment));
     const cliff = new THREE.MeshStandardMaterial({ color: 0xb7b59b, roughness: 1, flatShading: true });
@@ -1909,7 +2037,11 @@ export class SceneView {
   }
 
   private updateCatapult(): void {
-    if (this.environmentChallenge !== 'birdman') return;
+    if (this.environmentChallenge !== 'birdman') {
+      const launch = challengeLaunch(this.environmentChallenge);
+      if (this.mountainShuttle && launch) this.mountainShuttle.position.x = this.simulation?.launching ? clamp(this.aircraft.position.x, launch.startX, launch.endX) : launch.endX;
+      return;
+    }
     const attached = !this.simulation || this.simulation.launching;
     this.catapult.updateWorldMatrix(true, false);
     this.aircraft.updateWorldMatrix(true, false);
@@ -2000,6 +2132,21 @@ export class SceneView {
     const sim = this.simulation;
     if (!sim) return;
     const pilot = this.view === 'pilot';
+    if (this.view === 'chase') {
+      this.vector.set(1, 0, 0).applyQuaternion(this.aircraft.quaternion);
+      this.vector.y = 0;
+      if (this.vector.lengthSq() > 1e-6) this.chaseHeading.copy(this.vector).normalize();
+      const distance = Math.max(23, this.definition.mainWing.points[1].y * 1.8 / Math.max(0.65, this.width / this.height));
+      this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.chaseHeading, -distance);
+      this.desiredPosition.y += distance * 0.3;
+      this.desiredTarget.copy(this.aircraft.position).addScaledVector(this.chaseHeading, 6);
+      this.desiredTarget.y += 1;
+      this.camera.position.copy(this.desiredPosition);
+      this.target.copy(this.desiredTarget);
+      this.camera.up.copy(UP);
+      this.camera.lookAt(this.target);
+      return;
+    }
     if (pilot) {
       this.desiredPosition.set(this.definition.cockpit.position + this.driver.position.x + 0.79, 0.32, 0);
       this.desiredTarget.set(35, 0.6, 0);
@@ -2158,13 +2305,14 @@ export class SceneView {
 
   private beginSplash(position: THREE.Vector3): void {
     this.splashAge = 0;
+    this.splashSurface = this.environmentChallenge === 'low-altitude' ? challengeRiverHeight(position.x) : 0;
     this.splash.visible = this.ring.visible = true;
-    this.ring.position.set(position.x, 0.035, position.z);
+    this.ring.position.set(position.x, this.splashSurface + 0.035, position.z);
     for (let i = 0; i < PARTICLES; i++) {
       const index = i * 3, angle = i * 2.399963;
       const speed = 1.4 + (i % 7) * 0.4;
       this.splashPositions[index] = position.x;
-      this.splashPositions[index + 1] = 0.08;
+      this.splashPositions[index + 1] = this.splashSurface + 0.08;
       this.splashPositions[index + 2] = position.z;
       this.splashVelocities[index] = Math.cos(angle) * speed;
       this.splashVelocities[index + 1] = 2 + (i % 9) * 0.5;
@@ -2188,7 +2336,7 @@ export class SceneView {
       const index = i * 3;
       this.splashVelocities[index + 1] -= 9.81 * dt;
       this.splashPositions[index] += this.splashVelocities[index] * dt;
-      this.splashPositions[index + 1] = Math.max(0.015, this.splashPositions[index + 1] + this.splashVelocities[index + 1] * dt);
+      this.splashPositions[index + 1] = Math.max(this.splashSurface + 0.015, this.splashPositions[index + 1] + this.splashVelocities[index + 1] * dt);
       this.splashPositions[index + 2] += this.splashVelocities[index + 2] * dt;
     }
     this.splashGeometry.getAttribute('position').needsUpdate = true;
