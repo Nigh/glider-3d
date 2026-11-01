@@ -27,7 +27,10 @@ declare global {
           midpoint: { x: number; y: number; z: number };
         }>;
         support: { visible: boolean; area: number; mass: number };
-        editor: { handles: { index: number; side: number; x: number; y: number }[] };
+        editor: {
+          handles: { index: number; side: number; x: number; y: number }[];
+          segments: { id: string; side: number; x1: number; y1: number; x2: number; y2: number }[];
+        };
       };
     };
   }
@@ -282,7 +285,8 @@ test.describe('桌面完整交互', () => {
       const t = window.glider.telemetry!;
       return {
         initial: Number(t.initialEnergy),
-        total: Number(t.potentialEnergy) + Number(t.kineticEnergy) + Number(t.dissipatedEnergy),
+        total: Number(t.potentialEnergy) + Number(t.kineticEnergy) + Number(t.dissipatedEnergy)
+          + Number(t.fuelEnergyRemoved) - Number(t.propulsionWork) - Number(t.controlWork),
         dissipated: Number(t.dissipatedEnergy),
       };
     });
@@ -669,10 +673,10 @@ test('翼弦线段整体拖动保留弦长，垂直轻吸附可用Ctrl绕过', a
     expect((await aircraft(page)).mainWing.points).toEqual(before);
   }
   const points = (await aircraft(page)).mainWing.points;
-  const positions = await page.evaluate(() => window.glider.scene.editor.handles);
-  const rootFront = positions.find(p => p.index === 0 && p.side === 1)!;
-  const rootBack = positions.find(p => p.index === 3 && p.side === 1)!;
-  const pixelsPerMetre = (rootBack.y - rootFront.y) / (points[3].x - points[0].x);
+  const segments = await page.evaluate(() => window.glider.scene.editor.segments);
+  const root = segments.find(segment => segment.id === '14' && segment.side === 1)!;
+  // 外伸手柄可避让；用真实根弦端点而非手柄显示位置计算投影比例。
+  const pixelsPerMetre = (root.y2 - root.y1) / (points[3].x - points[0].x);
   const dy = (0.309 - points[1].x) * pixelsPerMetre;
   await dragHandle(page, 1, 0, dy);
   expect((await aircraft(page)).mainWing.points[1].x).toBeCloseTo(0.3, 6);

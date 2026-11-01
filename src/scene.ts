@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
-import { LAUNCH, PLATFORM, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
+import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
 
@@ -13,6 +13,25 @@ const PARTICLES = 64;
 type EditorTarget = 'mainWing' | 'horizontalTail' | 'verticalTail' | 'assembly' | 'propulsion' | null;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+type PhysicsSection = FlightSimulation['structure']['sections'][number];
+type WingRenderSection = {
+  wingIndex: number; side: number; spanStart: number; spanEnd: number;
+  vertexStart: number; rows: number; rootCap: number; tipCap: number;
+  skin: number[]; rootIndices: number[]; tipIndices: number[];
+  previous: WingRenderSection | null; next: WingRenderSection | null;
+  physics: PhysicsSection | null; bodyId: number; previousBodyId: number;
+  previousRoot: THREE.Vector3; previousTip: THREE.Vector3;
+  previousRootRotation: THREE.Quaternion; previousTipRotation: THREE.Quaternion;
+  root: THREE.Vector3; tip: THREE.Vector3;
+  rootRotation: THREE.Quaternion; tipRotation: THREE.Quaternion;
+  referenceRoot: THREE.Vector3; referenceTip: THREE.Vector3;
+};
+type FragmentRender = {
+  id: number; wingIndex: number; mesh: THREE.Mesh; hinge: THREE.LineSegments;
+  previousPosition: THREE.Vector3; previousQuaternion: THREE.Quaternion; previousCG: THREE.Vector3;
+  cg: THREE.Vector3; captured: boolean;
+};
 
 /** 湖区常驻；山谷按挑战切换释放，动态飞机与轨迹缓冲区重复使用。 */
 export class SceneView {
@@ -41,7 +60,7 @@ export class SceneView {
   private readonly propulsionBounds = new THREE.Box3();
   private readonly aircraftMaterials = {
     ivory: new THREE.MeshStandardMaterial({ color: 0xf4f0dc, roughness: 0.65, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
-    main: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, metalness: 0.02, flatShading: true, side: THREE.DoubleSide, vertexColors: true }),
+    main: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, metalness: 0.02, flatShading: false, side: THREE.DoubleSide, vertexColors: true }),
     orange: new THREE.MeshStandardMaterial({ color: 0xd97343, roughness: 0.7, flatShading: true, side: THREE.DoubleSide }),
     graphite: new THREE.MeshStandardMaterial({ color: 0x344740, roughness: 0.67, metalness: 0.2, flatShading: true }),
     skin: new THREE.MeshStandardMaterial({ color: 0xd2a07e, roughness: 1, flatShading: true }),
@@ -57,14 +76,25 @@ export class SceneView {
   private readonly wingMeshes: THREE.Mesh[] = [];
   private readonly wingParameters = new Float64Array(36).fill(NaN);
   private readonly wingNeutral: Float32Array[] = [];
-  private readonly wingNormals: Float32Array[] = [];
   private readonly wingHinges: Float32Array[] = [];
   private readonly wingMovable: Uint8Array[] = [];
   private readonly wingAxes: THREE.Vector3[][] = [];
   private readonly wingAngles = new Float64Array(3).fill(NaN);
+  private readonly wingSections: WingRenderSection[][] = [[], [], []];
+  private readonly wingNormalGeometry: THREE.BufferGeometry[] = [];
+  private readonly fragments: FragmentRender[] = [];
+  private readonly deformationCenter = new THREE.Vector3();
+  private readonly controlRotation = new THREE.Quaternion();
+  private readonly deformationRotation = new THREE.Quaternion();
+  private readonly deformationPoint = new THREE.Vector3();
+  private readonly deformationReference = new THREE.Vector3();
+  private readonly deformationRootTangent = new THREE.Vector3();
+  private readonly deformationTipTangent = new THREE.Vector3();
+  private readonly deformationAxis = new THREE.Vector3();
+  private readonly deformationHinge = new THREE.Vector3();
+  private renderBlend = 1;
   private readonly hingeLines: THREE.LineSegments[] = [];
   private readonly surfaceParameters = new Float64Array(3).fill(NaN);
-  private readonly surfaceRotation = new THREE.Matrix4();
   private readonly wingBaseColor = new THREE.Color(0xf4f0dc);
   private readonly wingTipColor = new THREE.Color(0xd97343);
   private beam!: THREE.Mesh;
@@ -363,6 +393,68 @@ export class SceneView {
       challenge: this.environmentChallenge,
       terrainGrid: this.environmentChallenge === 'birdman' ? null : challengeTerrainGrid,
       wingTrail: { active: this.wingTrailActive, segments: this.wingTrailGeometry.drawRange.count / 6, opacity: this.wingTrail.material.opacity, style: 'ribbon' },
+      structureRendering: this.structureDiagnostics(),
+    };
+  }
+
+  /** 按需快照，不进入逐帧路径；浏览器 smoke 可检查接缝、法线、封口、归属与几何复用。 */
+  private structureDiagnostics() {
+    const point = (value: THREE.Vector3) => ({ x: value.x, y: value.y, z: value.z });
+    const world = (section: WingRenderSection, value: THREE.Vector3) => {
+      const fragment = this.fragmentRender(section.bodyId);
+      const result = value.clone();
+      if (fragment) result.sub(fragment.cg).applyQuaternion(fragment.mesh.quaternion).add(fragment.mesh.position);
+      else result.sub(this.simulation ? this.renderCG : this.designCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+      return point(result);
+    };
+    return {
+      smoothShading: !this.aircraftMaterials.main.flatShading, displayStep: 0.2,
+      meshCount: this.wingMeshes.length + this.fragments.length, blend: this.renderBlend,
+      wings: this.wingSections.map((sections, index) => {
+        const geometry = this.wingMeshes[index].geometry;
+        const positions = geometry.getAttribute('position'), normals = geometry.getAttribute('normal');
+        let maxSeamGap = 0, maxNormalError = 0, maxDeflection = 0, caps = 0, finite = true;
+        for (let vertex = 0; vertex < positions.count; vertex++) {
+          finite &&= Number.isFinite(positions.getX(vertex)) && Number.isFinite(positions.getY(vertex)) && Number.isFinite(positions.getZ(vertex))
+            && Number.isFinite(normals.getX(vertex)) && Number.isFinite(normals.getY(vertex)) && Number.isFinite(normals.getZ(vertex));
+          maxNormalError = Math.max(maxNormalError, Math.abs(Math.hypot(normals.getX(vertex), normals.getY(vertex), normals.getZ(vertex)) - 1));
+        }
+        for (const section of sections) {
+          maxDeflection = Math.max(maxDeflection, section.root.distanceTo(section.referenceRoot), section.tip.distanceTo(section.referenceTip));
+          if (!section.previous || section.previous.bodyId !== section.bodyId) caps++;
+          if (!section.next || section.next.bodyId !== section.bodyId) caps++;
+          if (!section.next || section.next.bodyId !== section.bodyId) continue;
+          for (let k = 0; k < 32; k++) {
+            const a = section.vertexStart + section.rows * 32 + k, b = section.next.vertexStart + k;
+            maxSeamGap = Math.max(maxSeamGap, Math.hypot(positions.getX(a) - positions.getX(b), positions.getY(a) - positions.getY(b), positions.getZ(a) - positions.getZ(b)));
+          }
+        }
+        return {
+          wingKey: index === 0 ? 'mainWing' : index === 1 ? 'horizontalTail' : 'verticalTail',
+          geometryId: geometry.uuid, vertices: positions.count, attachedTriangles: geometry.drawRange.count / 3,
+          sectionCount: sections.length, caps, finite, maxSeamGap, maxNormalError, maxDeflection,
+          bounds: geometry.boundingBox ? { min: point(geometry.boundingBox.min), max: point(geometry.boundingBox.max) } : null,
+          sections: sections.map(section => ({
+            id: section.physics?.id ?? null, side: section.side, spanStart: section.spanStart, spanEnd: section.spanEnd,
+            bodyId: section.bodyId, rows: section.rows,
+            rootWorld: world(section, section.root), tipWorld: world(section, section.tip),
+            root: point(section.root), tip: point(section.tip),
+            controlDeflection: section.physics?.controlDeflection ?? 0,
+            rootCap: !section.previous || section.previous.bodyId !== section.bodyId,
+            tipCap: !section.next || section.next.bodyId !== section.bodyId,
+          })),
+        };
+      }),
+      fragments: this.fragments.map(fragment => ({
+        id: fragment.id, wingIndex: fragment.wingIndex, geometryId: fragment.mesh.geometry.uuid,
+        triangles: fragment.mesh.geometry.drawRange.count / 3, position: point(fragment.mesh.position),
+        quaternion: { x: fragment.mesh.quaternion.x, y: fragment.mesh.quaternion.y, z: fragment.mesh.quaternion.z, w: fragment.mesh.quaternion.w },
+        cg: point(fragment.cg),
+        landed: this.simulation?.fragments.find(body => body.id === fragment.id)?.landed ?? false,
+      })),
+      applicationMarkers: this.applicationMarkers.map((marker, index) => ({
+        bodyId: this.simulation?.surfaces[index]?.bodyId ?? null, visible: marker.visible, position: point(marker.position),
+      })),
     };
   }
 
@@ -1007,6 +1099,7 @@ export class SceneView {
     this.designLiftDirection.copy(properties.aerodynamics.lift);
     this.designDragDirection.copy(properties.aerodynamics.drag);
     this.body.position.copy(this.simulation?.telemetry.cg ?? this.designCG).negate();
+    this.clearFragments();
     for (let i = 0; i < 3; i++) {
       const key: WingKey = i === 0 ? 'mainWing' : i === 1 ? 'horizontalTail' : 'verticalTail';
       const wing = d[key], origin = wingOrigin(d, key);
@@ -1052,6 +1145,7 @@ export class SceneView {
       this.aircraft.rotation.set(0, 0, this.editorTarget ? 0 : -LAUNCH.slope);
       this.driver.position.set(0, 0, 0);
     }
+    this.syncWingPhysics();
     this.updateControlSurfaces();
     if (!this.simulation && this.editorTarget === 'assembly' && this.editorPointerId < 0) this.centerAssemblyCamera();
     if (!this.simulation && this.editorTarget === 'propulsion') {
@@ -1275,6 +1369,10 @@ export class SceneView {
     this.editorDirty = true;
     this.applyAircraft();
     this.simulation = sim;
+    this.clearFragments();
+    this.syncWingPhysics();
+    this.renderBlend = 1;
+    this.wingAngles.fill(NaN);
     this.setEnvironmentChallenge(sim?.challenge ?? 'birdman');
     this.captureFlightState();
     this.trailCount = this.trailIndex = 0;
@@ -1329,6 +1427,7 @@ export class SceneView {
     }
     this.updateControlSurfaces();
     this.updateCenters();
+    this.metrics.memory = this.geometryMemory();
   }
 
   cameraView(name: string): void {
@@ -1397,6 +1496,25 @@ export class SceneView {
     this.previousQuaternion.copy(sim.quaternion);
     this.previousCG.copy(sim.telemetry.cg);
     this.renderCG.copy(sim.telemetry.cg);
+    for (const sections of this.wingSections) {
+      for (const section of sections) {
+        const physical = section.physics;
+        if (!physical) continue;
+        section.previousBodyId = physical.bodyId;
+        section.previousRoot.copy(physical.root.position);
+        section.previousTip.copy(physical.tip.position);
+        section.previousRootRotation.copy(physical.root.quaternion);
+        section.previousTipRotation.copy(physical.tip.quaternion);
+      }
+    }
+    for (const body of sim.fragments) {
+      const fragment = this.fragmentRender(body.id);
+      if (!fragment) continue;
+      fragment.previousPosition.copy(body.position);
+      fragment.previousQuaternion.copy(body.quaternion);
+      fragment.previousCG.copy(body.cg);
+      fragment.captured = true;
+    }
   }
 
   render(dt: number, alpha = 1): void {
@@ -1409,6 +1527,7 @@ export class SceneView {
     const sim = this.simulation;
     if (sim) {
       const blend = sim.ended || sim.replayFinished ? 1 : clamp(alpha, 0, 1);
+      this.renderBlend = blend;
       this.aircraft.position.lerpVectors(this.previousPosition, sim.position, blend);
       this.aircraft.quaternion.slerpQuaternions(this.previousQuaternion, sim.quaternion, blend);
       this.renderCG.lerpVectors(this.previousCG, sim.telemetry.cg, blend);
@@ -1459,6 +1578,7 @@ export class SceneView {
     window.removeEventListener('blur', this.cancelEditorDrag);
     this.controls.dispose();
     this.editorOverlay.remove();
+    for (const geometry of this.wingNormalGeometry) geometry.dispose();
     this.release(this.scene);
     this.light.shadow.dispose();
     this.renderer.dispose();
@@ -1482,116 +1602,354 @@ export class SceneView {
     mesh.quaternion.setFromUnitVectors(UP, this.desiredPosition.copy(b).sub(a).normalize());
   }
 
-  /** 四点平面形沿展向插值；NACA 厚度封口，正安装角使前缘相对后缘抬高。 */
+  /** 结构边界独立顶点；段内 0.2 m 显示细分，断口使用独立封口顶点。 */
   private wingGeometry(wing: Wing, rootX: number, height: number, incidence: number, index: number): THREE.BufferGeometry {
-    const vertices: number[] = [], indices: number[] = [], hinges: number[] = [], movable: number[] = [], hingeLines: number[] = [];
+    const vertices: number[] = [], indices: number[] = [], hinges: number[] = [], movable: number[] = [];
+    const sections = this.wingSections[index];
+    sections.length = 0;
     const vertical = index === 2, fraction = wing.controlSurface, hingeFraction = 1 - fraction;
-    const chordSteps = 16, spanSteps = 5;
-    const profileCount = chordSteps * 2;
-    const c = Math.cos(incidence * DEG), s = Math.sin(incidence * DEG);
-    const dihedral = Math.tan(wing.dihedral * DEG);
-    const sides = vertical ? [1] : [-1, 1];
+    const profileCount = 32, chordSteps = 16;
+    const c = Math.cos(incidence * DEG), s = Math.sin(incidence * DEG), dihedral = Math.tan(wing.dihedral * DEG);
+    const halfSpan = wing.points[1].y;
+    const rootChord = wing.points[3].x - wing.points[0].x, tipChord = wing.points[2].x - wing.points[1].x;
+    const rootHinge = -wing.points[0].x - hingeFraction * rootChord;
+    const tipHinge = -wing.points[1].x - hingeFraction * tipChord;
     const axes: THREE.Vector3[] = [];
-    for (const side of sides) {
-      const offset = vertices.length / 3;
-      const rootChord = wing.points[3].x - wing.points[0].x;
-      const tipChord = wing.points[2].x - wing.points[1].x;
-      const rootHinge = -wing.points[0].x - hingeFraction * rootChord;
-      const tipHinge = -wing.points[1].x - hingeFraction * tipChord;
-      const spanLength = wing.points[1].y;
-      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, spanLength, 0).normalize())
-        : new THREE.Vector3((tipHinge - rootHinge) * c, (tipHinge - rootHinge) * s + spanLength * dihedral, spanLength * side).normalize());
-      for (let row = 0; row <= spanSteps; row++) {
-        const t = row / spanSteps;
-        const leading = THREE.MathUtils.lerp(wing.points[0].x, wing.points[1].x, t);
-        const trailing = THREE.MathUtils.lerp(wing.points[3].x, wing.points[2].x, t);
-        const span = THREE.MathUtils.lerp(wing.points[0].y, wing.points[1].y, t);
-        const chord = trailing - leading;
-        const hingeX = -leading - hingeFraction * chord;
-        const hingeY = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * hingeFraction);
-        const hx = rootX + (vertical ? fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX : hingeX * c - hingeY * s);
-        const hy = height + (vertical ? span : hingeX * s + hingeY * c + span * dihedral);
-        const hz = vertical ? 0 : span * side;
-        if (row === 0 || row === spanSteps) hingeLines.push(hx, hy + (vertical ? 0 : chord * 0.055), hz + (vertical ? chord * 0.055 : 0));
-        for (let k = 0; k < profileCount; k++) {
-          const upper = k <= chordSteps;
-          const j = upper ? k : profileCount - k;
-          // Put an exact vertex on the hinge so the fixed panel never bends.
-          const u = fraction > 0 && fraction < 1
-            ? j <= 12 ? hingeFraction * (1 - Math.cos(j / 12 * Math.PI)) / 2
-              : hingeFraction + fraction * (1 - Math.cos((j - 12) / 4 * Math.PI)) / 2
-            : (1 - Math.cos(j / chordSteps * Math.PI)) / 2;
-          const thickness = 5 * 0.105 * chord * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
-          const camber = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u);
-          const x = -leading - u * chord;
-          const y = camber + (upper ? thickness : -thickness);
-          if (vertical) vertices.push(rootX + x, height + span, y);
-          else vertices.push(rootX + x * c - y * s, height + x * s + y * c + span * dihedral, span * side);
-          hinges.push(hx, hy, hz);
-          movable.push(fraction > 0 && u >= hingeFraction ? 1 : 0);
+    for (const side of vertical ? [1] : [-1, 1]) {
+      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, halfSpan, 0).normalize())
+        : new THREE.Vector3((tipHinge - rootHinge) * c, (tipHinge - rootHinge) * s + halfSpan * dihedral, halfSpan * side).normalize());
+      let previous: WingRenderSection | null = null;
+      for (let start = 0; start < halfSpan - 1e-10; start += SURFACE_STEP) {
+        const end = Math.min(start + SURFACE_STEP, halfSpan), rows = Math.max(1, Math.ceil((end - start) / 0.2));
+        const section: WingRenderSection = {
+          wingIndex: index, side, spanStart: start, spanEnd: end, vertexStart: vertices.length / 3, rows,
+          rootCap: 0, tipCap: 0, skin: [], rootIndices: [], tipIndices: [], previous, next: null,
+          physics: null, bodyId: 0, previousBodyId: -1,
+          previousRoot: new THREE.Vector3(), previousTip: new THREE.Vector3(),
+          previousRootRotation: new THREE.Quaternion(), previousTipRotation: new THREE.Quaternion(),
+          root: new THREE.Vector3(), tip: new THREE.Vector3(),
+          rootRotation: new THREE.Quaternion(), tipRotation: new THREE.Quaternion(),
+          referenceRoot: new THREE.Vector3(), referenceTip: new THREE.Vector3(),
+        };
+        if (previous) previous.next = section;
+        previous = section;
+        sections.push(section);
+        for (let row = 0; row <= rows; row++) {
+          const span = THREE.MathUtils.lerp(start, end, row / rows), t = span / halfSpan;
+          const leading = THREE.MathUtils.lerp(wing.points[0].x, wing.points[1].x, t);
+          const trailing = THREE.MathUtils.lerp(wing.points[3].x, wing.points[2].x, t), chord = trailing - leading;
+          const hingeX = -leading - hingeFraction * chord;
+          const hingeY = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * hingeFraction);
+          const hx = rootX + (vertical ? fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX : hingeX * c - hingeY * s);
+          const hy = height + (vertical ? span : hingeX * s + hingeY * c + span * dihedral);
+          const hz = vertical ? 0 : span * side;
+          if (row === 0 || row === rows) {
+            const reference = row === 0 ? section.referenceRoot : section.referenceTip;
+            const quarter = -leading - chord * 0.25;
+            reference.set(rootX + quarter * c, vertical ? height + span : height + quarter * s + span * dihedral, vertical ? 0 : span * side);
+          }
+          for (let k = 0; k < profileCount; k++) {
+            const upper = k <= chordSteps, j = upper ? k : profileCount - k;
+            const u = fraction > 0 && fraction < 1
+              ? j <= 12 ? hingeFraction * (1 - Math.cos(j / 12 * Math.PI)) / 2
+                : hingeFraction + fraction * (1 - Math.cos((j - 12) / 4 * Math.PI)) / 2
+              : (1 - Math.cos(j / chordSteps * Math.PI)) / 2;
+            const thickness = 5 * 0.105 * chord * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
+            const camber = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u);
+            const x = -leading - u * chord, y = camber + (upper ? thickness : -thickness);
+            if (vertical) vertices.push(rootX + x, height + span, y);
+            else vertices.push(rootX + x * c - y * s, height + x * s + y * c + span * dihedral, span * side);
+            hinges.push(hx, hy, hz);
+            movable.push(fraction > 0 && u >= hingeFraction ? 1 : 0);
+          }
         }
-      }
-      for (let row = 0; row < spanSteps; row++) {
-        for (let k = 0; k < profileCount; k++) {
-          const a = offset + row * profileCount + k, b = offset + row * profileCount + (k + 1) % profileCount;
-          if (vertical || side < 0) indices.push(a, b + profileCount, b, a, a + profileCount, b + profileCount);
-          else indices.push(a, b, b + profileCount, a, b + profileCount, a + profileCount);
+        for (let row = 0; row < rows; row++) {
+          for (let k = 0; k < profileCount; k++) {
+            const a = section.vertexStart + row * profileCount + k, b = section.vertexStart + row * profileCount + (k + 1) % profileCount;
+            if (vertical || side < 0) section.skin.push(a, b + profileCount, b, a, a + profileCount, b + profileCount);
+            else section.skin.push(a, b, b + profileCount, a, b + profileCount, a + profileCount);
+          }
         }
-      }
-      for (const row of [0, spanSteps]) {
-        const base = offset + row * profileCount;
-        for (let k = 1; k < profileCount - 1; k++) {
-          const reverse = (row === 0) !== (vertical || side < 0);
-          if (reverse) indices.push(base, base + k, base + k + 1);
-          else indices.push(base, base + k + 1, base + k);
+        for (let cap = 0; cap < 2; cap++) {
+          const base = vertices.length / 3, source = section.vertexStart + (cap === 0 ? 0 : rows * profileCount);
+          if (cap === 0) section.rootCap = base;
+          else section.tipCap = base;
+          for (let k = 0; k < profileCount; k++) {
+            const offset = (source + k) * 3;
+            vertices.push(vertices[offset], vertices[offset + 1], vertices[offset + 2]);
+            hinges.push(hinges[offset], hinges[offset + 1], hinges[offset + 2]);
+            movable.push(movable[source + k]);
+          }
+          const capIndices = cap === 0 ? section.rootIndices : section.tipIndices;
+          for (let k = 1; k < profileCount - 1; k++) {
+            const reverse = (cap === 0) !== (vertical || side < 0);
+            if (reverse) capIndices.push(base, base + k, base + k + 1);
+            else capIndices.push(base, base + k + 1, base + k);
+          }
         }
+        indices.push(...section.skin, ...section.rootIndices, ...section.tipIndices);
       }
     }
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(vertices.length), 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(indices.length), 1).setUsage(THREE.DynamicDrawUsage));
+    this.wingNormalGeometry[index]?.dispose();
+    const normalGeometry = new THREE.BufferGeometry();
+    normalGeometry.setAttribute('position', geometry.getAttribute('position'));
+    normalGeometry.setAttribute('normal', geometry.getAttribute('normal'));
+    normalGeometry.setIndex(indices);
+    this.wingNormalGeometry[index] = normalGeometry;
     this.wingNeutral[index] = new Float32Array(vertices);
-    this.wingNormals[index] = new Float32Array(geometry.getAttribute('normal').array);
     this.wingHinges[index] = new Float32Array(hinges);
     this.wingMovable[index] = new Uint8Array(movable);
     this.wingAxes[index] = axes;
-    (geometry.getAttribute('position') as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
-    (geometry.getAttribute('normal') as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
     this.hingeLines[index].geometry.dispose();
-    this.hingeLines[index].geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(hingeLines, 3));
+    this.hingeLines[index].geometry = new THREE.BufferGeometry()
+      .setAttribute('position', geometry.getAttribute('position'))
+      .setIndex(new THREE.BufferAttribute(new Uint32Array(sections.reduce((count, section) => count + section.rows * 2, 0)), 1).setUsage(THREE.DynamicDrawUsage));
     this.hingeLines[index].visible = fraction > 0 && fraction < 1;
-    geometry.computeBoundingSphere();
-    if (geometry.boundingSphere) geometry.boundingSphere.radius += Math.max(wing.points[3].x - wing.points[0].x, wing.points[2].x - wing.points[1].x);
+    this.writeWingIndices(index, 0, geometry, this.hingeLines[index].geometry);
     return geometry;
   }
 
+  private writeWingIndices(index: number, bodyId: number, geometry: THREE.BufferGeometry, hinge: THREE.BufferGeometry): void {
+    const triangles = geometry.index!.array, lines = hinge.index!.array;
+    let count = 0, lineCount = 0;
+    for (const section of this.wingSections[index]) {
+      if (section.bodyId !== bodyId) continue;
+      for (const vertex of section.skin) triangles[count++] = vertex;
+      if (!section.previous || section.previous.bodyId !== bodyId) {
+        for (const vertex of section.rootIndices) triangles[count++] = vertex;
+      }
+      if (!section.next || section.next.bodyId !== bodyId) {
+        for (const vertex of section.tipIndices) triangles[count++] = vertex;
+      }
+      for (let row = 0; row < section.rows; row++) {
+        lines[lineCount++] = section.vertexStart + row * 32 + 12;
+        lines[lineCount++] = section.vertexStart + (row + 1) * 32 + 12;
+      }
+    }
+    geometry.setDrawRange(0, count);
+    hinge.setDrawRange(0, lineCount);
+    geometry.index!.needsUpdate = hinge.index!.needsUpdate = true;
+  }
+
+  private clearFragments(): void {
+    for (const fragment of this.fragments) {
+      this.scene.remove(fragment.mesh, fragment.hinge);
+      fragment.mesh.geometry.dispose();
+      fragment.hinge.geometry.dispose();
+    }
+    this.fragments.length = 0;
+  }
+
+  private syncWingPhysics(): void {
+    const sim = this.simulation;
+    for (let index = 0; index < 3; index++) {
+      const key = index === 0 ? 'mainWing' : index === 1 ? 'horizontalTail' : 'verticalTail';
+      for (const section of this.wingSections[index]) {
+        section.physics = sim?.structure.sections.find(physical => physical.wingKey === key && physical.side === section.side
+          && Math.abs(physical.spanStart - section.spanStart) < 1e-8) ?? null;
+        section.previousBodyId = -1;
+      }
+    }
+  }
+
+  private fragmentRender(id: number): FragmentRender | undefined {
+    for (const fragment of this.fragments) if (fragment.id === id) return fragment;
+    return undefined;
+  }
+
+  private ensureFragments(): boolean {
+    const sim = this.simulation;
+    if (!sim) return false;
+    let changed = false;
+    for (let index = this.fragments.length - 1; index >= 0; index--) {
+      const fragment = this.fragments[index];
+      let present = false;
+      for (const body of sim.fragments) if (body.id === fragment.id) { present = true; break; }
+      if (present) continue;
+      this.scene.remove(fragment.mesh, fragment.hinge);
+      fragment.mesh.geometry.dispose();
+      fragment.hinge.geometry.dispose();
+      this.fragments.splice(index, 1);
+      changed = true;
+    }
+    for (const body of sim.fragments) {
+      if (this.fragmentRender(body.id)) continue;
+      let wingIndex = -1;
+      for (let index = 0; index < 3 && wingIndex < 0; index++) {
+        for (const section of this.wingSections[index]) if (section.physics?.bodyId === body.id) { wingIndex = index; break; }
+      }
+      if (wingIndex < 0) continue;
+      const source = this.wingMeshes[wingIndex].geometry;
+      const geometry = new THREE.BufferGeometry();
+      for (const name in source.attributes) geometry.setAttribute(name, source.getAttribute(name));
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(source.index!.count), 1).setUsage(THREE.DynamicDrawUsage));
+      const hingeGeometry = new THREE.BufferGeometry().setAttribute('position', source.getAttribute('position'))
+        .setIndex(new THREE.BufferAttribute(new Uint32Array(this.hingeLines[wingIndex].geometry.index!.count), 1).setUsage(THREE.DynamicDrawUsage));
+      const mesh = this.mesh(geometry, this.aircraftMaterials.main, this.scene);
+      mesh.name = `wing-fragment-${body.id}`;
+      const hinge = new THREE.LineSegments(hingeGeometry, this.hingeLines[wingIndex].material);
+      hinge.name = `${mesh.name}-hinge`;
+      this.scene.add(hinge);
+      this.fragments.push({ id: body.id, wingIndex, mesh, hinge, previousPosition: body.position.clone(),
+        previousQuaternion: body.quaternion.clone(), previousCG: body.cg.clone(), cg: body.cg.clone(), captured: false });
+      changed = true;
+    }
+    return changed;
+  }
+
+  private deformPoint(section: WingRenderSection, point: THREE.Vector3, t: number): void {
+    this.deformationRotation.slerpQuaternions(section.rootRotation, section.tipRotation, t);
+    this.deformationReference.lerpVectors(section.referenceRoot, section.referenceTip, t);
+    point.sub(this.deformationReference).applyQuaternion(this.deformationRotation);
+    this.deformationRootTangent.subVectors(section.referenceTip, section.referenceRoot).applyQuaternion(section.rootRotation);
+    this.deformationTipTangent.subVectors(section.referenceTip, section.referenceRoot).applyQuaternion(section.tipRotation);
+    const t2 = t * t, t3 = t2 * t;
+    point.addScaledVector(section.root, 2 * t3 - 3 * t2 + 1)
+      .addScaledVector(section.tip, -2 * t3 + 3 * t2)
+      .addScaledVector(this.deformationRootTangent, t3 - 2 * t2 + t)
+      .addScaledVector(this.deformationTipTangent, t3 - t2);
+  }
+
+  /** 舵面先在中性翼面旋转，再组合物理弹性。断片保持物理冻结舵角。 */
   private updateControlSurfaces(): void {
-    const controls = this.simulation?.controlDeflections;
+    const sim = this.simulation, controls = sim?.controlDeflections;
+    let topologyChanged = this.ensureFragments();
+    if (sim) {
+      for (const body of sim.fragments) {
+        const fragment = this.fragmentRender(body.id);
+        if (!fragment) continue;
+        const blend = fragment.captured ? this.renderBlend : 1;
+        fragment.mesh.position.lerpVectors(fragment.previousPosition, body.position, blend);
+        fragment.mesh.quaternion.slerpQuaternions(fragment.previousQuaternion, body.quaternion, blend);
+        fragment.cg.lerpVectors(fragment.previousCG, body.cg, blend);
+        fragment.hinge.position.copy(fragment.mesh.position);
+        fragment.hinge.quaternion.copy(fragment.mesh.quaternion);
+      }
+    }
     for (let index = 0; index < 3; index++) {
       const angle = index === 0 ? controls?.aileron ?? 0 : index === 1 ? controls?.elevator ?? 0 : controls?.rudder ?? 0;
-      if (angle === this.wingAngles[index]) continue;
+      const sections = this.wingSections[index], geometry = this.wingMeshes[index].geometry;
+      if (!sim && angle === this.wingAngles[index]) continue;
       this.wingAngles[index] = angle;
-      const geometry = this.wingMeshes[index].geometry;
       const position = geometry.getAttribute('position') as THREE.BufferAttribute;
-      const normal = geometry.getAttribute('normal') as THREE.BufferAttribute;
-      const neutral = this.wingNeutral[index], normals = this.wingNormals[index], hinges = this.wingHinges[index];
-      const axes = this.wingAxes[index], count = position.count / axes.length;
-      for (let side = 0; side < axes.length; side++) {
-        const direction = index === 0 ? -1 : index === 1 ? side === 0 ? 1 : -1 : 1;
-        this.surfaceRotation.makeRotationAxis(axes[side], angle * direction);
-        for (let vertex = side * count; vertex < (side + 1) * count; vertex++) {
-          if (!this.wingMovable[index][vertex]) continue;
-          const offset = vertex * 3;
-          this.vector2.fromArray(hinges, offset);
-          this.vector.fromArray(neutral, offset).sub(this.vector2).applyMatrix4(this.surfaceRotation).add(this.vector2);
-          position.setXYZ(vertex, this.vector.x, this.vector.y, this.vector.z);
-          this.vector.fromArray(normals, offset).applyMatrix4(this.surfaceRotation);
-          normal.setXYZ(vertex, this.vector.x, this.vector.y, this.vector.z);
+      const neutral = this.wingNeutral[index], hinges = this.wingHinges[index];
+      for (const section of sections) {
+        const physical = section.physics, bodyId = physical?.bodyId ?? 0;
+        if (section.bodyId !== bodyId) topologyChanged = true;
+        section.bodyId = bodyId;
+        const blend = section.previousBodyId === bodyId ? this.renderBlend : 1;
+        if (physical) {
+          section.referenceRoot.copy(physical.referenceRoot);
+          section.referenceTip.copy(physical.referenceTip);
+          section.root.lerpVectors(section.previousRoot, physical.root.position, blend);
+          section.tip.lerpVectors(section.previousTip, physical.tip.position, blend);
+          section.rootRotation.slerpQuaternions(section.previousRootRotation, physical.root.quaternion, blend);
+          section.tipRotation.slerpQuaternions(section.previousTipRotation, physical.tip.quaternion, blend);
+        } else {
+          section.root.copy(section.referenceRoot);
+          section.tip.copy(section.referenceTip);
+          section.rootRotation.identity();
+          section.tipRotation.identity();
+        }
+        const fragment = bodyId === 0 ? undefined : this.fragmentRender(bodyId);
+        const sideIndex = index === 2 || section.side < 0 ? 0 : 1;
+        const direction = index === 0 ? -1 : index === 1 ? -section.side : 1;
+        this.deformationAxis.copy(this.wingAxes[index][sideIndex]);
+        this.controlRotation.setFromAxisAngle(this.deformationAxis, physical?.controlDeflection ?? angle * direction);
+        const count = (section.rows + 1) * 32;
+        let previousT = -1;
+        for (let local = 0; local < count + 64; local++) {
+          const vertex = local < count ? section.vertexStart + local
+            : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
+          const t = local < count ? Math.floor(local / 32) / section.rows : local < count + 32 ? 0 : 1;
+          if (t !== previousT) {
+            this.deformationCenter.lerpVectors(section.referenceRoot, section.referenceTip, t);
+            this.deformPoint(section, this.deformationCenter, t);
+            previousT = t;
+          }
+          this.deformationPoint.fromArray(neutral, vertex * 3);
+          if (this.wingMovable[index][vertex]) {
+            this.deformationHinge.fromArray(hinges, vertex * 3);
+            this.deformationPoint.sub(this.deformationHinge).applyQuaternion(this.controlRotation).add(this.deformationHinge);
+          }
+          this.deformationPoint.sub(this.deformationReference).applyQuaternion(this.deformationRotation).add(this.deformationCenter);
+          if (fragment) this.deformationPoint.sub(fragment.cg);
+          position.setXYZ(vertex, this.deformationPoint.x, this.deformationPoint.y, this.deformationPoint.z);
         }
       }
-      position.needsUpdate = normal.needsUpdate = true;
+      position.needsUpdate = true;
+      this.updateWingNormals(index);
+      this.updateWingBounds(index, 0, geometry);
+      this.hingeLines[index].geometry.boundingBox = geometry.boundingBox;
+      this.hingeLines[index].geometry.boundingSphere = geometry.boundingSphere;
     }
+    if (topologyChanged) {
+      this.clearWingTrail();
+      for (let index = 0; index < 3; index++) this.writeWingIndices(index, 0, this.wingMeshes[index].geometry, this.hingeLines[index].geometry);
+      for (const fragment of this.fragments) this.writeWingIndices(fragment.wingIndex, fragment.id, fragment.mesh.geometry, fragment.hinge.geometry);
+      this.metrics.memory = this.geometryMemory();
+    }
+    for (const fragment of this.fragments) {
+      this.updateWingBounds(fragment.wingIndex, fragment.id, fragment.mesh.geometry);
+      fragment.hinge.geometry.boundingBox = fragment.mesh.geometry.boundingBox;
+      fragment.hinge.geometry.boundingSphere = fragment.mesh.geometry.boundingSphere;
+      fragment.hinge.visible = this.hingeLines[fragment.wingIndex].visible;
+    }
+  }
+
+  private updateWingBounds(index: number, bodyId: number, geometry: THREE.BufferGeometry): void {
+    const bounds = geometry.boundingBox ??= new THREE.Box3();
+    const sphere = geometry.boundingSphere ??= new THREE.Sphere();
+    const positions = geometry.getAttribute('position');
+    bounds.makeEmpty();
+    for (const section of this.wingSections[index]) {
+      if (section.bodyId !== bodyId) continue;
+      const end = section.vertexStart + (section.rows + 1) * 32;
+      for (let vertex = section.vertexStart; vertex < end; vertex++) {
+        const x = positions.getX(vertex), y = positions.getY(vertex), z = positions.getZ(vertex);
+        bounds.min.x = Math.min(bounds.min.x, x); bounds.max.x = Math.max(bounds.max.x, x);
+        bounds.min.y = Math.min(bounds.min.y, y); bounds.max.y = Math.max(bounds.max.y, y);
+        bounds.min.z = Math.min(bounds.min.z, z); bounds.max.z = Math.max(bounds.max.z, z);
+      }
+    }
+    if (bounds.isEmpty()) {
+      bounds.min.set(0, 0, 0); bounds.max.set(0, 0, 0);
+    }
+    bounds.getCenter(sphere.center);
+    sphere.radius = sphere.center.distanceTo(bounds.max);
+  }
+
+  private updateWingNormals(index: number): void {
+    const geometry = this.wingNormalGeometry[index];
+    const positions = geometry.getAttribute('position').array, normals = geometry.getAttribute('normal').array;
+    const indices = geometry.index!.array;
+    normals.fill(0);
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i] * 3, b = indices[i + 1] * 3, c = indices[i + 2] * 3;
+      const abx = positions[b] - positions[a], aby = positions[b + 1] - positions[a + 1], abz = positions[b + 2] - positions[a + 2];
+      const acx = positions[c] - positions[a], acy = positions[c + 1] - positions[a + 1], acz = positions[c + 2] - positions[a + 2];
+      const x = aby * acz - abz * acy, y = abz * acx - abx * acz, z = abx * acy - aby * acx;
+      normals[a] += x; normals[a + 1] += y; normals[a + 2] += z;
+      normals[b] += x; normals[b + 1] += y; normals[b + 2] += z;
+      normals[c] += x; normals[c + 1] += y; normals[c + 2] += z;
+    }
+    for (const section of this.wingSections[index]) {
+      const next = section.next;
+      if (!next || next.bodyId !== section.bodyId) continue;
+      for (let k = 0; k < 32; k++) {
+        const a = (section.vertexStart + section.rows * 32 + k) * 3, b = (next.vertexStart + k) * 3;
+        for (let axis = 0; axis < 3; axis++) normals[a + axis] = normals[b + axis] = normals[a + axis] + normals[b + axis];
+      }
+    }
+    for (let i = 0; i < normals.length; i += 3) {
+      const inverse = 1 / (Math.hypot(normals[i], normals[i + 1], normals[i + 2]) || 1);
+      normals[i] *= inverse; normals[i + 1] *= inverse; normals[i + 2] *= inverse;
+    }
+    (geometry.getAttribute('normal') as THREE.BufferAttribute).needsUpdate = true;
   }
 
   private setEnvironmentChallenge(challenge: ChallengeMode): void {
@@ -2200,6 +2558,17 @@ export class SceneView {
     this.wingTrail.material.opacity = 0;
   }
 
+  private wingTipWorld(side: number, out: THREE.Vector3): THREE.Vector3 {
+    for (const section of this.wingSections[0]) {
+      if (section.side !== side || section.next) continue;
+      out.fromBufferAttribute(this.wingMeshes[0].geometry.getAttribute('position'), section.vertexStart + section.rows * 32 + 16);
+      const fragment = this.fragmentRender(section.bodyId);
+      if (fragment) return out.applyQuaternion(fragment.mesh.quaternion).add(fragment.mesh.position);
+      return out.sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+    }
+    return out.copy(this.aircraft.position);
+  }
+
   private recordWingTrail(): void {
     const sim = this.simulation;
     if (!sim || sim.result || sim.telemetry.stall) {
@@ -2213,18 +2582,11 @@ export class SceneView {
     this.wingTrailTime = sim.time;
     this.wingTrailActive = true;
     const capacity = WING_TRAIL_CAPACITY + 1;
-    const wing = this.definition.mainWing;
-    const span = wing.points[1].y;
-    const chordX = wing.points[1].x + (wing.points[2].x - wing.points[1].x) * 0.75;
-    const incidence = this.definition.assembly.mainIncidence * DEG;
-    const origin = wingOrigin(this.definition, 'mainWing');
     if (sample) {
       this.wingTrailIndex = (this.wingTrailIndex + 1) % capacity;
       this.wingTrailCount = Math.min(capacity, this.wingTrailCount + 1);
       for (let side = 0; side < 2; side++) {
-        this.wingTrailPoint.set(origin.x - chordX * Math.cos(incidence),
-          origin.y - chordX * Math.sin(incidence) + span * Math.tan(wing.dihedral * DEG),
-          (side === 0 ? -1 : 1) * span).sub(sim.telemetry.cg).applyQuaternion(sim.quaternion).add(sim.position);
+        this.wingTipWorld(side === 0 ? -1 : 1, this.wingTrailPoint);
         this.wingTrailPoint.toArray(this.wingTrailHistory, this.wingTrailIndex * 6 + side * 3);
       }
     }
@@ -2246,10 +2608,7 @@ export class SceneView {
       for (let side = 0; side < 2; side++) {
         this.wingTrailPoint.fromArray(this.wingTrailHistory, recent * 6 + side * 3);
         if (recent === this.wingTrailIndex) {
-          this.wingTrailPoint.set(origin.x - chordX * Math.cos(incidence),
-            origin.y - chordX * Math.sin(incidence) + span * Math.tan(wing.dihedral * DEG),
-            (side === 0 ? -1 : 1) * span).sub(this.renderCG)
-            .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+          this.wingTipWorld(side === 0 ? -1 : 1, this.wingTrailPoint);
         }
         this.wingTrailOlder.fromArray(this.wingTrailHistory, older * 6 + side * 3);
         this.vector.copy(this.wingTrailOlder).sub(this.wingTrailPoint);
@@ -2325,8 +2684,12 @@ export class SceneView {
       const marker = this.applicationMarkers[i];
       marker.visible = !!surface;
       if (surface) {
-        marker.position.copy(surface.point).sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+        const fragment = this.fragmentRender(surface.bodyId);
+        if (fragment) marker.position.copy(surface.point).sub(fragment.cg).applyQuaternion(fragment.mesh.quaternion).add(fragment.mesh.position);
+        else marker.position.copy(surface.point).sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
         this.setArrow(this.arrows[i + 4], marker.position, surface.force, 0.007);
+      } else {
+        this.arrows[i + 4].visible = false;
       }
     }
   }
@@ -2440,13 +2803,17 @@ export class SceneView {
     // 顶点、索引、实例矩阵和纹理的 MiB 估算；不冒充浏览器进程或驱动总内存。
     const geometries = new Set<THREE.BufferGeometry>();
     const textures = new Set<THREE.Texture>();
+    const buffers = new Set<ArrayBufferLike>();
     this.scene.traverse(object => {
       const mesh = object as THREE.Mesh;
       if (object instanceof THREE.InstancedMesh) bytes += object.instanceMatrix.array.byteLength;
       if (mesh.geometry && !geometries.has(mesh.geometry)) {
         geometries.add(mesh.geometry);
-        for (const attribute of Object.values(mesh.geometry.attributes)) bytes += attribute.array.byteLength;
-        bytes += mesh.geometry.index?.array.byteLength ?? 0;
+        for (const attribute of Object.values(mesh.geometry.attributes)) {
+          if (!buffers.has(attribute.array.buffer)) { buffers.add(attribute.array.buffer); bytes += attribute.array.byteLength; }
+        }
+        const index = mesh.geometry.index;
+        if (index && !buffers.has(index.array.buffer)) { buffers.add(index.array.buffer); bytes += index.array.byteLength; }
       }
       if (mesh.material) {
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];

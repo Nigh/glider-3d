@@ -1,9 +1,10 @@
 import { engineCatalog, type EngineType } from './engines';
+import { defaultStructures, materialCatalog, type BeamStructure, type MaterialId } from './materials';
 
 export type Point = { x: number; y: number };
 // Body coordinates: +X forward, +Y up, +Z right. Distances metres, angles degrees.
 // Planform points: root leading, tip leading, tip trailing, root trailing; x aft, y outboard.
-export interface Wing { points: [Point, Point, Point, Point]; dihedral: number; controlSurface: number }
+export interface Wing { points: [Point, Point, Point, Point]; dihedral: number; controlSurface: number; materialId: MaterialId; structure: BeamStructure }
 export interface AircraftDefinition {
  name: string;
  birdman: boolean;
@@ -21,9 +22,9 @@ export const clamp = (v:number,a:number,b:number) => Math.max(a,Math.min(b,v));
 export const DEG = Math.PI / 180;
 export const PILOT_MASS = 60;
 export type WingKey = 'mainWing' | 'horizontalTail' | 'verticalTail';
-/** Squalo公开空机38kg的工程分配，不是部件实测；参考尺寸25.3m/17.8m²/5.28m。 */
+/** Squalo空机参考的蒙皮/机身工程分配；梁质量独立按材料密度和管截面计算。 */
 export const AIRFRAME_MASS = {
- mainArea: 8 / 17.8, mainSpar: 17 / 25.3 ** 3,
+ mainArea: 8 / 17.8,
  tailArea: 2 / 3.5, fuselageLinear: 6 / 5.28, cockpit: 4,
 } as const;
 /** 参考支撑侧面积1.2m²分配1kg；板形仅为游戏的刚性支撑代理。 */
@@ -145,8 +146,8 @@ export function resizeFuselage(d: AircraftDefinition, end: 'nose' | 'tail', posi
  d.fuselage.length = nose - tail;
  d.fuselage.center = (nose + tail) / 2;
 }
-export const wing = (span:number,root:number,tip:number,sweep=0):Wing => ({points:[{x:0,y:0},{x:sweep,y:span/2},{x:sweep+tip,y:span/2},{x:root,y:0}],dihedral:0,controlSurface:0});
-export const defaultAircraft:AircraftDefinition = {name:'湖风 01',birdman:true,fuselage:{length:6.5,center:0},cockpit:{position:1.2},mainWing:{...wing(14,1.5,0.8,0.25),dihedral:5},horizontalTail:wing(3.5,0.9,0.55,0.15),verticalTail:{...wing(3,0.9,0.4,0.3),controlSurface:1},assembly:{mainWing:0.9,mainWingHeight:0.8,horizontalTail:-2.8,verticalTail:-2.9,mainIncidence:4,tailIncidence:0},pilot:{mass:PILOT_MASS},controls:{travel:0.45,lateralTravel:0.1},engine:{type:'jet-01',count:0,x:-0.5,y:0.5},fuelTank:{x:0,capacity:0}};
+export const wing = (span:number,root:number,tip:number,sweep=0):Wing => ({points:[{x:0,y:0},{x:sweep,y:span/2},{x:sweep+tip,y:span/2},{x:root,y:0}],dihedral:0,controlSurface:0,materialId:'carbon-epoxy',structure:{...defaultStructures.horizontalTail}});
+export const defaultAircraft:AircraftDefinition = {name:'湖风 01',birdman:true,fuselage:{length:6.5,center:0},cockpit:{position:1.2},mainWing:{...wing(14,1.5,0.8,0.25),dihedral:5,structure:{...defaultStructures.mainWing}},horizontalTail:wing(3.5,0.9,0.55,0.15),verticalTail:{...wing(3,0.9,0.4,0.3),controlSurface:1},assembly:{mainWing:0.9,mainWingHeight:0.8,horizontalTail:-2.8,verticalTail:-2.9,mainIncidence:4,tailIncidence:0},pilot:{mass:PILOT_MASS},controls:{travel:0.45,lateralTravel:0.1},engine:{type:'jet-01',count:0,x:-0.5,y:0.5},fuelTank:{x:0,capacity:0}};
 export function planform(w:Wing,symmetric=true) {
  const p=w.points; let twice=0; for(let i=0;i<4;i++){const a=p[i],b=p[(i+1)%4];twice+=a.x*b.y-b.x*a.y;}
  const area=Math.abs(twice)/2*(symmetric?2:1);const span=Math.max(...p.map(p=>p.y))*(symmetric?2:1);
@@ -188,6 +189,15 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){const w=d[key];if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p.x,-3,6);finite(p.y,0,12);} finite(w.dihedral,0,25);
  if(w.controlSurface===undefined)w.controlSurface=key==='verticalTail'?1:0;
  finite(w.controlSurface,0,1);
+ if(w.materialId===undefined)w.materialId='carbon-epoxy';
+ if(typeof w.materialId!=='string'||!Object.hasOwn(materialCatalog,w.materialId))throw Error('未知翼面材料');
+ if(w.structure===undefined)w.structure=clone(defaultStructures[key]);
+ if(!w.structure||typeof w.structure!=='object')throw Error('梁截面必须是闭口矩形管参数');
+ finite(w.structure.width,0.005,0.5);finite(w.structure.height,0.005,0.5);finite(w.structure.wallThickness,0.0002,0.05);
+ if(2*w.structure.wallThickness>=Math.min(w.structure.width,w.structure.height))throw Error('梁管壁厚的两倍必须小于宽度和高度');
+ w.structure={width:w.structure.width,height:w.structure.height,wallThickness:w.structure.wallThickness};
+ // Design snapshots contain geometry and material only; runtime deformation never persists.
+ d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],dihedral:w.dihedral,controlSurface:w.controlSurface,materialId:w.materialId,structure:w.structure};
  if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和平尾不能安装控制面');
  const p=w.points;if(p[0].y!==0||p[3].y!==0||Math.abs(p[1].y-p[2].y)>0.001||p[1].y<0.25||p[3].x-p[0].x<0.15||p[2].x-p[1].x<0.15)throw Error('翼面不得自交，根弦与梢弦至少 0.15 m');
  }
@@ -203,7 +213,11 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  const limits = mainWingMountLimits(d);
  if (limits.min > limits.max) throw Error('主翼翼根无法安装到当前机身，请调整机身或翼根');
  d.assembly.mainWing = clamp(d.assembly.mainWing, limits.min, limits.max);
- return d;
+ return {name:d.name,birdman:d.birdman,
+  fuselage:{length:d.fuselage.length,center:d.fuselage.center},cockpit:{position:d.cockpit.position},
+  mainWing:d.mainWing,horizontalTail:d.horizontalTail,verticalTail:d.verticalTail,
+  assembly:{mainWing:d.assembly.mainWing,mainWingHeight:d.assembly.mainWingHeight,horizontalTail:d.assembly.horizontalTail,verticalTail:d.assembly.verticalTail,mainIncidence:d.assembly.mainIncidence,tailIncidence:d.assembly.tailIncidence},
+  pilot:{mass:d.pilot.mass},controls:{travel:d.controls.travel,lateralTravel:d.controls.lateralTravel},engine:d.engine,fuelTank:d.fuelTank};
 }
 export const presets = [
  {name:'默认均衡型',change:(d:AircraftDefinition)=>d},
@@ -214,4 +228,12 @@ export const presets = [
  {name:'高翼载荷型',change:(d:AircraftDefinition)=>{d.mainWing={...wing(8,0.9,0.45),dihedral:5};return d;}},
  {name:'高山速降机动型',change:(d:AircraftDefinition)=>{d.birdman=false;d.cockpit.position=0.45;d.mainWing={...wing(8.6,0.85,0.55,0.1),dihedral:3,controlSurface:0.28};d.horizontalTail={...wing(3,0.65,0.4,0.1),controlSurface:0.4};d.verticalTail={...wing(2.4,0.7,0.35,0.15),controlSurface:1};d.assembly.mainWing=0.8;d.assembly.mainWingHeight=0.35;d.assembly.mainIncidence=1;d.controls.travel=0.3;d.controls.lateralTravel=0.1;return d;}},
  {name:'低空喷气巡航型',change:(d:AircraftDefinition)=>{d.birdman=false;d.cockpit.position=0.45;d.mainWing={...wing(8.6,0.85,0.55,0.1),dihedral:3,controlSurface:0.28};d.horizontalTail={...wing(3,0.65,0.4,0.1),controlSurface:0.4};d.verticalTail={...wing(2.4,0.7,0.35,0.15),controlSurface:1};d.assembly.mainWing=0.8;d.assembly.mainWingHeight=0.35;d.assembly.mainIncidence=1;d.controls.travel=0.3;d.engine={type:'jet-01',count:1,x:-0.4,y:0.8};d.fuelTank={x:0.25,capacity:4};return d;}}
-].map(p=>({...p.change(clone(defaultAircraft)),name:p.name}));
+].map(p=>{
+ const d=p.change(clone(defaultAircraft)),reinforced=p.name==='高山速降机动型'||p.name==='低空喷气巡航型';
+ for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
+  d[key].structure=reinforced
+   ?key==='mainWing'?{width:0.06,height:0.14,wallThickness:0.0025}:{width:0.03,height:0.065,wallThickness:0.0015}
+   :clone(defaultStructures[key]);
+ }
+ return {...d,name:p.name};
+});
