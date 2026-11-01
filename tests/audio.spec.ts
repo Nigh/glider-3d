@@ -266,3 +266,51 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
  expect(result.muted).toBeLessThan(0.000001);
  expect(result.unmuted).toBeLessThan(0.000001);
 });
+
+test('检查点进度增长只响一次，静音和暂停不补播，下一次飞行可重新触发', async ({ page }) => {
+ await page.goto('/');
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ const result = await page.evaluate(async () => {
+  const path = '/src/audio.ts';
+  // page.evaluate runs in Chromium; static Node imports cannot cross this execution boundary.
+  const { GameAudio } = await import(path) as typeof AudioModule;
+  const audio = new GameAudio();
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false, checkpointProgress: 0 };
+  audio.setPreferences({ muted: false, music: 0, effects: 1 });
+  audio.update(state); audio.unlock();
+  const { context } = window.audioProbes.at(-1)!;
+  await context.resume();
+  const create = context.createOscillator.bind(context), tones: OscillatorNode[] = [];
+  context.createOscillator = () => { const node = create(); tones.push(node); return node; };
+  try {
+   audio.update({ ...state, checkpointProgress: 0.1 });
+   const first = tones.length;
+   for (let index = 0; index < 20; index++) audio.update({ ...state, checkpointProgress: 0.1 });
+   const repeated = tones.length;
+   audio.setPreferences({ muted: true, music: 0, effects: 1 });
+   audio.update({ ...state, checkpointProgress: 0.2 });
+   audio.setPreferences({ muted: false, music: 0, effects: 1 });
+   audio.update({ ...state, checkpointProgress: 0.2 });
+   const muted = tones.length;
+   audio.update({ ...state, paused: true, checkpointProgress: 0.3 });
+   await context.suspend();
+   audio.update({ ...state, checkpointProgress: 0.3 });
+   await context.resume();
+   audio.update({ ...state, checkpointProgress: 0.3 });
+   const paused = tones.length;
+   audio.setPreferences({ muted: false, music: 0, effects: 0 });
+   audio.update({ ...state, checkpointProgress: 0.4 });
+   audio.setPreferences({ muted: false, music: 0, effects: 1 });
+   audio.update({ ...state, checkpointProgress: 0.4 });
+   const zeroEffects = tones.length;
+   audio.update({ ...state, checkpointProgress: 0.5 });
+   const next = tones.length;
+   audio.update({ ...state, screen: 'result', checkpointProgress: 0.5 });
+   audio.update({ ...state, ready: false });
+   audio.update(state);
+   audio.update({ ...state, checkpointProgress: 0.1 });
+   return { first, repeated, muted, paused, zeroEffects, next, restarted: tones.length };
+  } finally { audio.dispose(); }
+ });
+ expect(result).toEqual({ first: 1, repeated: 1, muted: 1, paused: 1, zeroEffects: 1, next: 2, restarted: 3 });
+});

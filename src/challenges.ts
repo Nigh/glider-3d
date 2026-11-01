@@ -91,7 +91,7 @@ export function challengeCollisionHeight(challenge: ChallengeMode, x: number, z:
 let downhillLaunchHeight = -Infinity;
 for (let x = -20; x <= 0; x += challengeTerrainGrid.step) {
   for (let z = -20; z <= 20; z += challengeTerrainGrid.step) {
-    downhillLaunchHeight = Math.max(downhillLaunchHeight, challengeTerrainHeight('downhill', x, z) + 55);
+    downhillLaunchHeight = Math.max(downhillLaunchHeight, challengeTerrainHeight('downhill', x, z) + 105);
   }
 }
 const downhillLaunch: Readonly<ChallengeLaunch> = {
@@ -104,12 +104,12 @@ export function challengeLaunch(challenge: ChallengeMode): Readonly<ChallengeLau
 
 export interface ChallengeCheckpoint {
   x: number; y: number; z: number;
-  halfWidth: number; minHeight: number; maxHeight: number;
+  halfWidth: number; maxHeight: number;
 }
 function gate(challenge: ChallengeMode, x: number): ChallengeCheckpoint {
   const z = challengeCenter(challenge, x);
   return { x, z, y: challengeTerrainHeight(challenge, x, z), halfWidth: challenge === 'downhill' ? 65 : 100,
-    minHeight: 3, maxHeight: challenge === 'downhill' ? 125 : 500 };
+    maxHeight: challenge === 'downhill' ? 125 : 500 };
 }
 const downhillStart = gate('downhill', 130), lowAltitudeStart = gate('low-altitude', 140);
 export function challengeStartGate(challenge: ChallengeMode): Readonly<ChallengeCheckpoint> | null {

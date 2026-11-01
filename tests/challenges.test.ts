@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, presets, type Controls } from '../src/model';
-import { CONTROL_SURFACE_RATE, derive, FlightSimulation } from '../src/physics';
+import { clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, PILOT_MASS, presets, wing, type Controls } from '../src/model';
+import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY } from '../src/physics';
 import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight } from '../src/challenges';
 import { engineCatalog } from '../src/engines';
 
@@ -93,12 +93,12 @@ describe('三轴操纵与高山路径边界', () => {
     expect(Math.abs(t.energy + t.dissipatedEnergy - t.initialEnergy - t.controlWork) / t.initialEnergy).toBeLessThan(1e-8);
   });
 
-  it('山顶20m弹射到20m/s，整台离当地地面至少50m，背后有山，离台后仍不计时', () => {
+  it('山顶20m弹射到20m/s，整台离当地地面至少100m，背后有山，离台后仍不计时', () => {
     const s = new FlightSimulation(downhillAircraft, 'downhill', 0), launch = challengeLaunch('downhill')!;
     expect(s.launching).toBe(true); expect(s.velocity.length()).toBe(0); expect(launch.length).toBe(20);
     expect(s.position.x).toBe(launch.startX);
     for (let x = launch.startX; x <= launch.endX; x += 2) for (let z = -launch.width / 2; z <= launch.width / 2; z += 2) {
-      expect(launch.y - launch.thickness - challengeTerrainHeight('downhill', x, z)).toBeGreaterThanOrEqual(50);
+      expect(launch.y - launch.thickness - challengeTerrainHeight('downhill', x, z)).toBeGreaterThanOrEqual(100);
     }
     expect(challengeTerrainHeight('downhill', -110, 0)).toBeGreaterThan(launch.y);
     for (let i = 1; i <= 8; i++) {
@@ -130,6 +130,35 @@ describe('三轴操纵与高山路径边界', () => {
     const missed = challenge === 'downhill' ? create() : lowAltitude();
     airborne(missed, gate.x - 0.1, gate.maxHeight + 5); missed.position.z = gate.z; missed.velocity.set(30, 0, 0); missed.step(neutral);
     expect(missed.result?.completed).toBe(false); expect(missed.telemetry.timingStarted).toBe(false);
+  });
+
+  it.each(['downhill', 'low-altitude'] as const)('%s 出发门和检查点没有3m下限，实际触地才结束', challenge => {
+    const d = clone(downhillAircraft);
+    d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
+    const s = airborne(new FlightSimulation(d, challenge, 0), 40, 15);
+    crossStart(s, 2.5);
+    const gate = challengeCheckpoints(challenge)[0];
+    airborne(s, gate.x - 0.1, 2.5); s.position.set(gate.x - 0.1, gate.y + 2.5, gate.z);
+    s.velocity.set(30, 0, 0); s.step(neutral, 0.01);
+    expect(s.ended).toBe(false); expect(s.telemetry.challengeProgress).toBe(0.1);
+    s.position.y = challengeCollisionHeight(challenge, s.position.x, s.position.z) - 1;
+    s.step(neutral);
+    expect(['terrain', 'water']).toContain(s.result?.landing);
+  });
+
+  it('低空可以从门参考高度下方通过，河面碰撞独立于门高度', () => {
+    const s = lowAltitude(), gate = challengeStartGate('low-altitude')!, x = gate.x - 0.1;
+    s.position.set(x, challengeRiverHeight(x) + 2.5, challengeRiverCenter(x)); s.velocity.set(30, 0, 0);
+    expect(s.position.y).toBeLessThan(gate.y); s.step(neutral, 0.01);
+    expect(s.ended).toBe(false); expect(s.telemetry.timingStarted).toBe(true);
+  });
+
+  it('速降起飞准备区不被赛段125m上限提前终止，计时后仍限高', () => {
+    const preparing = airborne(new FlightSimulation(downhillAircraft, 'downhill', 0), 40, 150);
+    preparing.step(neutral, 0.01); expect(preparing.ended).toBe(false);
+    const racing = crossStart(create(), 60);
+    airborne(racing, 150, 150); racing.step(neutral, 0.01);
+    expect(racing.result?.landing).toBe('boundary');
   });
 
   it('仅向前穿过下一门算进度，漏门和直达终点不能完成', () => {
@@ -282,5 +311,71 @@ describe('动力与燃油边界', () => {
     s.step({ ...neutral, throttle: 1 }, dt);
     const integral = dt - 2 * tau * (1 - Math.exp(-dt / tau)) + tau / 2 * (1 - Math.exp(-2 * dt / tau));
     expect(s.telemetry.thrust).toBeCloseTo(360 * integral / dt, 9);
+  });
+});
+
+describe('物理smoke：低展弦比三角翼质量、发射和高速受力', () => {
+  function deltaAircraft() {
+    const d = clone(downhillAircraft);
+    d.mainWing = { ...wing(4.26, 4.57, 0.16, 3), controlSurface: 0.28 };
+    d.assembly.mainWingHeight = 0; d.assembly.mainIncidence = 0;
+    return d;
+  }
+
+  it('77kg量级含60kg驾驶员，新增50m高度不改变离台速度或气动参数', () => {
+    const d = deltaAircraft(), properties = derive(d), s = new FlightSimulation(d, 'downhill', 0);
+    for (let i = 0; i < 8; i++) s.step(neutral, 0.25);
+    expect(s.launching).toBe(false); expect(s.velocity.length()).toBeCloseTo(20, 10);
+    const releaseClearance = s.telemetry.groundClearance;
+    expect(releaseClearance).toBeGreaterThan(100);
+    for (let i = 0; i < 60 && !s.ended; i++) s.step({ ...neutral, elevator: 0.15 });
+    expect(s.ended).toBe(false); expect(Number.isFinite(s.telemetry.pitch)).toBe(true);
+    console.info('物理smoke 发射', JSON.stringify({
+      mass: properties.mass, emptyMass: properties.mass - PILOT_MASS, wingArea: properties.wingArea,
+      aspect: properties.aspect, wingLoading: properties.wingLoading, releaseSpeed: 20, releaseClearance,
+      afterOneSecond: { speed: s.telemetry.speed, pitchDegrees: s.telemetry.pitch / DEG, clearance: s.telemetry.groundClearance },
+    }));
+  });
+
+  it.each(['downhill', 'low-altitude'] as const)('%s 20/40/50m/s受力扫描，没有40m/s限速器', challenge => {
+    const d = deltaAircraft(), rows: object[] = [];
+    for (const speed of [20, 40, 50]) for (const alpha of [-6, -3, 0, 6]) {
+      const s = airborne(new FlightSimulation(d, challenge, 0));
+      s.velocity.set(speed * Math.cos(alpha * DEG), -speed * Math.sin(alpha * DEG), 0);
+      s.step(neutral, 1e-7);
+      expect(s.ended).toBe(false); expect(s.telemetry.speed).toBeCloseTo(speed, 4);
+      const drag = -s.telemetry.drag.dot(s.velocity) / s.velocity.length();
+      expect(drag).toBeGreaterThan(0);
+      const t = s.telemetry;
+      expect(Math.abs(t.energy + t.dissipatedEnergy - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
+      rows.push({
+        speed, alpha, mass: t.mass, liftY: t.force.y, drag,
+        bodyDrag: t.aerodynamics.bodyDrag.length(),
+        mainDrag: t.aerodynamics.wings[0].drag.length(), mainInducedDrag: t.aerodynamics.wings[0].inducedDrag,
+        tailDrag: t.aerodynamics.wings[1].drag.length(), verticalDrag: t.aerodynamics.wings[2].drag.length(),
+        accelerationAlongVelocity: t.force.dot(s.velocity) / (t.mass * s.velocity.length()) - GRAVITY * s.velocity.y / s.velocity.length(),
+        dynamicPressure: AIR_DENSITY * speed ** 2 / 2,
+      });
+    }
+    console.info(`物理smoke ${challenge}`, JSON.stringify(rows));
+  });
+
+  it('低空喷气增加发动机、支架、油箱及燃油质量，实际阻力包含引擎外阻', () => {
+    const d = deltaAircraft();
+    d.engine = clone(poweredAircraft.engine); d.fuelTank = clone(poweredAircraft.fuelTank);
+    const properties = derive(d), s = new FlightSimulation(d, 'low-altitude', 0);
+    const mounts = engineMounts(s.definition), supportMass = mounts.reduce((sum, mount) => sum + mount.supportMass, 0);
+    const fuelMass = d.fuelTank.capacity * 0.8, tankDryMass = 0.8 + d.fuelTank.capacity * 0.035;
+    expect(properties.mass).toBeCloseTo(derive(deltaAircraft()).mass + engineCatalog[d.engine.type].mass + supportMass + tankDryMass + fuelMass, 8);
+    for (let i = 0; i < 8; i++) s.step({ ...neutral, throttle: 1 }, 0.25);
+    airborne(s); s.velocity.set(40, 0, 0); s.omega.set(0, 0, 0); s.step({ ...neutral, throttle: 1 }, 1e-7);
+    expect(s.telemetry.thrust).toBeGreaterThan(0);
+    expect(s.telemetry.mass).toBeCloseTo(properties.mass - (d.fuelTank.capacity - s.telemetry.fuelRemaining) * 0.8, 8);
+    expect(s.telemetry.drag.length()).toBeGreaterThan(s.telemetry.aerodynamics.drag.length());
+    console.info('物理smoke 动力质量链', JSON.stringify({
+      initialMass: properties.mass, pilotMass: PILOT_MASS, engineMass: engineCatalog[d.engine.type].mass,
+      supportMass, tankDryMass, fuelMass, currentMass: s.telemetry.mass, fuelRemaining: s.telemetry.fuelRemaining,
+      thrust: s.telemetry.thrust, actualDrag: s.telemetry.drag.length(), displayedAeroDrag: s.telemetry.aerodynamics.drag.length(),
+    }));
   });
 });
