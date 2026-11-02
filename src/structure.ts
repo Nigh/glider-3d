@@ -62,6 +62,7 @@ export function rotationalEnergy(inertia: Matrix3, omega: Vector3) {
 
 export class WingStructure {
   readonly sections: StructureSection[];
+  readonly peakWings = summarizeWingStructure([]);
   maxStressRatio = 0; maxYieldRatio = 0; maxDeflection = 0; fractureCount = 0;
   private readonly force = new Vector3();
   private readonly moment = new Vector3();
@@ -132,6 +133,7 @@ export class WingStructure {
 
   reset() {
     this.maxStressRatio = 0; this.maxYieldRatio = 0; this.maxDeflection = 0; this.fractureCount = 0;
+    for (const wing of this.peakWings) wing.stress = wing.yieldRatio = 0;
     for (const s of this.sections) {
       s.bodyId = s.surface.bodyId = 0; s.stress = s.stressRatio = s.yieldRatio = s.controlDeflection = 0;
       s.moment.set(0, 0, 0); s.load.set(0, 0, 0);
@@ -191,6 +193,9 @@ export class WingStructure {
       s.stress = Math.hypot(bending, Math.sqrt(3) * shear);
       s.stressRatio = Math.hypot(bending / s.normalStrength, shear / s.shearStrength);
       s.yieldRatio = s.stress / s.elasticLimit;
+      const peak = this.peakWings[s.wingKey === 'mainWing' ? 0 : s.wingKey === 'horizontalTail' ? 1 : 2];
+      peak.stress = Math.max(peak.stress, s.stressRatio);
+      peak.yieldRatio = Math.max(peak.yieldRatio, s.yieldRatio);
     }
     // 按每个连续拥有者从内到外积分，不跨断口。自由片首端保留断裂形状，但不把自由端作为断裂连接。
     for (const first of this.sections) {

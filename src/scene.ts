@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
@@ -540,8 +543,8 @@ export class SceneView {
 
   private centerMarker(kind: 'cg' | 'lift' | 'drag' | 'thrust'): THREE.Group {
     const marker = new THREE.Group();
-    const surface = new THREE.MeshBasicMaterial({ color: kind === 'cg' ? 0xffd52a : kind === 'lift' ? 0x19b9ef : kind === 'thrust' ? 0xd58032 : 0xe43c3c, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
-    const black = new THREE.MeshBasicMaterial({ color: 0x17201d, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
+    const surface = new THREE.MeshBasicMaterial({ color: kind === 'cg' ? 0xffd52a : kind === 'lift' ? 0x19b9ef : kind === 'thrust' ? 0xd58032 : 0xe43c3c, depthTest: false, depthWrite: false, transparent: true, toneMapped: false, fog: false });
+    const black = new THREE.MeshBasicMaterial({ color: 0x17201d, depthTest: false, depthWrite: false, transparent: true, toneMapped: false, fog: false });
     const add = (geometry: THREE.BufferGeometry, material: THREE.MeshBasicMaterial) => {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = 21;
@@ -1480,15 +1483,15 @@ export class SceneView {
       for (const side of [-1, 1]) {
         const points: number[] = [];
         for (let i = 0; i <= 64; i++) {
-          const x = -5 + i * 10 / 64, z = x * side;
-          const y = challengeTerrainHeight(sim.challenge, this.crashMark.position.x + x, this.crashMark.position.z + z) - this.crashMark.position.y + 0.12;
-          points.push(x, y, z - 0.22, x, y, z + 0.22);
+          const x = -3 + i * 6 / 64, z = x * side;
+          const y = challengeTerrainHeight(sim.challenge, this.crashMark.position.x + x, this.crashMark.position.z + z) - this.crashMark.position.y + 0.15;
+          points.push(x, y, z);
         }
-        const geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-        const indices: number[] = [];
-        for (let i = 0; i < 64; i++) {const v=i*2;indices.push(v,v+1,v+2,v+1,v+3,v+2);}
-        geometry.setIndex(indices); geometry.setDrawRange(0,0);
-        this.crashMark.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color:0xe32636,side:THREE.DoubleSide,depthWrite:false})));
+        const geometry = new LineGeometry().setPositions(points);
+        geometry.instanceCount = 0;
+        const line = new Line2(geometry, new LineMaterial({color:0xe32636,linewidth:12,worldUnits:false,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1}));
+        line.material.resolution.set(this.width, this.height);
+        this.crashMark.add(line);
       }
       this.scene.add(this.crashMark);
     }
@@ -1626,6 +1629,12 @@ export class SceneView {
   setDebug(enabled: boolean): void {
     this.debug = enabled;
     this.debugGroup.visible = enabled;
+    this.debugGroup.traverse(object => {
+      if (!(object instanceof THREE.Mesh || object instanceof THREE.Line)) return;
+      object.renderOrder = 100;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) { material.depthTest=false;material.depthWrite=false;material.transparent=true;material.fog=false;material.needsUpdate=true; }
+    });
     this.cg.visible = !this.simulation || enabled;
     this.liftCenter.visible = !this.simulation || enabled;
     this.updateEnvironment();
@@ -1694,7 +1703,7 @@ export class SceneView {
       const previous = this.crashAge; this.crashAge += seconds;
       if (previous < 0.4 && this.crashAge >= 0.4) this.crashStroke?.();
       if (!this.crashSecond && this.crashAge >= 0.8) {this.crashSecond=true;this.crashStroke?.();}
-      this.crashMark.children.forEach((child,index)=>(child as THREE.Mesh).geometry.setDrawRange(0,Math.floor(clamp((this.crashAge-0.4-index*0.4)/0.32,0,1)*64)*6));
+      this.crashMark.children.forEach((child,index)=>(child as Line2).geometry.instanceCount=Math.floor(clamp((this.crashAge-0.4-index*0.4)/0.32,0,1)*64));
     }
     if (sim) for (const gate of this.mountainEnvironment.children) {
       if (!gate.userData.gate) continue;

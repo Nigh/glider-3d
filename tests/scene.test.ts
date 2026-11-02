@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, Mesh, OrthographicCamera, Spherical, Vector3 } from 'three';
+import { Box3, Group, Mesh, MeshBasicMaterial, BoxGeometry, OrthographicCamera, Spherical, Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
 
@@ -128,4 +128,13 @@ describe('场景编辑与推力中心', () => {
       expect(direction.distanceTo(new Vector3(1, 0, 0).applyQuaternion(view.aircraft.quaternion))).toBeLessThan(1e-12);
     }
   });
+});
+
+it('气动图层在透明背景之后绘制，禁用深度读写和雾化',()=>{
+ const group=new Group(),marker=new Mesh(new BoxGeometry(),new MeshBasicMaterial());group.add(marker);
+ const view=Object.assign(Object.create(SceneView.prototype),{debugGroup:group,cg:{},liftCenter:{},simulation:{},updateEnvironment(){},updateCenters(){}});
+ view.setDebug(true);
+ expect(marker.renderOrder).toBe(100);expect(marker.material.transparent).toBe(true);
+ expect(marker.material.depthTest).toBe(false);expect(marker.material.depthWrite).toBe(false);expect(marker.material.fog).toBe(false);
+ marker.geometry.dispose();marker.material.dispose();
 });

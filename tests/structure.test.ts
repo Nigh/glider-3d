@@ -271,3 +271,19 @@ describe('真实超载、独立断片和完整能量账本', () => {
     }
   });
 });
+
+it('翼面峰值保留卸载和断裂前的最高受力，reset清空',()=>{
+ const simulation=new FlightSimulation(defaultAircraft,'birdman',0),structure=simulation.structure;
+ const section=structure.sections[0];
+ simulation.launching=false;simulation.position.set(0,150,0);simulation.velocity.set(80,-20,0);
+ simulation.step({weight:0,lateral:0,rudder:0,elevator:0,aileron:0},1/60);
+ const peaks=structure.peakWings.map(w=>({...w}));
+ expect(peaks[0].stress).toBeGreaterThan(0);
+ for(const s of structure.sections){s.stressRatio=0;s.yieldRatio=0;}
+ structure.summarize();
+ expect(structure.maxStressRatio).toBe(0);
+ expect(structure.peakWings).toEqual(peaks);
+ expect(section.wingKey).toBe('mainWing');
+ structure.reset();
+ expect(structure.peakWings.every(w=>w.stress===0&&w.yieldRatio===0)).toBe(true);
+});
