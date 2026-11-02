@@ -370,7 +370,8 @@ describe('物理smoke：低展弦比三角翼质量、发射和高速受力', ()
     for (let i = 0; i < 8; i++) s.step({ ...neutral, throttle: 1 }, 0.25);
     airborne(s); s.velocity.set(40, 0, 0); s.omega.set(0, 0, 0); s.step({ ...neutral, throttle: 1 }, 1e-7);
     expect(s.telemetry.thrust).toBeGreaterThan(0);
-    expect(s.telemetry.mass).toBeCloseTo(properties.mass - (d.fuelTank.capacity - s.telemetry.fuelRemaining) * 0.8, 8);
+    const totalMass = s.telemetry.mass + s.fragments.reduce((sum, fragment) => sum + fragment.mass, 0);
+    expect(totalMass).toBeCloseTo(properties.mass - (d.fuelTank.capacity - s.telemetry.fuelRemaining) * 0.8, 8);
     expect(s.telemetry.drag.length()).toBeGreaterThan(s.telemetry.aerodynamics.drag.length());
     console.info('物理smoke 动力质量链', JSON.stringify({
       initialMass: properties.mass, pilotMass: PILOT_MASS, engineMass: engineCatalog[d.engine.type].mass,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clone, defaultAircraft } from '../src/model';
 import {
   deleteAircraft, duplicateAircraft, exportAircraft, History, importAircraft,
-  listAircraft, readBest, renameAircraft, saveAircraft, writeBest,
+  listAircraft, readBest, renameAircraft, saveAircraft, writeBest, PHYSICS_VERSION,
 } from '../src/storage';
 
 class MemoryStorage implements Storage {
@@ -200,17 +200,19 @@ describe('最远纪录', () => {
   });
 
   it('损坏纪录不被静默覆盖', () => {
-    storage.setItem('lakewind.best.challenge-v2.birdman', 'broken');
+    storage.setItem(`lakewind.best.${PHYSICS_VERSION}.birdman`, 'broken');
     expect(() => readBest()).toThrow('纪录已损坏');
     expect(() => writeBest(90)).toThrow('纪录已损坏');
-    expect(storage.getItem('lakewind.best.challenge-v2.birdman')).toBe('broken');
+    expect(storage.getItem(`lakewind.best.${PHYSICS_VERSION}.birdman`)).toBe('broken');
   });
 
   it('旧物理版本纪录不混榜，且不删除原始数据', () => {
     storage.setItem('lakewind.best.official-v1.standard', '900');
+    storage.setItem('lakewind.best.challenge-v2.birdman', '850');
     expect(readBest()).toBe(0);
     expect(writeBest(120)).toBe(120);
     expect(storage.getItem('lakewind.best.official-v1.standard')).toBe('900');
+    expect(storage.getItem('lakewind.best.challenge-v2.birdman')).toBe('850');
   });
 });
 
@@ -267,4 +269,49 @@ it('HTTP 局域网没有 randomUUID 时仍能保存独立飞机', () => {
   const second = saveAircraft({ ...defaultAircraft, name: '局域网试飞机' });
   expect(first.id).not.toBe(second.id);
   expect(listAircraft().map(item => item.name).sort()).toEqual([defaultAircraft.name, '局域网试飞机'].sort());
+});
+
+describe('结构设计持久化',()=>{
+ it('材料与梁截面经保存、导出导入和撤销重做完整保留',()=>{
+  const original=clone(defaultAircraft),changed=clone(original);
+  changed.mainWing.materialId='spruce';changed.mainWing.structure.wallThickness=0.002;
+  changed.horizontalTail.materialId='aluminum-6061-t6';changed.horizontalTail.structure.height=0.07;
+  changed.verticalTail.structure.width=0.04;
+  const history=new History(original);history.push(changed);
+  expect(history.undo()).toEqual(original);expect(history.redo()).toEqual(changed);
+  const saved=saveAircraft(changed);
+  expect(listAircraft()[0].definition).toEqual(changed);
+  expect(importAircraft(exportAircraft(saved.definition))).toEqual(changed);
+  changed.mainWing.structure.wallThickness=0.003;
+  expect(listAircraft()[0].definition.mainWing.structure.wallThickness).toBe(0.002);
+ });
+ it('旧本地飞机只迁移读取结果，原始JSON保持不变',()=>{
+  const saved=saveAircraft(defaultAircraft),legacy:any=clone(saved);
+  for(const key of ['mainWing','horizontalTail','verticalTail']){delete legacy.definition[key].materialId;delete legacy.definition[key].structure;}
+  const key=keyFor(saved.id),raw=JSON.stringify(legacy);storage.setItem(key,raw);
+  expect(listAircraft()[0].definition).toEqual(defaultAircraft);
+  expect(storage.getItem(key)).toBe(raw);
+  expect(importAircraft(JSON.stringify(legacy.definition))).toEqual(defaultAircraft);
+ });
+ it('未知材料与坏截面不能导入导出保存，也不覆盖有效记录',()=>{
+  const saved=saveAircraft(defaultAircraft);
+  for(const mutate of [
+   (d:any)=>d.mainWing.materialId='unknown',
+   (d:any)=>d.horizontalTail.structure.height=null,
+   (d:any)=>d.verticalTail.structure.wallThickness=0,
+  ]){
+   const invalid=clone(defaultAircraft);mutate(invalid);
+   expect(()=>importAircraft(JSON.stringify(invalid))).toThrow('飞机数据无效');
+   expect(()=>exportAircraft(invalid)).toThrow('飞机数据无效');
+   expect(()=>saveAircraft(invalid,saved.id)).toThrow('飞机数据无效');
+   expect(listAircraft()).toEqual([saved]);
+  }
+ });
+ it('导出与本地保存过滤运行形变及断片，不污染设计',()=>{
+  const running:any=clone(defaultAircraft);running.fragments=[{id:1}];running.structure={fractureCount:1};
+  running.mainWing.deformation=[1,2];running.mainWing.structure.displacement=1;
+  expect(importAircraft(exportAircraft(running))).toEqual(defaultAircraft);
+  expect(saveAircraft(running).definition).toEqual(defaultAircraft);
+  expect(listAircraft()[0].definition).toEqual(defaultAircraft);
+ });
 });
