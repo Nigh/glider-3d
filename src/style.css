@@ -167,3 +167,8 @@ html:not([lang=zh]) .aero-preview table{min-width:560px}html:not([lang=zh]) .fli
 @media(min-height:601px) and (max-height:850px){.race-results .wing-peaks{display:none}.race-results .result-structure{grid-column:1/-1}.race-results .trajectory-panel svg{max-height:18dvh}}
 
 @media(max-width:700px){.flying .flight-sidebar .engine-hud{left:8px}}
+
+.flight-start{position:absolute;z-index:6;bottom:20%;left:50%;transform:translateX(-50%);min-width:160px;min-height:48px;font-size:18px}
+.pilot-hud{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(650px,66vw);height:min(440px,65dvh);pointer-events:none;fill:none;stroke:#8dff96;stroke-width:1.5;filter:drop-shadow(0 1px 2px #102c17);font:13px monospace}
+.pilot-hud text{fill:#8dff96;stroke:none;text-anchor:middle}.pilot-hud .hud-value{font-size:25px}
+@media(max-width:700px){.pilot-hud{width:80vw;height:48dvh}.flight-start{bottom:24%;font-size:16px}}

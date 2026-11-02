@@ -39,3 +39,17 @@ test('平原废墟实例与碰撞盒一致，连续路线穿过楼间通道',asy
  expect(result.count).toBeGreaterThan(60);expect(result.count).toBe(result.expected);expect(result.mismatch).toBeLessThan(0.001);
  await page.screenshot({path:info.outputPath('ruins.png')});expect(errors).toEqual([]);
 });
+
+ test('开始按钮可点击，驾驶员 HUD 随视角切换',async({page},info)=>{
+ await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
+ await page.goto('/');await page.getByRole('button',{name:'高山速降',exact:false}).click();
+ await page.getByRole('button',{name:'试飞',exact:true}).click();
+ const start=page.getByRole('button',{name:'开始试飞',exact:true});
+ await expect(start).toBeInViewport();await start.click();await expect(start).toBeHidden();
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
+ await page.getByRole('combobox',{name:'飞行相机',exact:true}).selectOption('驾驶员');
+ await expect(page.getByRole('img',{name:'HUD',exact:true})).toBeVisible();
+ await page.screenshot({path:info.outputPath('pilot-hud.png')});
+ await page.getByRole('combobox',{name:'飞行相机',exact:true}).selectOption('追尾');
+ await expect(page.getByRole('img',{name:'HUD',exact:true})).toHaveCount(0);
+ });

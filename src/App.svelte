@@ -298,6 +298,23 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  </section>
  </section>
  {:else if screen==='flight'}
+ {#if !flightReady}<button class="primary flight-start" onclick={beginFlight}>{t("开始试飞")}</button>{/if}
+ {#if flightCamera==='驾驶员'}
+ <svg class="pilot-hud" viewBox="0 0 600 400" aria-label="HUD" role="img">
+ <title>{t("飞行数据")}</title>
+ <defs><clipPath id="hud-attitude"><rect x="180" y="75" width="240" height="250"/></clipPath></defs>
+ <g clip-path="url(#hud-attitude)"><g transform={`translate(300 200) rotate(${-hud.roll})`}>
+ {#each [-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60] as angle}
+ <g transform={`translate(0 ${(hud.pitch-angle)*4})`} stroke-dasharray={angle<0?'6 4':undefined}>
+ <path d={angle===0?'M -110 0 H -25 M 25 0 H 110':'M -65 5 V 0 H -25 M 25 0 H 65 V 5'}/>
+ <text x="-88" y="4">{angle}</text><text x="80" y="4">{angle}</text>
+ </g>{/each}</g></g>
+ <path d="M 265 200 H 288 L 300 208 L 312 200 H 335 M 300 185 V 193 M 285 62 L 300 72 L 315 62"/>
+ <text x="78" y="175">{t("空速")} m/s</text><text class="hud-value" x="78" y="205">{hud.speed.toFixed(1)}</text>
+ <text x="520" y="175">{t("高度")} m</text><text class="hud-value" x="520" y="205">{hud.altitude.toFixed(0)}</text>
+ <text x="300" y="352">{t("离地高度")} {(hud.groundClearance??0).toFixed(1)} m · {t("下降率")} {hud.sink.toFixed(1)} m/s</text>
+ {#if hud.stall}<text x="300" y="110">{t("攻角过大 · 失速")}</text>{/if}
+ </svg>{/if}
  <div class="flight-sidebar">
  <section class="flight-hud" class:compact-hud={lastChallenge!=='birdman'} aria-label={t("飞行数据")}>
  {#if lastChallenge==='birdman'}<div><small>{t("滑翔距离")}</small><strong>{hud.distance.toFixed(1)}<em>m</em></strong></div>{/if}
@@ -314,7 +331,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  <div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {!flightReady?t("待开始"):hud.launching?(lastChallenge==='low-altitude'?t("跑道滑跑"):t("弹射助跑")):t("飞行中")}</span><span>{lastChallenge==='birdman'?t("湖面最远距离"):!hud.timingStarted?(lastChallenge==='low-altitude'?t("通过出发门后开始计时与计分"):t("通过出发门后开始计时")):t("赛道进度 {p0}% · 依次穿过航线检查点",{p0:(100*(hud.challengeProgress??0)).toFixed(0)})}</span>{#if hud.stall}<b>{t("攻角过大 · 失速")}</b>{/if}</div>
  {#if lastChallenge==='low-altitude'}<section class="challenge-hud" class:over-height={(hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight} aria-label={t("贴地挑战数据")}><span>{t("离地")} <strong>{(hud.groundClearance??0).toFixed(1)} m / {LOW_ALTITUDE.scoringHeight} m</strong></span><span>{t("得分")} <strong>{(hud.score??0).toFixed(0)}</strong></span><span>{t("连续超高")} <strong>{(hud.aboveHeightTime??0).toFixed(1)} s</strong></span>{#if (hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight}<b role="status">{t("超出计分高度 · 降低高度")}</b>{/if}</section>{/if}
  {#if lastDefinition.engine.count}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t("油门 · Shift 增 / Ctrl 减")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><input aria-label={t("油门")} disabled={!flightReady||isReplay} type="range" min="0" max="1" step="0.01" bind:value={throttle}/></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}{t("% · 推力")} {(hud.thrust??0).toFixed(0)} {t("N · 余油")} {(hud.fuelRemaining??0).toFixed(2)} L</p></section>{/if}
- <div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次")} / Esc · {t("设计")}</span><button title={t("空格开始 / 暂停 / 继续")} onclick={()=>flightReady?togglePause():beginFlight()}>{!flightReady?t("开始试飞"):paused?t("继续飞行"):t("暂停")}</button><select aria-label={t("飞行相机")} title={t("C 键切换视角")} bind:value={flightCamera} onchange={e=>scene.cameraView(e.currentTarget.value)}>{#each flightViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>
+ <div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次")} / Esc · {t("设计")}</span>{#if flightReady}<button title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button>{/if}<select aria-label={t("飞行相机")} title={t("C 键切换视角")} bind:value={flightCamera} onchange={e=>scene.cameraView(e.currentTarget.value)}>{#each flightViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>
  {#if paused}<div class="pause-banner">{t("飞行已暂停")} <button onclick={()=>paused=false}>{t("继续")}</button></div>{/if}
  <div class="flight-right">{@render aeroWindow()}</div>
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}

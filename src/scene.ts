@@ -2832,11 +2832,12 @@ export class SceneView {
       this.vector.set(1, 0, 0).applyQuaternion(this.aircraft.quaternion);
       this.vector2.copy(UP).applyQuaternion(this.aircraft.quaternion);
       const distance = Math.max(23, this.definition.mainWing.points[1].y * 1.8 / Math.max(0.65, this.width / this.height));
-      this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.vector, -distance).addScaledVector(this.vector2, distance * 0.3);
+      this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.vector, -distance).addScaledVector(this.vector2, distance * 0.065);
       this.desiredTarget.copy(this.aircraft.position).addScaledVector(this.vector, 6).add(this.vector2);
-      this.camera.position.copy(this.desiredPosition);
-      this.target.copy(this.desiredTarget);
-      this.camera.up.copy(this.vector2);
+      const blend = immediate || this.reducedMotion ? 1 : 1 - Math.exp(-dt * 3.5);
+      this.camera.position.lerp(this.desiredPosition, blend);
+      this.target.lerp(this.desiredTarget, blend);
+      this.camera.up.lerp(this.vector2, blend).normalize();
       this.camera.lookAt(this.target);
       return;
     }

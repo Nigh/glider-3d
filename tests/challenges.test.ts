@@ -555,7 +555,7 @@ describe('物理smoke：低展弦比三角翼质量、发射和高速受力', ()
 describe('平原废墟与门高',()=>{
  it('平原门与实际飞行上限减半，其余山谷门不变',()=>{
   for(const gate of challengeCheckpoints('downhill'))expect(gate.maxHeight).toBe(gate.x>=DOWNHILL_PLAIN_START?62.5:125);
-  expect(challengeTerrainHeight('downhill',4500,-600)).toBeCloseTo(challengeTerrainHeight('downhill',4500,600),8);
+  for(const x of [4500,5000,5400]) { const z=challengeCenter('downhill',x),floor=challengeTerrainHeight('downhill',x,z); for(const side of [-1,1]) expect(challengeTerrainHeight('downhill',x,z+side*500)-floor).toBeGreaterThan(800); }
   expect(downhillHeightLimit(DOWNHILL_PLAIN_START-1)).toBe(125);expect(downhillHeightLimit(DOWNHILL_PLAIN_START)).toBe(62.5);
   const s=crossStart(create());airborne(s,DOWNHILL_PLAIN_START+10,70);s.step(neutral,0.001);
   expect(s.result?.landing).toBe('boundary');
@@ -572,6 +572,24 @@ describe('平原废墟与门高',()=>{
    const z=downhillRouteCenter(x),y=challengeTerrainHeight('downhill',x,z)+25;
    expect(z-challengeCenter('downhill',x)).toBeCloseTo(offset,8);
    for(const dz of [-10,0,10])expect(hitsChallengeRuin('downhill',new Vector3(x-50,y,z+dz),new Vector3(x+50,y,z+dz))).toBe(false);
+  }
+ });
+ it('绕行路线在整个平原保留机翼宽度',()=>{
+  for(let x=4300;x<5400;x+=5)for(const dz of [-10,0,10]){
+   const z=downhillRouteCenter(x)+dz,nextZ=downhillRouteCenter(x+5)+dz;
+   expect(hitsChallengeRuin('downhill',{x,y:challengeTerrainHeight('downhill',x,z)+25,z},{x:x+5,y:challengeTerrainHeight('downhill',x+5,nextZ)+25,z:nextZ}),`x=${x}, dz=${dz}`).toBe(false);
+  }
+ });
+ it('错位废墟在合法高度阻挡横穿平原的直线',()=>{
+  expect(new Set(downhillRuins.map(r=>r.x)).size).toBeGreaterThan(40);
+  for(const height of [10,30,60])for(let z=-160;z<=160;z+=10){
+   let blocked=false;
+   for(let x=4300;x<5400;x+=5){
+    const a={x,y:challengeTerrainHeight('downhill',x,z)+height,z};
+    const b={x:x+5,y:challengeTerrainHeight('downhill',x+5,z)+height,z};
+    if(hitsChallengeRuin('downhill',a,b)){blocked=true;break;}
+   }
+   expect(blocked,`height=${height}, z=${z}`).toBe(true);
   }
  });
  it('楼体碰撞在真实积分中结束主体而非穿透',()=>{

@@ -59,6 +59,7 @@ function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
     return 1620 - 0.15 * x - drop + 10 * Math.sin(x / 135) * Math.max(0, 1 - progress)
       + (0.012 * offset * offset + 25 * Math.sin(x / 83) ** 2) * Math.max(0, 1 - progress)
         * Math.max(0, Math.min(1, (DOWNHILL_PLAIN_START - x) / 600))
+      + 0.009 * Math.max(0, Math.abs(offset) - 180) ** 2 * Math.max(0, Math.min(1, (x - 3700) / 600))
       + (x < -35 ? Math.min(220, (-x - 35) * 2) : 0);
   }
   const riverOffset = Math.abs(z - challengeRiverCenter(x));
@@ -137,14 +138,17 @@ export interface ChallengeRuin {
 }
 
 // The same oriented boxes define concrete bodies in rendering and swept aircraft/fragment collision.
-export const downhillRuinPassages = [4380, 4620, 4860, 5100, 5310].map((x,row) => ({x,offset:row%2?70:-70}));
+export const downhillRuinPassages = [4380, 4620, 4860, 5100, 5310].map((x,row) => ({x,offset:[-95,110,-120,85,-80][row]}));
 
 export function downhillRouteCenter(x: number): number {
-  const points = [{x:DOWNHILL_PLAIN_START-150,offset:0},...downhillRuinPassages,{x:5400,offset:0}];
+  if (x < DOWNHILL_PLAIN_START - 150) return challengeCenter('downhill', x);
+  const points = [{x:DOWNHILL_PLAIN_START-150,z:challengeCenter('downhill',DOWNHILL_PLAIN_START-150)},
+    ...downhillRuinPassages.flatMap(({x,offset})=>[-65,65].map(dx=>({x:x+dx,z:challengeCenter('downhill',x)+offset}))),
+    {x:5400,z:challengeCenter('downhill',5400)}];
   for (let i=1;i<points.length;i++) {
     if (x <= points[i].x) {
       const a=points[i-1],b=points[i],t=Math.max(0,(x-a.x)/(b.x-a.x));
-      return challengeCenter('downhill',x)+a.offset+(b.offset-a.offset)*t;
+      return a.z+(b.z-a.z)*t;
     }
   }
   return challengeCenter('downhill',x);
@@ -153,18 +157,22 @@ export function downhillRouteCenter(x: number): number {
 export const downhillRuins: readonly ChallengeRuin[] = downhillRuinPassages.flatMap(({x,offset:gap}, row) => {
   const center = challengeCenter('downhill', x);
   const blocks: ChallengeRuin[] = [];
-  const add = (z: number, width: number, height: number, length: number, yaw: number, tilt: number) => {
+  // Fixed noise keeps retries, replays and collision geometry identical.
+  const noise = (i: number) => { const n = Math.sin((row + 1) * 127.1 + i * 311.7) * 43758.5453; return n - Math.floor(n); };
+  const add = (z: number, width: number, height: number, length: number, yaw: number, tilt: number, shift = 0, buried = false) => {
+    const blockX = x + shift;
+    // Fallen slabs sink into the ground instead of leaving a straight tunnel underneath.
     const halfY = (Math.abs(Math.cos(tilt)) * height + Math.abs(Math.sin(tilt)) * length) / 2;
     const radiusX = (Math.abs(Math.cos(yaw)) * width + Math.abs(Math.sin(yaw)) * (Math.abs(Math.sin(tilt)) * height + Math.abs(Math.cos(tilt)) * length)) / 2;
-    blocks.push({x,y:challengeTerrainHeight('downhill',x,z)+halfY,z,width,height,length,yaw,tilt,radiusX});
+    blocks.push({x:blockX,y:challengeTerrainHeight('downhill',blockX,z)+halfY * (buried ? 0.5 : 1),z,width,height,length,yaw,tilt,radiusX});
   };
-  for (const [left, right] of [[-750, gap - 34], [gap + 34, 750]]) {
+  for (const [left, right] of [[-750, gap - 44], [gap + 44, 750]]) {
     const count = Math.ceil((right - left) / 110), length = (right - left) / count;
     for (let i = 0; i < count; i++) {
-      add(center + left + (i + 0.5) * length, 26 + (i % 3) * 4, 22, length - 4, (i % 3 - 1) * 0.08, (i % 2 ? 1 : -1) * (0.65 + (i % 3) * 0.13));
+      add(center + left + (i + 0.5) * length, 30 + noise(i + 1) * 20, 70 + noise(i + 2) * 20, length - 15, (noise(i + 3) - 0.5) * 0.5, (i % 2 ? 1 : -1) * (0.65 + noise(i + 4) * 0.45), (noise(i + 5) - 0.5) * 46, true);
     }
   }
-  // A broken standing core blocks the straight line; the 68 m gaps alternate sides.
+  // Tall broken cores prevent flying straight over the fallen buildings below the height limit.
   add(center, 32, 85, 52, 0.05 * (row % 2 ? 1 : -1), 0.08);
   return blocks;
 });
