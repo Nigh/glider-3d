@@ -20,7 +20,7 @@
  let aircraft=$state.raw<AircraftDefinition>(clone(defaultAircraft));let tab=$state<Tab>('主翼');let screen=$state<'menu'|'design'|'flight'|'result'>('menu');let quality=$state<'Auto'|'High'|'Medium'|'Low'>('Auto');
  const qualityNames:Record<string,string>={Auto:'自动',High:'高',Medium:'中',Low:'低'};
  let challenge=$state<ChallengeMode>('birdman'),lastChallenge=$state<ChallengeMode>('birdman');
- let saved=$state.raw<SavedAircraft[]>([]),selectedId=$state(''),message=$state(''),showLibrary=$state(false),debug=$state(false),paused=$state(false),flightReady=$state(false);let best=$state(0);let result=$state<any>(null),hud=$state<any>({speed:0,altitude:LAUNCH.height,distance:0,alpha:0,pitch:0,roll:0,sink:0,glide:0,time:0,liftDragRatio:0,potentialEnergy:0,kineticEnergy:0,dissipatedEnergy:0,initialEnergy:0,launching:true});let perf=$state<any>({});
+ let saved=$state.raw<SavedAircraft[]>([]),selectedId=$state(''),message=$state(''),showLibrary=$state(false),debug=$state(false),aero=$state(false),stick=$state(false),stickX=$state(0),stickY=$state(0),paused=$state(false),flightReady=$state(false);let best=$state(0);let result=$state<any>(null),hud=$state<any>({speed:0,altitude:LAUNCH.height,distance:0,alpha:0,pitch:0,roll:0,sink:0,glide:0,time:0,liftDragRatio:0,potentialEnergy:0,kineticEnergy:0,dissipatedEnergy:0,initialEnergy:0,launching:true});let perf=$state<any>({});
  let stats=$derived(derive(aircraft));let main=$derived(planform(aircraft.mainWing));let wingKey=$derived<'mainWing'|'horizontalTail'|'verticalTail'>(tab==='水平尾翼'?'horizontalTail':tab==='垂直尾翼'?'verticalTail':'mainWing');
  let ends=$derived(fuselageEnds(aircraft));
  let cockpitMin=$derived(Math.max(-3,ends.tail)),cockpitMax=$derived(Math.min(4,ends.nose-0.95));
@@ -42,14 +42,14 @@
  let chartMaxDistance=$derived(trajectory.reduce<number>((max,p)=>Math.max(max,p.distance),1));
  let chartMaxHeight=$derived(trajectory.reduce<number>((max,p)=>Math.max(max,p.height,lastChallenge==='low-altitude'?p.scoringHeight:0),LAUNCH.height));
  let chartMaxEnergy=$derived(trajectory.reduce((max,p)=>Math.max(max,p.energyRatio),1));
- let chartPoints=$derived(trajectory.map(p=>`${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.height/chartMaxHeight*76).toFixed(2)}`).join(' '));
- let energyCurvePoints=$derived(screen==='result'?trajectory.map(p=>`${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.energyRatio/chartMaxEnergy*76).toFixed(2)}`).join(' '):'');
+ let chartPoints=$derived(trajectory.map(p=>`${(38+(screen==='result'?p.time/chartMaxTime:p.distance/chartMaxDistance)*290).toFixed(2)},${(98-p.height/chartMaxHeight*76).toFixed(2)}`).join(' '));
+ let energyCurvePoints=$derived(screen==='result'?trajectory.map(p=>`${(38+p.time/chartMaxTime*290).toFixed(2)},${(98-p.energyRatio/chartMaxEnergy*76).toFixed(2)}`).join(' '):'');
  let chartMaxCost=$derived(trajectory.reduce<number>((max,p)=>Math.max(max,p.energyPerDistance??0),1));
- let costCurvePath=$derived(screen==='result'?trajectory.map((p,i)=>p.energyPerDistance===null?'':`${i===0||trajectory[i-1].energyPerDistance===null?'M':'L'}${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.energyPerDistance/chartMaxCost*76).toFixed(2)}`).join(' '):'');
+ let costCurvePath=$derived(screen==='result'?trajectory.map((p,i)=>p.energyPerDistance===null?'':`${i===0||trajectory[i-1].energyPerDistance===null?'M':'L'}${(38+p.time/chartMaxTime*290).toFixed(2)},${(98-p.energyPerDistance/chartMaxCost*76).toFixed(2)}`).join(' '):'');
  let chartMaxTime=$derived(trajectory.reduce((max,p)=>Math.max(max,p.time),1));
  let chartMaxSpeed=$derived(trajectory.reduce((max,p)=>Math.max(max,p.speed),1));
- let speedCurvePoints=$derived(screen==='result'&&lastChallenge!=='birdman'?trajectory.map(p=>`${(38+p.time/chartMaxTime*290).toFixed(2)},${(98-p.speed/chartMaxSpeed*76).toFixed(2)}`).join(' '):'');
- let scoringCurvePoints=$derived(screen==='result'&&lastChallenge==='low-altitude'?trajectory.map(p=>`${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.scoringHeight/chartMaxHeight*76).toFixed(2)}`).join(' '):'');
+ let speedCurvePoints=$derived(screen==='result'?trajectory.map(p=>`${(38+p.time/chartMaxTime*290).toFixed(2)},${(98-p.speed/chartMaxSpeed*76).toFixed(2)}`).join(' '):'');
+ let scoringCurvePoints=$derived(screen==='result'&&lastChallenge==='low-altitude'?trajectory.map(p=>`${(38+(screen==='result'?p.time/chartMaxTime:p.distance/chartMaxDistance)*290).toFixed(2)},${(98-p.scoringHeight/chartMaxHeight*76).toFixed(2)}`).join(' '):'');
  let energyParts=$derived([{key:'potential',name:'势能',value:hud.potentialEnergy},{key:'kinetic',name:'动能',value:hud.kineticEnergy},{key:'dissipated',name:'已耗散',value:hud.dissipatedEnergy}]);
  let energyTotal=$derived(hud.potentialEnergy+hud.kineticEnergy+hud.dissipatedEnergy);
  let energyBudget=$derived(hud.initialEnergy+(hud.propulsionWork??0)+(hud.controlWork??0)+(hud.waterWork??0)-(hud.fuelEnergyRemoved??0));
@@ -81,15 +81,17 @@
  function renameSaved(id:string,name:string){try{const item=renameAircraft(id,name);saved=listAircraft();if(selectedId===id){change(d=>d.name=item.name);commit();}}catch(e){notify((e as Error).message);}}
  function fileExport(id:string){try{const definition=loadAircraft(id).definition,url=URL.createObjectURL(new Blob([exportAircraft(definition)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=definition.name+'.json';a.click();URL.revokeObjectURL(url);}catch(e){notify((e as Error).message);}}
  async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');if(replace(importAircraft(await f.text()))){selectedId='';notify('导入成功','success');}}}catch(e){notify(t('导入失败：{error}',{error:t((e as Error).message)}));}input.value='';}
- function clearControls(){keys.clear();weight=lateral=rudder=elevator=aileron=0;controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
- function start(replay=false){try{const definition=replay?lastDefinition:forChallenge(aircraft),selectedChallenge=replay?lastChallenge:challenge;simulation=new FlightSimulation(definition,selectedChallenge);lastDefinition=definition;lastChallenge=selectedChallenge;if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(debug);flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
+ function clearControls(){stick=false;stickX=stickY=0;keys.clear();weight=lateral=rudder=elevator=aileron=0;controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
+ function start(replay=false){try{const definition=replay?lastDefinition:forChallenge(aircraft),selectedChallenge=replay?lastChallenge:challenge;simulation=new FlightSimulation(definition,selectedChallenge);lastDefinition=definition;lastChallenge=selectedChallenge;if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(aero);flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
  function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='low-altitude')audio.launch();}
- function togglePause(){if(screen==='flight'&&flightReady)paused=!paused;}
- function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;recordedLength=simulation.recordingLength;screen='result';if(!isReplay){recording=simulation.getRecording();try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
+ function togglePause(){if(screen==='flight'&&flightReady){paused=!paused;clearControls();}}
+ function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;if(result?.landing==='terrain'){audio.crash();scene.markCrash(()=>audio.stroke());}clearControls();recordedLength=simulation.recordingLength;screen='result';if(!isReplay){recording=simulation.getRecording();try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
  function design(){if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
  function challengeAircraft(){return challenge==='birdman'?defaultAircraft:presets.find(p=>p.name===(challenge==='downhill'?'高山速降机动型':'低空喷气巡航型'))!;}
  function enterChallenge(next:ChallengeMode){challenge=next;selectedId='';const nextAircraft=clone(challengeAircraft());for(const key of ['mainWing','horizontalTail','verticalTail'] as const){nextAircraft[key].materialId=aircraft[key].materialId;nextAircraft[key].materialAmount=aircraft[key].materialAmount;}aircraft=forChallenge(nextAircraft);history=new History(clone(aircraft));historyVersion=0;showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
  function keyboard(e:KeyboardEvent,down:boolean){
+ if(!down&&e.code==='KeyX'){stick=false;stickX=stickY=0;}
+ if(e.code==='Escape'&&down&&!e.repeat){e.preventDefault();if(screen==='flight'||screen==='result')design();else if(screen==='design'){screen='menu';showLibrary=false;}return;}
  const target=e.target as HTMLElement;
  if(target.closest('input,select,textarea,summary,a,[contenteditable="true"]')||(e.code==='Space'&&target.closest('button')))return;
  if(screen==='flight'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.code==='Space'||e.code==='KeyC')){
@@ -99,6 +101,10 @@
  else{flightCamera=flightViews[(flightViews.indexOf(flightCamera)+1)%flightViews.length];scene.cameraView(flightCamera);}
  }
  return;
+ }
+ if(!e.ctrlKey&&!e.metaKey&&!e.altKey){
+ if(e.code==='KeyR'&&down&&!e.repeat&&(screen==='flight'||screen==='result')){e.preventDefault();start();return;}
+ if(e.code==='KeyX'){if(screen==='flight'&&flightReady&&!isReplay){stick=down;if(!down)stickX=stickY=0;}return;}
  }
  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
  if(down&&screen==='flight'&&flightReady)keys.add(e.key.toLowerCase());else keys.delete(e.key.toLowerCase());
@@ -120,8 +126,8 @@ const tick=(now:number)=>{
       accumulator+=elapsed;
       let steps=0;
       while(accumulator>=fixedDt&&steps<5){
-        const pitchInput=(keys.has('arrowup')||keys.has('w')?1:0)-(keys.has('arrowdown')||keys.has('s')?1:0);
-        const rollInput=(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0);
+        const pitchInput=stickY+(keys.has('arrowup')||keys.has('w')?1:0)-(keys.has('arrowdown')||keys.has('s')?1:0);
+        const rollInput=stickX+(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0);
         controls.weight=lastDefinition.birdman?clamp(weight+pitchInput,-1,1):0;
         controls.lateral=lastDefinition.birdman?clamp(lateral+rollInput,-1,1):0;
         controls.rudder=clamp(rudder+(keys.has('e')?1:0)-(keys.has('q')?1:0),-1,1);
@@ -150,11 +156,13 @@ const tick=(now:number)=>{
   request=requestAnimationFrame(tick);
 };
 request=requestAnimationFrame(tick);
+const mouse=(e:PointerEvent)=>{if(!stick)return;const radius=innerHeight*0.3;let x=(e.clientX-innerWidth/2)/radius,y=(innerHeight/2-e.clientY)/radius;const length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;};
+window.addEventListener('pointermove',mouse);
 const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,false),blur=clearControls;window.addEventListener('keydown',down);window.addEventListener('keyup',up);window.addEventListener('blur',blur);document.addEventListener('visibilitychange',visibility);
  try{saved=listAircraft();best=readBest(challenge);}catch(e){notify((e as Error).message);}
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get result(){return result}}});
- return()=>{clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
+ return()=>{window.removeEventListener('pointermove',mouse);clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
  function touch(e:PointerEvent,key:'weight'|'lateral'|'rudder',value:number){if(!flightReady)return;e.currentTarget instanceof HTMLElement&&e.currentTarget.setPointerCapture(e.pointerId);if(key==='weight'){if(lastDefinition.birdman)weight=value;else elevator=value;}else if(key==='lateral'){if(lastDefinition.birdman)lateral=value;else aileron=value;}else rudder=value;}
 </script>
 <svelte:head><title>{t('翼构方程')} · {t('设计与驾驶')}</title></svelte:head>
@@ -173,35 +181,27 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
 {/snippet}
 {#snippet altitudeCurve()}
  <section class="trajectory-panel" aria-label={t("距离高度曲线")}>
- <div class="instrument-heading"><h2>{screen==='result'&&lastChallenge==='birdman'?t("距离—高度、能量与能耗"):t("距离—高度")}</h2><span>{trajectory.length?t("真实采样 {p0} 点",{p0:trajectory.length}):lastChallenge==='birdman'?t("离台后开始采样"):t("开始试飞后采样")}</span></div>
- {#if screen==='result'&&lastChallenge==='birdman'}<div class="chart-legend"><span class="height-key">{t("高度 · 左轴 m")}</span><span class="energy-key">{t("剩余机械能 · 右轴 %")}</span><span class="cost-key">{t("实时能耗 · 外右轴 J/m")}</span></div>{:else if screen==='result'&&lastChallenge==='low-altitude'}<div class="chart-legend"><span class="height-key">{t("实际高度 · m")}</span><span class="scoring-key">{t("计分高度上限 · 接触表面 +")} {LOW_ALTITUDE.scoringHeight.toFixed(1)} m</span></div>{/if}
- <svg viewBox={screen==='result'&&lastChallenge==='birdman'?'0 0 450 124':'0 0 348 124'} role="img" aria-label={t("飞行轨迹，水平距离0至{p0}米，高度0至{p1}米{p2}",{p0:chartMaxDistance.toFixed(1),p1:chartMaxHeight.toFixed(1),p2:screen==='result'&&lastChallenge==='birdman'?t("；剩余机械能为动能与势能之和占起飞初始能量的百分比，右轴0至{p0}%；实时能耗外右轴0至{p1}焦耳每米",{p0:(chartMaxEnergy*100).toFixed(0),p1:chartMaxCost.toFixed(1)}):lastChallenge==='low-altitude'?t("；虚线为沿实际航迹的接触表面加{p0}米计分高度上限",{p0:LOW_ALTITUDE.scoringHeight.toFixed(1)}):''})}>
+ <div class="instrument-heading"><h2>{screen==='result'?t("飞行数据曲线"):t("距离—高度")}</h2><span>{trajectory.length?t("真实采样 {p0} 点",{p0:trajectory.length}):lastChallenge==='birdman'?t("离台后开始采样"):t("开始试飞后采样")}</span></div>
+ {#if screen==='result'}<div class="chart-legend"><span class="height-key">{t("高度 · 左轴 m")}</span><span class="energy-key">{t("剩余机械能 · 右轴 %")}</span><span class="cost-key">{t("实时能耗 · 外右轴 J/m")}</span><span class="speed-key">{t("空速")} · m/s</span>{#if lastChallenge==='low-altitude'}<span class="scoring-key">{t("计分高度上限 · 接触表面 +")} {LOW_ALTITUDE.scoringHeight.toFixed(1)} m</span>{/if}</div>{/if}
+ <svg viewBox={screen==='result'?'0 0 510 124':'0 0 348 124'} role="img" aria-label={screen==='result'?t("飞行数据曲线")+' · '+t("横轴为试飞时间，各曲线使用独立纵轴。"):t("飞行轨迹，水平距离0至{p0}米，高度0至{p1}米{p2}",{p0:chartMaxDistance.toFixed(1),p1:chartMaxHeight.toFixed(1),p2:''})}>
  <line class="chart-grid" x1="38" y1="22" x2="328" y2="22"/><line class="chart-grid" x1="38" y1="60" x2="328" y2="60"/><path class="chart-axis" d="M38 16V98H330"/>
- <text x="2" y="25">{chartMaxHeight.toFixed(1)}</text><text x="23" y="101">0</text><text x="38" y="116">0</text><text x="328" y="116" text-anchor="end">{chartMaxDistance.toFixed(1)} m</text><text x="3" y="12">{t("高度 m")}</text>
- {#if trajectory.length}{@const last=trajectory[trajectory.length-1]}<polyline class="chart-line" points={chartPoints}/><circle class="chart-current" cx={38+last.distance/chartMaxDistance*290} cy={98-last.height/chartMaxHeight*76} r="3"/>{/if}
- {#if screen==='result'&&lastChallenge==='birdman'}
+ <text x="2" y="25">{chartMaxHeight.toFixed(1)}</text><text x="23" y="101">0</text><text x="38" y="116">0</text><text x="328" y="116" text-anchor="end">{screen==='result'?chartMaxTime.toFixed(1)+' s':chartMaxDistance.toFixed(1)+' m'}</text><text x="3" y="12">{t("高度 m")}</text>
+ {#if trajectory.length}{@const last=trajectory[trajectory.length-1]}<polyline class="chart-line" points={chartPoints}/><circle class="chart-current" cx={38+(screen==='result'?last.time/chartMaxTime:last.distance/chartMaxDistance)*290} cy={98-last.height/chartMaxHeight*76} r="3"/>{/if}
+ {#if screen==='result'}
  <path class="chart-axis" d="M328 22V98"/><text x="336" y="25">{(chartMaxEnergy*100).toFixed(0)}%</text><text x="336" y="63">{(chartMaxEnergy*50).toFixed(0)}%</text><text x="336" y="101">0%</text>
  <polyline class="chart-energy-line" aria-label={t("剩余机械能占比曲线")} points={energyCurvePoints}/>
  <path class="chart-axis" d="M390 22V98"/><text x="396" y="12">J/m</text><text x="396" y="25">{chartMaxCost.toFixed(1)}</text><text x="396" y="63">{(chartMaxCost/2).toFixed(1)}</text><text x="396" y="101">0</text>
  <path class="chart-cost-line" aria-label={t("实时能耗曲线")} d={costCurvePath}/>
- {:else if screen==='result'&&lastChallenge==='low-altitude'}
+ {/if}
+ {#if screen==='result'&&lastChallenge==='low-altitude'}
  <polyline class="chart-scoring-line" aria-label={t("计分高度参考曲线")} points={scoringCurvePoints}/>
  {/if}
+ {#if screen==='result'}<path class="chart-axis" d="M450 22V98"/><text x="455" y="12">m/s</text><text x="455" y="25">{chartMaxSpeed.toFixed(1)}</text><text x="455" y="101">0</text><polyline class="chart-speed-line" aria-label={t("空速")} points={speedCurvePoints}/>{/if}
  </svg>
- <p class="chart-caption">{lastChallenge==='birdman'?t("离台后"):t("开始试飞后")}{t("每 0.1 s 采样，末点保留实际终止高度。")}{#if screen==='result'&&lastChallenge==='birdman'}{t("机械能占比 =（动能 + 势能）/ 离台初始能量，动能含转动。实时能耗 = 耗散功率 / 水平速度；无定义时断线，不记作零。")}{:else if lastChallenge!=='birdman'}{t("距离从出发门后累计，门前采样距离为零。")}{#if lastChallenge==='low-altitude'}{t("虚线沿每个真实采样位置的地形或河面上方")} {LOW_ALTITUDE.scoringHeight.toFixed(1)} {t("m；实际高度高于虚线时超出计分高度。")}{/if}{/if}</p>
+ <p class="chart-caption">{#if screen==='result'}{t("横轴为试飞时间，各曲线使用独立纵轴。")} {/if}{lastChallenge==='birdman'?t("离台后"):t("开始试飞后")}{t("每 0.1 s 采样，末点保留实际终止高度。")}{#if screen==='result'}{t("机械能占比 =（动能 + 势能）/ 离台初始能量，动能含转动。实时能耗 = 耗散功率 / 水平速度；无定义时断线，不记作零。")}{:else if lastChallenge!=='birdman'}{t("距离从出发门后累计，门前采样距离为零。")}{#if lastChallenge==='low-altitude'}{t("虚线沿每个真实采样位置的地形或河面上方")} {LOW_ALTITUDE.scoringHeight.toFixed(1)} {t("m；实际高度高于虚线时超出计分高度。")}{/if}{/if}</p>
  </section>
 {/snippet}
-{#snippet speedCurve()}
- <section class="trajectory-panel" aria-label={t("空速曲线")}>
- <div class="instrument-heading"><h2>{t("空速")}</h2><span>{t("真实采样")} {trajectory.length} {t("点")}</span></div>
- <svg viewBox="0 0 348 124" role="img" aria-label={t("空速曲线，试飞时间0至{p0}秒，空速0至{p1}米每秒",{p0:chartMaxTime.toFixed(1),p1:chartMaxSpeed.toFixed(1)})}>
- <line class="chart-grid" x1="38" y1="22" x2="328" y2="22"/><line class="chart-grid" x1="38" y1="60" x2="328" y2="60"/><path class="chart-axis" d="M38 16V98H330"/>
- <text x="2" y="25">{chartMaxSpeed.toFixed(1)}</text><text x="23" y="101">0</text><text x="38" y="116">0</text><text x="328" y="116" text-anchor="end">{chartMaxTime.toFixed(1)} s</text><text x="3" y="12">{t("空速 m/s")}</text>
- <polyline class="chart-speed-line" points={speedCurvePoints}/>
- </svg>
- <p class="chart-caption">{t("每 0.1 s 记录真实空速；横轴为开始试飞后的模拟时间，含助跑或跑道滑跑，暂停不计时。")}</p>
- </section>
-{/snippet}
+
 <div class="app" class:flying={screen==='flight'} class:designing={screen==='design'} class:powered-flight={screen==='flight'&&lastDefinition.engine.count>0} class:low-flying={screen==='flight'&&lastChallenge==='low-altitude'} class:awaiting-flight={screen==='flight'&&!flightReady}>
  <div class="scene" bind:this={host} aria-label={t("三维滑空机与湖面场景")}></div>
  <header class="topbar">
@@ -214,7 +214,8 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
    <label class="language-label"><span>{t('语言')}</span><select aria-label={t('语言')} value={$language} onchange={e=>setLanguage(e.currentTarget.value as Language)}><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label>
    <AudioSettings {audio} error={audioError}/>
    <label class="quality-label">{t("画质")} <select aria-label={t("画质")} bind:value={quality} onchange={()=>scene?.setQuality(quality)}><option value="Auto">{t(qualityNames.Auto)}</option><option value="High">{t(qualityNames.High)}</option><option value="Medium">{t(qualityNames.Medium)}</option><option value="Low">{t(qualityNames.Low)}</option></select></label>
-   <button class="text-button" onclick={()=>{debug=!debug;scene?.setDebug(debug);}} aria-pressed={debug}>{t("性能")}</button>
+   <button class="text-button" onclick={()=>{aero=!aero;scene?.setDebug(aero);}} aria-pressed={aero}>{t("气动图层")}</button>
+   <button class="text-button" onclick={()=>{debug=!debug;}} aria-pressed={debug}>{t("性能")}</button>
   </div>
  </header>
  {#if screen==='menu'}
@@ -289,7 +290,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  {#if lastChallenge==='low-altitude'}<section class="challenge-hud" class:over-height={(hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight} aria-label={t("贴地挑战数据")}><span>{t("离地")} <strong>{(hud.groundClearance??0).toFixed(1)} m / {LOW_ALTITUDE.scoringHeight} m</strong></span><span>{t("得分")} <strong>{(hud.score??0).toFixed(0)}</strong></span><span>{t("连续超高")} <strong>{(hud.aboveHeightTime??0).toFixed(1)} s</strong></span>{#if (hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight}<b role="status">{t("超出计分高度 · 降低高度")}</b>{/if}</section>{/if}
  {#if lastDefinition.engine.count}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t("油门 · Shift 增 / Ctrl 减")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><input aria-label={t("油门")} disabled={!flightReady||isReplay} type="range" min="0" max="1" step="0.01" bind:value={throttle}/></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}{t("% · 推力")} {(hud.thrust??0).toFixed(0)} {t("N · 余油")} {(hud.fuelRemaining??0).toFixed(2)} L</p></section>{/if}
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}
- <div class="flight-tools"><button disabled={!flightReady} title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button><select aria-label={t("飞行相机")} title={t("C 键切换视角")} bind:value={flightCamera} onchange={e=>scene.cameraView(e.currentTarget.value)}>{#each flightViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>
+ <div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次")} / Esc · {t("设计")}</span><button disabled={!flightReady} title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button><select aria-label={t("飞行相机")} title={t("C 键切换视角")} bind:value={flightCamera} onchange={e=>scene.cameraView(e.currentTarget.value)}>{#each flightViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>
  {#if !flightReady}<div class="launch-action"><button class="primary launch-start" aria-label={t("开始试飞")} aria-keyshortcuts="Space" onclick={beginFlight}>{t("开始试飞")} <svg viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><p>{t("空格开始 / 暂停 · C 切换视角")}</p></div>{/if}
  {#if paused}<div class="pause-banner">{t("飞行已暂停")} <button onclick={()=>paused=false}>{t("继续")}</button></div>{/if}
  <div class="flight-controls">
@@ -305,10 +306,15 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  <p class="best">{t("个人最佳")} {best?best.toFixed(2):t("暂无")} {lastChallenge==='birdman'?'m':lastChallenge==='downhill'?'s':t("分")} · {result.completed?t("到达终点"):lastChallenge!=='birdman'?t("未通过全部检查点或碰撞地形"):result.landing==='water'?t("接触湖面"):t("达到飞行边界")}</p>
  <dl class="result-statistics"><div><dt>{t("总计时")}{lastChallenge==='birdman'?t("（含助跑）"):''}</dt><dd>{result.time.toFixed(2)} s</dd></div><div><dt>{t("平均速度")}</dt><dd>{result.averageSpeed.toFixed(2)} m/s</dd></div><div><dt>{t("最高速度")}</dt><dd>{result.maxSpeed.toFixed(2)} m/s</dd></div><div><dt>{t("最低速度")}</dt><dd>{result.minSpeed.toFixed(2)} m/s</dd></div><div><dt>{t("最大高度")}</dt><dd>{result.maxHeight.toFixed(2)} m</dd></div><div><dt>{t("输入记录")}</dt><dd>{recordedLength} {t("步 · 60 Hz")}</dd></div></dl>
  <p class="result-structure" aria-label={t("最终结构状态")}>{t("结构断裂")} {hud.fractureCount??0} {t("次 · 独立断片")} {hud.fragmentCount??0} {t("片 · 最终结构极限利用率")} {((hud.maxStressRatio??0)*100).toFixed(1)}%</p>
- <div class="result-instruments">{#if lastChallenge!=='birdman'}{@render speedCurve()}{/if}{@render altitudeCurve()}</div><div class="result-actions"><button class="primary" onclick={design}>{t("返回设计改进")}</button><button onclick={()=>start()}>{t("再试一次")}</button><button onclick={()=>start(true)}>{t("重放飞行")}</button></div>
+ <div class="result-instruments">{@render altitudeCurve()}</div><div class="result-actions"><button class="primary" onclick={design}>{t("返回设计改进")}</button><button onclick={()=>start()}>{t("再试一次")}</button><button onclick={()=>start(true)}>{t("重放飞行")}</button></div>
  </section>
  {/if}
  {#if showLibrary&&screen==='design'}<section class="library" aria-label={t("本地机库")}><div class="library-title"><h2>{t("本地机库 ·")} {saved.length} {t("架")}</h2><button onclick={()=>showLibrary=false}>{t("关闭")}</button></div><p>{t("飞机保存在当前浏览器。同名保存需确认覆盖，新名字新增记录。各架飞机可导出 JSON 备份或分享。")}</p><div class="library-actions"><label class="button">{t("导入 JSON")}<input aria-label={t("导入飞机文件")} type="file" accept=".json,application/json" onchange={fileImport}/></label></div>{#if !saved.length}<p class="empty">{t("机库还没有飞机。先保存你的第一个设计。")}</p>{/if}{#each saved as s}<article class="saved-plane"><input aria-label={t("重命名{p0}",{p0:s.name})} value={s.name} maxlength="60" onchange={e=>renameSaved(s.id,e.currentTarget.value)}/><small>{new Date(s.updatedAt).toLocaleString($language)}{selectedId===s.id?t(" · 当前飞机"):''}</small><div><button onclick={()=>load(s.id)}>{t("加载")}</button><button onclick={()=>{try{duplicateAircraft(s.id);saved=listAircraft();}catch(e){notify((e as Error).message);}}}>{t("复制")}</button><button onclick={()=>{if(confirm(t('删除“{name}”？此操作不可撤销。',{name:s.name}))){try{deleteAircraft(s.id);saved=listAircraft();if(selectedId===s.id)selectedId='';}catch(e){notify((e as Error).message);}}}}>{t("删除")}</button><details class="aircraft-menu"><summary>{t('更多')}</summary><button onclick={()=>fileExport(s.id)}>{t("导出 JSON")}</button></details></div></article>{/each}</section>{/if}
  {#if debug}<aside class="performance" aria-label={t("开发性能面板")}><h2>{t("性能实测")} <button onclick={()=>debug=false}>{t("关闭")}</button></h2><p>{t(qualityNames[perf.quality]??perf.quality??'')} · {Number(perf.fps||0).toFixed(1)} FPS</p><p>{t("平均")} {Number(perf.mean||0).toFixed(2)} ms · P95 {Number(perf.p95||0).toFixed(2)} ms · P99 {Number(perf.p99||0).toFixed(2)} ms</p><p>{t("物理")} {Number(perf.physicsMs||0).toFixed(3)} {t("ms · 渲染提交")} {Number(perf.renderMs||0).toFixed(2)} ms</p><p>{t("几何")} {Number(perf.geometryMs||0).toFixed(2)} ms · {perf.drawCalls||0} {t('绘制调用')} · {perf.triangles||0} {t('三角形')}</p><p>{t("几何与纹理估算")} {typeof perf.memory==='number'?perf.memory.toFixed(2)+' MiB':t("不可用")}</p><small>{t("帧率来自当前环境，不代表真实手机性能。")}</small></aside>{/if}
  {#if message}<div class="toast" role="status">{t(message)}<button aria-label={t("关闭提示")} onclick={()=>message=''}>{t("关闭")}</button></div>{/if}
 </div>
+
+{#if stick&&screen==='flight'}<div class="joystick" aria-label={t("虚拟操纵杆")}><div class="stick-deadzone"></div><div class="stick-knob" style:left={`${50+stickX*50}%`} style:top={`${50-stickY*50}%`}></div></div>{/if}
+{#if aero&&screen==='flight'&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
+{#each [["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"],["阻力",hud.aerodynamics.drag.length(),"N"],["侧向力",hud.aerodynamics.force.z,"N"],["攻角",hud.alpha,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""],["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
+</dl></aside>{/if}

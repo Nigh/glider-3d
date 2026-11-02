@@ -309,10 +309,19 @@ export class GameAudio {
   }
 
   private timingPoint(): void {
-    // Two soft layers stay above wind without a piercing bell or a long engine-masking tail.
-    const level = 1 + 0.25 * volume(this.state.speed / 30);
-    this.tone(720, this.state.challengeProgress >= 1 ? 1080 : 900, 0.24, 0.10 * level, false);
-    this.tone(320, 190, 0.14, 0.055 * level, false, 'triangle');
+    this.noiseBurst(0.045, 0.095, false);
+    this.tone(1650, 360, 0.055, 0.065, false, 'square');
+    this.tone(260, 95, 0.07, 0.06, false, 'triangle');
+  }
+
+  crash(): void {
+    if (!this.canPlay()) return;
+    this.tone(440, 220, 0.38, 0.16, false, 'square');
+    this.tone(330, 165, 0.38, 0.12, false, 'square');
+  }
+
+  stroke(): void {
+    if (this.canPlay()) this.noiseBurst(0.32, 0.14, false);
   }
 
   private clearVoices(): void {
