@@ -1,15 +1,15 @@
-# 飞行挑战
+# Aero Formula · 翼构方程 · 翼の方程式
 
-纯静态的三维飞机设计与驾驶挑战游戏。TypeScript、Svelte 5、Three.js、Vite；不使用通用物理引擎。中文界面，支持桌面、手机竖屏及横屏。
+A static, browser-based 3D aircraft design and flight challenge game. Built with TypeScript, Svelte 5, Three.js and Vite, without a general-purpose physics engine. Supports English, Simplified Chinese and Japanese, desktop browsers, and portrait or landscape touch screens. The interface defaults to your browser language. Use the language selector to change it; manual selection is saved in the current browser.
 
-## 运行
+## Run locally
 
 ```sh
 npm install
 npm run dev
 ```
 
-打开终端中的本地地址。生产构建：
+Open the local URL printed in the terminal. For a production build:
 
 ```sh
 npm run check
@@ -18,172 +18,172 @@ npm run build
 npx vite preview --host 0.0.0.0
 ```
 
-将 `dist/` 部署至静态站点。首次获取中文网络字体失败时使用本机 sans-serif，不影响游戏。
+Deploy `dist/` to any static host. If the Chinese web font cannot load, the interface uses the local sans-serif font; play remains available.
 
-## GitHub Pages 自动部署
+## GitHub Pages deployment
 
-在线地址：[无动力滑翔](https://nigh.github.io/glider-3d/)。
+Play [Aero Formula](https://nigh.github.io/glider-3d/).
 
-`.github/workflows/deploy-pages.yml` 在推送或合并到 `main` 后自动部署，也支持在 Actions 页面通过 `Run workflow` 手动触发。仓库 Pages 的构建来源为 **GitHub Actions**。
+`.github/workflows/deploy-pages.yml` deploys after a push or merge to `main`. You can also select **Run workflow** in GitHub Actions. The repository's Pages build source is **GitHub Actions**.
 
-工作流使用 Node.js 24，依次执行 `npm ci`、类型检查、单元测试和生产构建，然后通过官方 Pages Actions 上传并部署 `dist/`。构建路径直接使用 `configure-pages` 返回的 `base_path`，无需硬编码仓库名称，也不改变本地开发路径。构建任务没有部署写权限，部署任务单独申请 `pages: write` 和 `id-token: write`。
+The workflow uses Node.js 24, runs `npm ci`, type checks, unit tests and the production build, then uploads and deploys `dist/` through the official Pages Actions. The build uses `base_path` from `configure-pages`, so the repository name is not hardcoded and local development paths remain unchanged. The build job has no deployment write permission; only the deployment job requests `pages: write` and `id-token: write`.
 
-Action 版本于2026-10-30通过各官方仓库的最新发布接口核实，并固定到对应提交 SHA：`checkout` v7.0.1、`setup-node` v7.1.0、`configure-pages` v6.0.0、`upload-pages-artifact` v5.0.0、`deploy-pages` v5.0.1。升级时同时更新 SHA 和旁边的版本注释。
+Action versions were checked against the official repositories' latest-release APIs on 2026-10-30 and pinned to their commit SHAs: `checkout` v7.0.1, `setup-node` v7.1.0, `configure-pages` v6.0.0, `upload-pages-artifact` v5.0.0 and `deploy-pages` v5.0.1. Update both the SHA and its version comment when upgrading.
 
-本地复现项目子路径构建：
+Reproduce a project-subpath build locally:
 
 ```sh
 npm run build -- --base /glider-3d/
 npx vite preview --base /glider-3d/
 ```
 
-## 游戏
+## Challenges and aircraft
 
-### 挑战与飞机类型
+- Each home-screen challenge button opens its aircraft workshop. Design and Flight navigation appear inside the workshop, not on the home screen.
+- **Birdman:** automatically uses the unpowered Birdman configuration. Launch from the lakeside platform and compete for horizontal distance.
+- **Mountain descent:** launch from an elevated mountaintop catapult, accelerating to 20 m/s over 20 m. The deck has at least 50 m of terrain clearance. Timing starts at the starting gate. Follow checkpoints through a winding 1800 m valley. Gate posts extend beyond both mountainsides; there is no extra lateral course boundary, but terrain collision and the 125 m height limit still apply. Completed runs rank by time. Terrain collisions and missed checkpoints do not count as finishes. The workshop starts with the mountain-descent maneuvering preset.
+- **Low-level flight:** start on a rail 2 m above a 400 m runway. Actual engine thrust drives the ground roll; lift releases the aircraft once it exceeds the rail's holding force. There is no catapult or catapult sound, and runway contact does not end the flight. Timing and scoring start at the starting gate. Follow a winding 1600 m river valley with uneven ground and mountains on both sides. Ground texture helps judge clearance. Flying lower and reaching the finish sooner increases the score. Above 25 m of clearance, a prominent red HUD warning appears and points are deducted continuously. The deduction rate rises with uninterrupted time above the limit. Returning within 25 m resets that timer without refunding points. Backtracking and circling do not earn repeated course distance. Only finished runs enter the records; negative scores remain valid. The jet-cruise preset is selected by default, and throttle can be increased before starting.
+- Birdman configuration is determined by the challenge; there is no separate toggle. Only the vertical tail has a control surface. Fore-aft and lateral pilot movement control pitch and roll. Other challenges use a streamlined cockpit, ailerons and a horizontal-tail elevator; the vertical tail is all-moving by default. Imported, loaded and preset aircraft follow the current challenge configuration.
+- `W/S` command nose-down/nose-up, `A/D` command left/right roll, and `Q/E` command left/right yaw. Birdman's first two axes move the pilot's center of mass; conventional aircraft use the elevator and ailerons. Touch controls provide all three axes. Control surfaces move gradually, including their return to neutral.
+- Each challenge keeps separate records. Records from different physics versions do not share a leaderboard. Replays retain the challenge, design, control inputs and launch disturbance. The former standard, assisted and experimental modes have been removed.
+- Workshop tabs are Fuselage, Main wing, Horizontal tail, Vertical tail, Power and Assembly, with Assembly always last. Birdman hides the Power tab and removes engines and fuel.
+- The upper-left HUD is challenge-specific. Mountain descent shows airspeed and sink rate. Low-level flight shows airspeed, ground clearance and remaining fuel. Birdman retains distance, altitude, time, angle of attack, lift-to-drag ratio and energy use. Other challenges do not show Birdman's energy instruments.
+- Results use actual sampled data. Mountain descent shows airspeed and distance–altitude charts. Low-level flight adds a dashed scoring ceiling along the actual track: local terrain or river height plus 25 m. The airspeed chart uses simulation time since starting the flight, including the launch or runway roll. Scored distance accumulates only after the starting gate; earlier samples have zero distance. Pauses produce no samples, and replays resample the same flight. Birdman retains altitude, mechanical-energy and energy-use curves.
+- The results panel fades in on the right over 650 ms; portrait phones use a scrollable bottom panel. The background is slightly transparent while text and charts remain opaque. The camera slowly orbits from the final flight view without jumping to a preset angle. Vertical dragging changes elevation; horizontal motion remains automatic, including while the mouse is held. Reduced-motion preferences stop automatic orbiting.
+- Light lake or river skimming can continue into flight. Submerged parts experience simplified water drag and buoyancy, and the aircraft remains controllable. Water loads can slow, turn or break the actual beam structure. Nose immersion ends the run, as does body contact with water at a total speed below 1.5 m/s. Low speed in air does not trigger this rule. Riverbeds and banks remain solid terrain. Splashes begin at the actual contact point rather than waiting for results.
 
-- 首页每种挑战一个按钮，直接进入对应飞机工坊；首页顶部不显示设计和试飞入口。
-- **鸟人间挑战**：工坊自动启用鸟人间构型。从湖边平台起飞，以最远水平距离计分。
-- **高山速降挑战**：从背靠山顶的高架弹射台出发，20 m内加速至20 m/s，台面至少离地50 m。通过出发计时门后开始计时，沿更曲折的1800 m山谷依次通过检查点。计时门左右伸出山体，无额外横向赛道边界，仍受地形与125 m限高约束。完成后按用时排名；碰撞地形或漏过检查点不记完成成绩。进入工坊默认使用“高山速降机动型”。
-- **低空飞行挑战**：从400 m跑道上方2 m高导轨自行滑跑起飞，升力克服连接保持力后脱轨；无弹射或弹射音效，接触跑道不结束飞行。通过出发门后开始计时、计分，沿1600 m蜿蜒河谷前进。两侧山地及谷底起伏明显，地面纹理帮助判断高度。越贴地、越快到达，分数越高。离地超过25 m时HUD显示醒目红色警示并持续扣分；连续超高越久扣分越快。回到25 m内清除连续计时，不撤销已扣分。倒飞、绕圈不重复计入赛道距离。仅到达终点的成绩进入纪录，负分保留。默认使用“低空喷气巡航型”，起飞前可提高油门。
-- 鸟人间构型仅在鸟人间挑战中自动启用，不再提供开关。鸟人间仅垂尾有控制面，通过前后、左右移动重心控制俯仰与滚转。其他挑战使用流线座舱、副翼和平尾升降舵，垂尾默认全动；导入、加载和预设也遵循当前挑战构型。
-- `W/S` 控制低头/抬头，`A/D` 控制左/右滚转，`Q/E` 控制左/右偏航。鸟人间前两轴映射为重心移动，普通飞机映射为升降舵与副翼。触屏提供三轴按钮。控制面逐步运动，松手回中也有过程。
-- 已取消标准、辅助、实验模式。每种挑战单独记录成绩；新物理版本不与旧纪录混榜。重放保留挑战、设计、操纵输入与起飞扰动。
-- 工坊部件页依次为机身、主翼、水平尾翼、垂直尾翼、动力、组装；组装固定在最后。
-- 左上飞行数据按挑战精简：高山速降仅空速和下降率；低空仅空速、离地高度和剩余燃料。鸟人间保持原有距离、高度、计时、攻角、升阻比和能耗。其他挑战不显示鸟人间能量仪表。
-- 结果页按挑战展示真实采样曲线：高山速降仅空速和距离—高度；低空增加沿实际航迹的计分高度上限虚线，即当地地形或河面高度加25 m。空速横轴为开始试飞后的模拟时间，含助跑和跑道滑跑；距离在出发门后累计，门前采样距离为零。暂停不采样，重放重新记录相同数据。鸟人间保留高度、机械能和能耗曲线。
-- 结果面板在右侧用650 ms渐入，手机竖屏放在底部并支持滚动；背景轻微透明，文字与图表保持清晰。镜头从当前视角缓缓环绕最终飞机，不跳到预设角度；仅允许上下拖动调整仰角，左右方向交给自动环绕，按住鼠标也不暂停环绕。减少动态效果时停止自动环绕。
-- 湖面和河面允许轻度擦水：浸水部分受到简化水阻与浮力，仍可操纵并重新离水。水载荷会造成减速、偏转及真实梁失效；机头入水，或主体触水且总速度低于1.5 m/s时结束。空中低速不触发此规则，河床及岸坡仍按硬地处理。水花从实际擦水位置触发，不再等结算才出现。
+## Materials, deformation and wing failure
 
-### 材料、形变与断翼
+Choose Sitka spruce, 6061-T6 aluminum or finished carbon/epoxy laminate separately for the main wing, horizontal tail and vertical tail. Each surface has an independent material amount from 50% to 200%, defaulting to 100%. Material amount changes beam mass, bending and torsional stiffness, and section load capacity. Pilot, fuselage and fixed-density skin mass do not scale with it. Beams use preset sections; chordwise width, normal height and wall thickness are not exposed as controls. Density, elastic moduli and strengths come from the shared material catalog.
 
-主翼、水平尾翼和垂直尾翼分别选择云杉、6061-T6 铝或成品碳/环氧层板，并独立调节50%–200%的材料用量，默认100%。用量同比改变承力梁质量，同时改变弯曲、扭转刚度与截面承载能力；驾驶员、机身和固定面密度蒙皮不随用量缩放。承力梁使用预设合理截面，不暴露弦向宽度、法向高度或壁厚控件。密度、弹性模量和强度仍由材料目录统一定义。
+The default Birdman design uses an ultralight carbon/epoxy structure; descent and jet presets use reinforced sections. Materials and challenge configuration are independent: changing challenges retains current materials and amounts. Old designs without amounts load at 100%. Saving, importing, exporting and undo preserve each surface's amount. More mass does not guarantee higher speed: it reduces deceleration from a given drag force but increases wing loading and takeoff requirements.
 
-默认鸟人间使用超轻碳/环氧结构，速降和喷气预设使用加强截面；材料与模式独立，进入其他挑战保留当前材料和用量。旧设计缺失用量时按100%读取；新设计保存、导入导出和撤销均保留各翼用量。更重不保证更快：增重会降低同一阻力造成的减速度，也会增加翼载和起飞要求。
+Surfaces bend and break at the existing 0.8 m aerodynamic boundaries. Rendered sections are spaced at no more than 0.2 m and interpolate continuously. When overloaded, the continuous outboard section becomes an independent rigid body, retaining its position, orientation and velocity field. It continues to receive aerodynamic forces from its own local airflow and can break again. A detached wing does not itself end the run; a fragment landing does not end the main aircraft's run. Body contact, course boundaries and finish conditions still determine results. The attitude and structure panel shows ultimate-limit utilization separately for the main wing, horizontal tail and vertical tail, alongside deformation and fracture count. Utilization comes from the equivalent-beam model, not a certified flight envelope.
 
-翼面沿现有0.8 m气动边界形变、断裂，显示截面不超过0.2 m并连续插值。超载时断点外侧的连续翼块成为独立刚体，保留位置、姿态与速度场，继续受到自身来流对应的气动力，也可再次断裂。断翼本身不结束飞行，断片落地也不结束主体；主体仍按接触、赛道边界和完成条件结算。姿态与结构面板显示极限利用率、形变和断裂次数。
+Returning to Design restores complete, neutral surfaces. Starting another flight removes fragments and establishes static sag under supported self-weight. The runway roll and catapult continuously evaluate real aerodynamic loads, constraint inertia and deformation; leaving the rail does not reset beam nodes. Launch height uses the full deformed collision shape to maintain clearance. Fragments share the wing's vertex buffers. Cleanup releases only fragment-owned indices and draw state, preserving GPU resources still used by the wing.
 
-返回设计恢复完整、中性的翼面；重新试飞清除断片并建立支撑自重下的静态下垂。滑跑和弹射持续计算真实气动力、约束惯性载荷和形变，离轨不重置梁节点；发射高度按变形后完整碰撞体保证净空。断片共享主翼的顶点缓冲，回收时仅释放断片自己的索引及绘制状态，不销毁仍由主翼使用的GPU资源。
+The structure is a quasi-static equivalent beam. It does not model full soft-body behavior, manufacturability, flutter, elastic vibration, plasticity, fatigue or wakes between fragments. The interface labels engineering-equivalent directional material values. Old designs receive default materials and sections; unknown materials are rejected on import. New records remain separate from earlier physics versions. See [formulas, parameters and sources](docs/physics.md#材料与分段弹性结构).
 
-这是准静态等效梁，不是完整软体或可制造性分析；不模拟真实颤振、弹性振动、塑性、疲劳及断片间尾流。材料方向参数中的工程等效值在界面中明确标注。旧设计自动补默认材料及截面，未知材料拒绝导入；新纪录与旧物理版本隔离。参数、公式和来源见[物理文档](docs/physics.md#材料与分段弹性结构)。
+## Jet power and fuel
 
-### 喷气动力与燃油
+The Power tab offers one jet engine model, with unpowered, single-engine or twin-engine layouts. A single engine stays on the fuselage centerline; twins stay on either side. Lateral offset is fixed. Adjust fore-aft position and signed vertical offset from −0.5 to 1 m: negative is below, positive above. A single engine's valid height ranges can be discontinuous, automatically skipping overlap with the fuselage, cockpit, canopy and nose cone; the interface lists the current valid ranges. Mounts farther from the fuselage receive automatic supports. Engines and supports contribute to mass, center of mass, inertia and thrust moment. The isolated Power view hides the environment.
 
-工坊“动力”页提供一种喷气引擎，可选无动力、单发或双发。单发固定在机身中心线上，双发固定在机身两侧，不提供侧向偏移。可调整前后位置与−0.5～1 m垂直偏移，负值在下、正值在上，不再选择“上方/下方”。单发高度范围不连续，自动跳过与机身、座舱、座舱盖和鼻锥重叠的区间；界面列出当前合法范围。远离机身时自动生成支撑，实际参与质量、重心、惯量及推力力矩。独立动力视图隐藏环境。
+The fuel tank stays inside the fuselage. Adjust only its longitudinal position and capacity, from 0 to 40 L. Position bounds depend on capacity and cockpit space so the entire tank remains within the closed fuselage shell. Removing engines also removes the tank, including for imported and loaded designs. Flights start with a full tank at 0.8 kg/L. Design instruments and 3D endpoint markers show the actual full-to-empty center-of-mass range. Empty tanks retain their shell mass. Fuel use changes mass, center of mass and inertia; thrust stops when fuel runs out. Birdman automatically removes power and fuel.
 
-油箱固定在机身内部，只可调整纵向位置与0–40 L容量，不提供垂直或侧向位置。纵向范围随容量和座舱空间调整，保证整个油箱在封闭机身壳内。没有引擎时自动取消油箱，包括导入和加载的设计。起飞装满，燃油密度0.8 kg/L；设计仪表与三维端点连线显示满油至空油的真实重心范围，空油仍保留油箱壳重。油耗改变质量、重心与惯量，耗尽后停止推力。鸟人间挑战自动移除动力和燃油。
+Hold `Shift` to increase throttle or `Ctrl` to decrease it at 35% per second. Touch screens use a throttle slider. Engine speed responds with a delay; actual thrust and fuel use follow engine speed. The HUD shows throttle, engine speed, thrust and remaining fuel. Replays record throttle inputs. Engine data lives in `src/engines.ts` as `engineCatalog`; adding a model does not require redesigning the aircraft or propulsion data structures.
 
-`Shift` 增大、`Ctrl` 减小油门，按住时每秒改变35%；触屏使用油门滑条。引擎转速有响应延迟，实际推力和耗油随转速变化。HUD显示油门、转速、推力和余油，重放记录油门输入。引擎数据集中在 `src/engines.ts` 的 `engineCatalog`，增加型号无需重写飞机和推进数据结构。
+Each engine produces up to 360 N, or 720 N for twins, twice the earlier values. Fuel consumption and engine response time are unchanged. Exhaust has three blue-flame layers, a bright core and four flame segments. Intensity follows actual thrust and pulses with simulation time. Pausing freezes it; zero thrust extinguishes it.
 
-单台引擎最大推力360 N，双发720 N，相比原值翻倍；耗油率和转速响应时间不变。喷流包含三层蓝焰、高亮内核与四个火焰节，随实际推力增强并按模拟时间脉动；暂停冻结，无推力时熄灭。
+## Birdman walkthrough
 
-### 鸟人间基础流程
+1. Select Birdman on the home screen. Edit the fuselage endpoints and cockpit position. The pilot is fixed at 60 kg. Legal legacy pilot masses also normalize to 60 kg, so old files provide no weight advantage.
+2. On the Main wing, Horizontal tail or Vertical tail tab, drag four control points directly on the 3D aircraft. Drag root chord 1–4 or tip chord 2–3 to move both endpoints together. Screen-vertical motion has light snapping; hold `Ctrl` to disable it. Numeric inputs do not snap. Left and right wings remain symmetric.
+3. Use Design and Flight at the top of the workshop. Assembly is the final design tab. Assembly and wing editing hide the environment. Dragging the nose or tail changes that end without moving the other. The cockpit and all three wing mounting points remain supported by the fuselage. Tail root centers attach directly to the fuselage beam. There are no external main-wing struts.
+4. Enter Flight, then select the large bottom-center Start flight button or press Space. Birdman's published rules supply the 10 m sloped runway length, 3.5° downward slope and 10 m front-edge height above water. The 5 m/s² acceleration and 10 m/s speed after two seconds are game launch settings, not official speed rules. Land joins the rear of the platform smoothly. A recessed central steam channel contains metal rails. A telescoping tow arm connects the launch carriage to the fuselage; the carriage accelerates with the aircraft, releases at the edge and remains at the rail end. Starting again resets it. Steam follows physics time and stops while paused. A random ±1° roll disturbance builds smoothly throughout acceleration, with no attitude jump at release. Replays restore the same disturbance. Solid signs below the runway sides display length and slope without facing the camera; distance labels lie flat over the water.
+5. Use `W/S` or Up/Down to move the pilot fore-aft; `A/D` or Left/Right to move laterally; `Q/E` to use the rudder. On phones, hold a control button and release it to return to neutral. Space starts, pauses or resumes. `C` cycles through chase, offset chase, side, pilot and free cameras. Inputs, selects and editable content retain native keyboard behavior.
+6. Platform contact changes linear and angular velocity through rigid-body collision without ending the run. Keep flying, then inspect distance, time, speed, altitude and the distance–altitude chart after water termination. Results overlay remaining mechanical energy and instantaneous energy use on the same distance axis. Altitude is a solid cyan line on the left axis in m; mechanical energy is a dashed orange line on the right axis at 0–100%; energy use is a dotted dark-cyan line on the outer-right axis in J/m. Energy use is dissipated power divided by horizontal speed; undefined values leave gaps. Results omit the former energy-allocation and flight-clue panels. Return to Design to improve the aircraft.
+7. Bottom notifications dismiss after five seconds. New notifications restart the timer, and each can be closed manually.
 
-1. 在首页点击“鸟人间挑战”进入飞机工坊，修改机身端点和驾驶舱位置。驾驶员固定60 kg；旧文件中的可变质量也会归一化，不提供减重优势。
-2. 在主翼、水平尾翼或垂直尾翼页直接拖动三维飞机上的四个控制点，或拖动1–4根弦、2–3梢弦同时移动两端。屏幕垂直方向轻微吸附，按住 `Ctrl` 可取消吸附；数字输入不受吸附限制。左右翼保持对称。
-3. 工坊顶部提供“设计”和“试飞”，首页不显示这两个入口；组装属于设计内的部件页。组装与翼形编辑均隐藏环境。拖动机头或机尾可独立改变长度，对端不动；驾驶舱及三翼安装点保持机身支撑。水平、垂直尾翼的翼根中心直接安装在机身梁上。主翼外撑筋已取消。
-4. 进入试飞后先等待，点击底部正中的大号“开始试飞”按钮或按空格开始蒸汽弹射。跑道按鸟人间公开规则采用10 m斜长、向水面下倾3.5°，前缘高于水面10 m；沿坡加速度5 m/s²、2秒达到10 m/s是游戏发射设定，不是官方规定速度。陆地平滑接入平台后端，中央为凹入式蒸汽槽及金属导轨；弹射底座通过伸缩牵引臂连接机身，随飞机加速，离台时脱扣并留在轨道末端，再次试飞复位。蒸汽随物理时间显示，暂停不推进。±1°随机滚转在整个加速阶段平滑叠加，离台时姿态不跳变；重放恢复同一扰动。长度和坡度标在跑道两侧下方的实体悬挂牌上，不随镜头转动；水面距离文字使用水平贴片。
-5. `W/S` 或上下方向键移动驾驶员前后重心；`A/D` 或左右方向键移动左右重心；`Q/E` 使用方向舵。手机按住对应控制按钮，松手回中。按空格开始、暂停或继续，按 `C` 循环追尾、侧追尾、侧面、驾驶员、自由视角；输入框、下拉框及可编辑内容保持原生键盘行为。
-6. 飞机接触平台时通过刚体碰撞改变线速度和角速度，不触发结算；继续操纵飞行，落水后查看距离、时间、速度、高度与距离—高度曲线。结算图叠加剩余机械能占比与实时能耗，共用距离横轴：高度为青色实线、左轴m；机械能占比为橙色虚线、右轴0–100%；实时能耗为深青点线、外右轴J/m，使用耗散功率除以水平速度，无定义时断线。结算不显示能量分配面板或飞行线索，返回设计继续改进。
-7. 底部气泡通知在5秒后自动关闭；新通知重新计时，也可手动关闭。
+Drag handles over the solid aircraft to edit; drag empty space to orbit. Every camera supports mouse inspection. Vertical dragging in flight follows the same direction as orbit controls. Three seconds after release, offsets decay at 0.35/s, removing about 95% over the following 8.6 seconds. Results allow vertical dragging only. Editing handles take priority over camera dragging. Design and free cameras retain wheel zoom, right-button pan and touch gestures. All cameras remain above ground and water. The default chase view sits directly behind and above the aircraft, stays level and does not follow roll; offset chase retains the diagonal rear view.
 
-翼面编辑时拖动覆盖在实体上的控制点，空白区域可旋转相机。全部视角允许鼠标拖动观察，飞行镜头上下拖动与轨道操作方向一致；松开3秒后以0.35/s指数衰减缓缓回正，回正阶段约8.6秒消除95%偏移。结算仅允许上下拖动；手柄拖动仍优先编辑飞机。设计与自由视角保留滚轮缩放、右键平移及触屏手势。所有相机保持在地面和水面以上。默认追尾位于飞机正后方偏上，保持水平，不跟随滚转；侧追尾保留原斜后方构图。
-所有画质启用浏览器原生抗锯齿（支持情况取决于GPU）。顶点使用陶土色小圆，1–4根弦使用青色实心大圆，2–3梢弦使用紫色空心圆，安装位置使用蓝色菱形；根梢弦及安装手柄带中文标签。顶点拥挤时自动移到外侧，虚线指向真实位置。44 px点击区、方向键、Ctrl、撤销和数字输入不变，拖动外伸手柄不会使翼面跳变。
+Every quality setting requests native browser antialiasing, subject to GPU support. Vertices use small terracotta circles, root chord 1–4 a large solid cyan circle, tip chord 2–3 a hollow purple circle, and mounting points blue diamonds. Root, tip and mounting handles have localized labels. Crowded vertices move outward with dashed guides to their actual positions. Valid layouts retain each handle's offset from its actual projected anchor rather than repeatedly resolving the 52 px spacing boundary. Guides and wing outlines still use actual geometry. Hit targets remain 44 px. Arrow-key editing, `Ctrl`, undo and numeric input remain available. Dragging an outward handle does not make the surface jump.
 
-物理固定60 Hz，飞机位置、姿态与重心按累计时间余量插值；追尾、侧面和驾驶员镜头使用同一渲染位姿，避免高刷新率下飞机相对镜头前后抖动。插值仅影响显示，增加约一个物理步（16.67 ms）的延迟，不改变碰撞、成绩或重放。暂停及页面可见性切换同步快照，落地直接显示最终物理状态。每帧最多补算五步，过载时仅丢弃整步积压，保留小数余量。
+Physics runs at a fixed 60 Hz. Position, orientation and center of mass interpolate using the remaining accumulator time. Chase, side and pilot cameras use the same rendered pose, avoiding relative aircraft-camera jitter on high-refresh screens. Interpolation adds about one physics step of display latency, 16.67 ms, without changing collisions, scores or replays. Pause and page-visibility changes synchronize snapshots; termination shows the final physical state immediately. Each frame catches up at most five steps. Overload discards only whole-step backlog, keeping the fractional remainder.
 
-普通飞机开放升降舵与副翼；鸟人间飞机只使用重心移动与垂尾。所有挑战使用统一物理规则，调试受力显示不再依赖实验模式。
+Conventional aircraft use elevators and ailerons; Birdman uses pilot movement and the vertical tail. All challenges share the same physics rules. Debug force displays are available without an experimental mode.
 
-飞行仪表显示实时攻角、实际升阻比、实时能耗、下沉率和距离—高度曲线。实时能耗为耗散功率除以世界水平速度，单位J/m；助跑及水平速度不超过0.05 m/s时显示“—”，不把垂直空速误算为水平位移。能量槽从离台开始显示重力势能、动能（含转动）及累计耗散；空气、水阻与阻尼计入耗散，浮力实际做功单列在预算输入侧，助跑的外部输入能量不计入飞行守恒基准。飞机在所有画质下均向湖面投影，便于判断高度。
+Flight instruments show live angle of attack, actual lift-to-drag ratio, energy use, sink rate and distance–altitude data. Energy use is dissipated power divided by world-horizontal speed in J/m. During launch or at horizontal speed ≤0.05 m/s, it shows “—”; vertical airspeed does not count as horizontal travel. From release onward, the energy bars show potential energy, kinetic energy including rotation, and accumulated dissipation. Air drag, water drag and damping count as dissipation. Actual buoyancy work appears separately on the input side. External launch energy is excluded from the free-flight conservation baseline. The aircraft casts a shadow onto the lake at every quality level to help judge altitude.
 
-低空飞行按翼面实际水面净空及水平投影翼展降低诱导阻力，并减弱主翼对平尾的下洗；上反角与滚转会改变地效强度。型阻和失速分离阻力不缩放，能量仍由真实阻力耗散。设计参考保持自由空气，不把原版42:1或50:1作为固定目标。公式、来源及适用限制见[物理文档](docs/physics.md#水面地面效应)。
+Near the surface, induced drag decreases according to actual wing clearance and horizontally projected span; main-wing downwash on the horizontal tail also weakens. Dihedral and roll change this ground effect. Profile and separated-stall drag are not scaled; actual drag still dissipates energy. Design references remain in free air, without fixing performance to the original game's 42:1 or 50:1 ratios. See [formulas, sources and limits](docs/physics.md#水面地面效应).
 
-主翼、平尾和垂尾沿展向每0.8 m分段，末段保留实际余长；各段使用变形后作用点、法向、局部来流和净空。诱导阻力采用所属连续翼块的展弦比，下洗按面积加权，不能随段数重复叠加。翼型效率以2017鸟人间滑空机冠军Squalo使用的DAE-11改型家族为公开参考，采用DAE-11原型的多雷诺数XFOIL数据，不冒充TAKUMI-11风洞数据。梁质量改按材料密度与实际等效截面计算；蒙皮、机身等仍保留公开空重约束下的工程分配，并非实机分项称量。
+The main wing and both tails are split every 0.8 m along the span, preserving the final partial segment. Each segment uses its deformed force point, normal, local airflow and clearance. Induced drag uses the aspect ratio of the connected wing section; downwash is area-weighted and does not multiply with segment count. The airfoil reference is the DAE-11-derived family used by Squalo, the 2017 Birdman gliding champion. The model uses multi-Reynolds-number XFOIL predictions for the original DAE-11, not TAKUMI-11 wind-tunnel measurements. Beam mass follows material density and actual equivalent sections. Skin and fuselage masses remain engineering allocations constrained by published empty weight, not measured component weights.
 
-主视图持续显示几何性能、估算失速速度、CG、静稳定裕度和三翼气动力，不再把结果藏在左侧输入区。主翼、平尾安装角实时改变有效攻角、升阻与力矩，翼面实体也同步旋转。失速速度由海平面全重、主翼面积及现有升力极曲线峰值估算，不保证当前安装角已配平。
+The main view continuously shows geometric performance, estimated stall speed, center of mass, static margin and aerodynamic data for all three surfaces. Main-wing and horizontal-tail incidence immediately change effective angle of attack, forces, moments and visible geometry. Stall speed uses sea-level total weight, main-wing area and the peak of the existing lift polar; it does not guarantee trim at the current incidence.
 
-主翼翼根中心高度可在机身下方0.5 m至上方1 m间调整。组装页提供左侧滑条、数值输入及三维拖动；拖动接近高度0时吸附到机身，按住 `Ctrl` 取消吸附。高度0直接安装，非零高度自动生成根弦宽的中央支撑板；支撑采用约0.833 kg/m²的有效面密度近似，实际参与CG、惯量和失速速度计算，面积与质量在主视图显示。
+The main-wing root center can move from 0.5 m below to 1 m above the fuselage. Assembly offers a slider, exact input and 3D dragging. Dragging near zero snaps lightly to the fuselage; hold `Ctrl` to disable snapping. Zero height mounts directly. Nonzero height creates a central support plate as wide as the root chord. Its effective area density is approximately 0.833 kg/m², and it contributes to center of mass, inertia and stall speed. The main view shows its area and mass.
 
-重心使用黄黑分区球，升心使用青蓝黑分区球和方向箭头，阻力中心使用红黑分区球和箭头；均无三维文字。标记形式参考 KSP，但红色阻力中心是本项目扩展，不是推力中心。标题旁的 GitHub 图标可打开项目源码。
+Center of mass uses a yellow-black sphere; center of lift uses a cyan-blue-black sphere and direction arrow; center of drag uses a red-black sphere and arrow. In Design, aircraft with engines also show an orange (#d58032) center-of-thrust marker at the mean of the equal-thrust engine mounts, with its arrow along body +X. Aircraft without engines hide it. Drag and thrust markers represent different forces. Markers have no 3D text. Their visual language references KSP; the drag marker is this project's extension. The GitHub icon beside the title opens the source repository.
 
-驾驶员采用趴式姿势。未失速时，各速度及助跑阶段均显示翼尖拖尾；翼尖处透明度为0，离开翼尖0.8 m后升至1，再沿18–60 m的距离渐隐。失速或结束时立即清除。左上飞行数据逐帧更新，曲线与性能面板独立低频更新。
+The pilot lies prone. When not stalled, wingtip trails appear at all speeds, including launch. Opacity starts at zero at the tip, reaches one after 0.8 m, then fades over 18–60 m. Stall or flight termination clears trails immediately. The upper-left HUD updates every frame; charts and performance panels update independently at lower rates.
 
-## 声音
+## Sound
 
- 顶部扬声器图标打开声音设置，提供全部静音、音乐音量和音效音量；偏好保存在当前浏览器。首次点击或按键后启用音频，浏览器禁止自动播放时不会阻止游戏。暂停飞行或切到后台时冻结声音与音乐进度，恢复后继续；返回设计恢复背景音乐，不重播起飞事件。
+The top speaker icon opens sound settings: master mute, music volume and effects volume. Preferences stay in the current browser. Audio starts after the first click or keypress. Browser autoplay restrictions do not block play. Pausing or moving the page to the background freezes sound and music position; resuming continues playback. Returning to Design restores background music without repeating launch events.
 
- BGM 为 Kevin MacLeod 录制、Erik Satie 作曲的《Gymnopedie No. 1》，完整柔和钢琴录音约3分7秒，循环播放并平滑淡入；飞行中进一步降低音乐音量。录音使用 CC BY 4.0，官方署名、下载来源与转码说明见 [`public/audio/LICENSE.txt`](public/audio/LICENSE.txt)，游戏声音设置内也提供链接。音乐随站点部署，不依赖外站热链。
+The BGM is Erik Satie's *Gymnopedie No. 1*, recorded by Kevin MacLeod: an approximately 3-minute-7-second soft piano recording, looped with a fade-in. Music volume drops further during flight. The recording uses CC BY 4.0. Attribution, official download source and transcoding notes are in [`public/audio/LICENSE.txt`](public/audio/LICENSE.txt), also linked in sound settings. Music ships with the site and does not depend on external hotlinks.
 
- UI 点击、成功与错误提示、双层风声、蒸汽喷放和机械脱扣均由原生 Web Audio 合成，不引入音频依赖或第三方音效采样。风声响度与滤波频率随实际速度平滑变化。仅弹射模式开始加速时播放蒸汽，物理状态从助跑变为离台时播放一次机械卡扣、低频冲击、金属余振和短促蒸汽爆发；低空导轨模式不播放蒸汽或弹射分离音。分离音参考火箭分级的清晰冲击感，不使用 KSP 音频素材。暂停、重放与再次试飞不依赖墙钟定时器。弹射沿用两秒匀加速模型，不增加蒸汽流体或压力求解。
-通过出发计时门、每个检查点和终点时播放约0.24秒双层短提示音，突出过点反馈但不盖过环境声，终点使用略高音调。真实计时状态和检查点进度触发，逐帧同步、暂停恢复不会重复播放，终点结算不截断音效。静音、音效音量和后台冻结共用现有音频通道，恢复后不补播错过的提示。
+UI clicks, success and error notifications, two-layer wind, steam release and mechanical separation are synthesized with native Web Audio, without an audio dependency or third-party effects samples. Wind loudness and filter frequency follow actual speed smoothly. Steam starts only when a catapult begins accelerating. The transition from launch to release triggers one mechanical latch, low-frequency impact, metallic resonance and short steam burst. Low-level rail launches play neither steam nor catapult separation. The separation sound references the distinct impact of rocket staging without using KSP audio assets. Pause, replay and retry do not depend on wall-clock timers. Catapult physics retains the two-second constant-acceleration model, without steam-fluid or pressure simulation.
 
- 喷气声由独立振荡器和噪声滤波器合成。音高、音量和频谱跟随物理引擎转速，而非直接跟随油门；关机平滑衰减。沿用统一静音、音效音量、暂停及后台冻结逻辑，无新增依赖或第三方音效。
+Crossing the starting gate, each checkpoint and the finish triggers an approximately 0.24-second two-layer tone. It remains audible without overpowering ambient sound; the finish tone has a slightly higher pitch. Actual timing state and checkpoint progress trigger playback. Frame synchronization and pause/resume do not repeat it, and results do not cut off the finish sound. Mute, effects volume and background freezing use the shared audio channels; resuming does not replay missed tones.
 
- `tests/audio.spec.ts` 使用浏览器原生音频节点测量风声与引擎声，覆盖速度、转速、静音、暂停和恢复。分离音与计时点音使用AudioWorklet录制真实输出，测量频带能量、响度、瞬态和衰减，而不是只统计节点创建；覆盖起点、终点结算、重复状态、静音、零音量、暂停、后台、重放以及低空禁止弹射音。运行：`npx playwright test tests/audio.spec.ts --project=desktop-chromium`。音频加载失败不影响飞行，声音设置内显示错误提示。
+Jet audio uses dedicated oscillators and filtered noise. Pitch, loudness and spectrum follow physical engine speed rather than raw throttle. Shutdown fades smoothly. It uses the same mute, effects-volume, pause and background-freeze behavior, with no new dependency or third-party effects.
 
-## 保存与重放
+`tests/audio.spec.ts` measures native browser audio nodes for wind and engines, covering speed, engine speed, mute, pause and resume. AudioWorklet captures actual separation and gate audio to measure band energy, loudness, transients and decay. Coverage includes start and finish, repeated state, mute, zero volume, pause, background, replay and the absence of catapult audio in low-level flight. Run `npx playwright test tests/audio.spec.ts --project=desktop-chromium`. Audio-load failures leave flight available and appear in sound settings.
 
-“保存”更新当前已保存飞机，“另存为新飞机”建立独立记录，可在机库同时保留多架飞机。机库提供加载、改名、复制、删除及JSON导入导出，并标示当前飞机。加载成功后自动关闭机库；损坏记录加载失败则保留机库和当前设计。删除需确认。坏记录不会覆盖其他有效记录；存储满或权限错误会显示提示。浏览器清除站点数据会删除机库，重要设计请导出备份。
+## Saving and replay
 
-成绩按平台前端至机体最后尾的水平距离计算，不再使用重心距离，也不累计绕行航程；横向偏移采用径向测量约定。新版成绩与旧版重心计距纪录隔离，旧记录数据不删除、不迁移混榜。
+Design provides one Save action. A new name creates an aircraft; saving a name already in the hangar asks for confirmation before overwriting it. The hangar retains multiple aircraft, marks the current one, and provides each aircraft's load, rename, copy, delete and JSON export actions in its own menu. The hangar's top toolbar only imports JSON. Successful loading closes the hangar; a damaged record leaves the hangar open and preserves the current design. Deletion requires confirmation. Damaged records do not overwrite other valid records. Storage exhaustion and permission errors show a notification. Clearing browser site data deletes the hangar; export important designs as backups.
 
-撤销与重做最多保留60个快照。`Ctrl/Cmd+Z` 撤销，`Ctrl/Cmd+Shift+Z` 重做。参数拖动结束形成快照。撤销/重做后保存创建新记录，避免跨飞机历史覆盖其他设计。预设包含均衡、高展弦比、高稳定、灵敏、重心过后、高翼载荷六型。
+Birdman distance is measured horizontally from the platform front to the aircraft's rearmost body point, not its center of mass or accumulated path length. Lateral offsets use a radial measurement convention. New records remain separate from the old center-of-mass-distance records; old data is neither deleted nor mixed into the new ranking.
 
-结果页可重放最近一次飞行；保存的是助跑随机滚转目标角和固定时间步操纵输入，不是预制轨迹。重放重新执行同一飞行核心。
+Undo and redo retain up to 60 snapshots. `Ctrl/Cmd+Z` undoes; `Ctrl/Cmd+Shift+Z` redoes. A parameter drag creates a snapshot when it ends. Saving after undo or redo follows the same name-confirmation rule, protecting other aircraft from silent replacement. The six presets are balanced, high aspect ratio, high stability, responsive, aft center of mass, and high wing loading.
 
-## 检查
+Results can replay the latest flight. Recording stores the launch's random roll target and fixed-step control inputs, not a prebuilt trajectory. Replay runs the same flight core again.
+
+## Checks
 
 ```sh
 npm run check
 npm test
 npm run test:e2e
 ```
-极端翼面与完整飞行回归使用单项15秒超时，容纳CI共享CPU上的结构及碰撞积分；保留全部能量和有限性断言，不以Vitest默认5秒超时充当性能指标。
 
+Extreme-surface and complete-flight regressions use a 15-second per-test timeout to accommodate structural and contact integration on shared CI CPUs. Energy and finite-state assertions remain intact. Vitest's default five-second timeout is not a performance metric.
 
-浏览器测试默认启动开发服务。如已有服务且环境启用 CI：
+Browser tests start the development server by default. To use an existing server when CI is enabled:
 
 ```sh
 PLAYWRIGHT_NO_SERVER=1 npm run test:e2e
 ```
 
-需要 Playwright Chromium：`npx playwright install chromium`。交互测试涵盖设计、组装、试飞、操纵、着水、成绩、再次编辑、机库和重放。
+Install Playwright Chromium with `npx playwright install chromium`. Interaction tests cover design, assembly, flight, controls, water termination, scores, further editing, hangar and replay.
 
-## 性能
+## Performance
 
 ```sh
-# 先启动 npm run dev
+# Start npm run dev first
 npm run perf
 ```
 
-结果写入 `docs/performance-results.json`。工具独立采样浏览器 rAF 帧间隔，不把应用的目标FPS当实测。可通过 `PERF_SAMPLE_MS`、`PERF_LONG_MS`、`PERF_RESET_MS` 调整持续时间。`CDP_URL` 支持连接真实设备浏览器；详见 [手机验证方案](docs/mobile-performance.md)。
+Results go to `docs/performance-results.json`. The tool samples browser rAF intervals independently rather than treating target FPS as measured performance. Configure durations with `PERF_SAMPLE_MS`, `PERF_LONG_MS` and `PERF_RESET_MS`. `CDP_URL` connects to a real device browser; see the [mobile validation guide](docs/mobile-performance.md).
 
-默认不显示性能面板，点击“性能”打开。显示平均/P95/P99帧时、物理耗时、CPU渲染提交耗时、几何更新时间、draw calls、三角形和几何/纹理内存估算。渲染提交耗时不是GPU执行时间。
+Select Performance to open the normally hidden panel. It shows mean/P95/P99 frame times, physics time, CPU render-submission time, geometry-update time, draw calls, triangles and estimated geometry/texture memory. Submission time is not GPU execution time.
 
-**普通手机60FPS仍须真实设备验证。桌面或模拟手机视口不能证明该目标。** High/Medium/Low档位与自动降档降低像素比、阴影和环境细节，带采样与滞回，避免频繁切换。
+**60 FPS on ordinary phones still requires real-device validation. Desktop and emulated phone viewports do not establish this target.** High/Medium/Low quality and automatic downshifting reduce pixel ratio, shadows and environment detail. Sampling and hysteresis prevent frequent switching.
 
-飞机材质、驾驶员几何与机体网格持续复用；连续编辑请求合并到每个渲染帧，仅重建变化的翼面。不在拖动中重新设置画布尺寸或遍历全场景计算内存。气动核心复用数学对象，飞行输入写入预分配 TypedArray。Auto 从保守 Low 开始，再按稳定帧时调整。
+Aircraft materials, pilot geometry and body meshes are reused. Continuous edits coalesce within each render frame, rebuilding only changed surfaces. Dragging does not repeatedly resize the canvas or traverse the whole scene to estimate memory. The aerodynamic core reuses math objects; flight inputs use preallocated TypedArrays. Auto starts conservatively at Low, then adapts to stable frame times.
 
-## 代码地图
+## Code map
 
-- `src/model.ts`：独立飞机定义、范围、四边形几何、预设。
-- `src/materials.ts`：稳定材料目录、默认梁截面及闭口管截面公式。
-- `src/structure.ts`：分段准静态梁、应力、断裂归属及完整惯量张量。
-- `src/physics.ts`：分段气动、主体与断片积分、质量/惯量、接触与成绩、输入录制回放。
-- `src/scene.ts`：平滑变形厚翼型、断口与断片、环境、相机、资源释放、画质与性能监控。
-- `src/App.svelte`：页面状态、固定60Hz累积循环、操纵和UI节流。
-- `src/WingEditor.svelte`、`src/Parameter.svelte`：精确坐标和参数编辑；三维拖动由场景层负责。
-- `src/storage.ts`：本地机库、导入边界、分组纪录及历史快照。
-- `tests/`：几何、存储、物理行为及Playwright交互验收。
+- `src/model.ts`: standalone aircraft definitions, bounds, quadrilateral geometry and presets.
+- `src/materials.ts`: stable material catalog, default beam sections and closed-tube section formulas.
+- `src/structure.ts`: segmented quasi-static beams, stress, fracture ownership and full inertia tensors.
+- `src/physics.ts`: segmented aerodynamics, body and fragment integration, mass/inertia, contact, scoring and input replay.
+- `src/scene.ts`: smoothly deformed thick airfoils, fracture faces and fragments, environment, cameras, resource cleanup, quality and performance monitoring.
+- `src/App.svelte`: page state, fixed-60-Hz accumulator, controls and UI throttling.
+- `src/WingEditor.svelte`, `src/Parameter.svelte`: exact coordinate and parameter editing. The scene layer handles 3D dragging.
+- `src/storage.ts`: local hangar, import boundaries, grouped records and history snapshots.
+- `tests/`: geometry, storage, physics and Playwright interaction checks.
 
-## 模型与边界
+## Model and scope
 
-这是经过游戏化简化的气动模型，不是工程级仿真。设计参数会改变质量、惯量、升阻与力矩。无CFD、涡流求解、随机成绩或固定飞行轨迹。
+The aerodynamic model is simplified for a game. Design parameters change mass, inertia, lift, drag and moments. It has no CFD or vortex solver, random scores or fixed flight paths; it is not an engineering simulator.
 
-- 原版调查：[docs/original-game-analysis.md](docs/original-game-analysis.md)。Observed / Inferred / Unknown 区分事实与推断。
-- 物理、坐标系、系数及限制：[docs/physics.md](docs/physics.md)。
-- 性能采样与真机复现：[docs/mobile-performance.md](docs/mobile-performance.md)。
-- 飞行预设和配平实测：[docs/flight-balance.md](docs/flight-balance.md)。
-- 真实设备连接检查：[docs/device-validation.md](docs/device-validation.md)。
-- 性能瓶颈、优化前后与最终实测：[docs/performance-analysis.md](docs/performance-analysis.md)。
+- Original-game research: [docs/original-game-analysis.md](docs/original-game-analysis.md). Observed / Inferred / Unknown distinguish evidence from interpretation.
+- Physics, coordinates, coefficients and limits: [docs/physics.md](docs/physics.md).
+- Performance sampling and real-device reproduction: [docs/mobile-performance.md](docs/mobile-performance.md).
+- Historical preset and trim measurements: [docs/flight-balance.md](docs/flight-balance.md).
+- Real-device connection evidence: [docs/device-validation.md](docs/device-validation.md).
+- Bottlenecks, before/after optimization and measured results: [docs/performance-analysis.md](docs/performance-analysis.md).
 
-不含账号、服务器、在线排行榜或复杂水体。结构破坏限定为气动分段边界，不模拟任意裂纹和蒙皮撕裂。尾翼和主翼使用固定轻量翼型，不能编辑翼型截面；四点编辑保持根部和梢部等展向坐标，防止自交。安装点保持机身支撑，但几何有效不保证空气动力学稳定，需通过实际试飞配平。
+There are no accounts, servers, online leaderboards or complex water simulation. Structural failure occurs at aerodynamic segment boundaries, without arbitrary cracks or skin tearing. Main wing and tails use fixed lightweight airfoil representations; airfoil sections are not editable. Four-point editing keeps root and tip pairs at equal spanwise coordinates to prevent self-intersection. Mounts remain supported by the fuselage, but valid geometry does not guarantee aerodynamic stability. Test and trim the aircraft in flight.

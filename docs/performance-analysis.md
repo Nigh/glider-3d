@@ -2,7 +2,7 @@
 
 ## 测试环境与方法
 
-当前工作站为 Linux x64，Intel Core Ultra 7 265K。浏览器 Chromium 156.0.8078.4，headless，视口1440×1000、DPR 1。WebGL renderer 为 ANGLE / Vulkan SwiftShader（软件渲染），不是手机GPU。
+本记录的采样工作站为Linux x64，Intel Core Ultra 7 265K。浏览器Chromium 156.0.8078.4，headless，视口1440×1000、DPR 1。WebGL renderer为ANGLE / Vulkan SwiftShader（软件渲染）；这些数据不代表手机GPU性能。
 
 独立rAF采样保留每一帧原始间隔，未丢弃慢帧。物理与几何时间来自游戏实际执行处；CPU渲染提交耗时不代表GPU执行耗时。基于开发服务运行，包含开发构建开销。真实Android连接检查发现设备列表为空，详见 `device-validation.md`。
 
@@ -54,6 +54,6 @@
 
 默认飞行最多79 draw calls、3111三角形；连续拖翼46 draw calls、2947三角形。反复替换几何场景的已上传geometry数保持21、texture数保持1、program数保持6，未在该场景看到资源计数持续增长。60秒场景因画质、远景和水花变化，geometry为22–26、texture保持15、program为6–11；这不等于完整的显存或泄漏证明。
 
-最差长场景帧从中间版本的166.7ms降到66.5ms，但仍有孤立慢帧；连续拖翼也不是锁定60FPS。因此不宣称所有场景零掉帧，更不宣称普通手机60FPS已通过。真实手机硬件、热降频、Safari、长达数分钟的稳定性与GPU执行时长均未验收。
+长场景最差帧从中间版本的166.7ms降到66.5ms；仍有孤立慢帧，连续拖翼也未锁定60FPS。真实手机硬件、热降频、Safari、数分钟稳定性与GPU执行时长均未验收。
 
 最终场景实际完成150次相机指针移动、109次翼面拖动事件、15次进入/退出飞行、61次模型替换、60秒场景5次重置。全部场景 `hiddenFrames=0`，结束时页面均为visible；错误列表为空。JS堆增量字段在本环境均为0，不能据此推断没有分配或没有GC。

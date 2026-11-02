@@ -4,6 +4,7 @@ import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTa
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
+import { language, t } from './i18n';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
 const UP = new THREE.Vector3(0, 1, 0);
@@ -129,7 +130,9 @@ export class SceneView {
   private readonly liftCenter = this.centerMarker('lift');
   private readonly designLiftCenter = new THREE.Vector3();
   private readonly dragCenter = this.centerMarker('drag');
-  private readonly centerMarkers = [this.cg, this.liftCenter, this.dragCenter];
+  private readonly thrustCenter = this.centerMarker('thrust');
+  private readonly designThrustCenter = new THREE.Vector3();
+  private readonly centerMarkers = [this.cg, this.liftCenter, this.dragCenter, this.thrustCenter];
   private readonly fuelCgFull = new THREE.Group();
   private readonly fuelCgEmpty = new THREE.Group();
   private readonly fuelCgFullPosition = new THREE.Vector3();
@@ -155,7 +158,7 @@ export class SceneView {
   private readonly editorOverlay = document.createElementNS(SVG_NS, 'svg');
   private readonly editorPolygons: SVGPolygonElement[] = [];
   private readonly editorHandles: { group: SVGGElement; leader: SVGLineElement; index: number; side: number; x: number; y: number; ax: number; ay: number }[] = [];
-  private readonly editorSegments: { group: SVGGElement; index: number; side: number; x: number; y: number; x1: number; y1: number; x2: number; y2: number }[] = [];
+  private readonly editorSegments: { group: SVGGElement; index: number; side: number; x: number; y: number; ax: number; ay: number; x1: number; y1: number; x2: number; y2: number }[] = [];
   private editorSegmentDrag = -1;
   private readonly editorSnap: { active: boolean; kind: 'grid' | 'vertex' | 'mount' | null; value: number | null; disabled: boolean } = { active: false, kind: null, value: null, disabled: false };
   private editorTarget: EditorTarget = null;
@@ -254,7 +257,7 @@ export class SceneView {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;outline-offset:-4px';
     this.renderer.domElement.tabIndex = 0;
-    this.renderer.domElement.setAttribute('aria-label', '滑空机三维视图。拖动旋转，滚轮缩放，右键或双指平移。');
+    this.renderer.domElement.setAttribute('aria-label', t('滑空机三维视图。拖动旋转，滚轮缩放，右键或双指平移。'));
     this.host.appendChild(this.renderer.domElement);
     this.buildEditorOverlay();
     this.scene.background = new THREE.Color(0xd4e3e4);
@@ -273,7 +276,7 @@ export class SceneView {
     this.scene.add(this.light, this.light.target, this.aircraft, this.environment, this.mountainEnvironment, this.debugGroup);
     this.mountainEnvironment.visible = false;
     this.environment.add(this.detail);
-    this.cg.renderOrder = this.liftCenter.renderOrder = this.dragCenter.renderOrder = 20;
+    for (const marker of this.centerMarkers) marker.renderOrder = 20;
     this.buildEnvironment();
     this.buildFuelCgRange();
     this.wingTrailGeometry.setAttribute('position', new THREE.BufferAttribute(this.wingTrailArray, 3).setUsage(THREE.DynamicDrawUsage));
@@ -357,7 +360,15 @@ export class SceneView {
     this.metrics.memory = this.geometryMemory();
     this.debugGroup.visible = false;
     window.addEventListener('blur', this.cancelEditorDrag);
+    this.unsubscribeLanguage = language.subscribe(() => {
+      this.editorDirty = true;
+      this.editorOverlay.setAttribute('aria-label', t('真实翼面与部件位置编辑'));
+      this.renderer.domElement.setAttribute('aria-label', t('滑空机三维视图。拖动旋转，滚轮缩放，右键或双指平移。'));
+      this.scene.traverse(object => object.userData.redrawLabel?.());
+    });
   }
+
+  private readonly unsubscribeLanguage: () => void;
 
   setEditor(target: EditorTarget, onchange: (definition: AircraftDefinition) => void, oncommit: () => void): void {
     this.editorChange = onchange;
@@ -365,6 +376,8 @@ export class SceneView {
     if (this.editorTarget === target) return;
     this.endEditorDrag();
     this.editorTarget = target;
+    for (const handle of this.editorHandles) handle.x = handle.y = handle.ax = handle.ay = 0;
+    for (const segment of this.editorSegments) segment.x = segment.y = segment.ax = segment.ay = 0;
     this.editorDirty = true;
     this.updateEnvironment();
     if (!this.simulation) {
@@ -392,7 +405,7 @@ export class SceneView {
         snap: { ...this.editorSnap },
         fuselageEnds: fuselageEnds(this.definition),
         mainWingMountLimits: mainWingMountLimits(this.definition), mountSnapTolerance: this.mountSnapTolerance(),
-        handles: this.editorTarget && !this.simulation ? this.editorHandles.filter(h => h.group.style.display !== 'none').map(h => ({ handle: Number(h.group.getAttribute('data-handle')), index: h.index, side: h.side, x: h.x, y: h.y })) : [],
+        handles: this.editorTarget && !this.simulation ? this.editorHandles.filter(h => h.group.style.display !== 'none').map(h => ({ handle: Number(h.group.getAttribute('data-handle')), index: h.index, side: h.side, x: h.x, y: h.y, ax: h.ax, ay: h.ay })) : [],
         segments: this.editorTarget && !this.simulation ? this.editorSegments.filter(s => s.group.style.display !== 'none').map(s => ({ id: s.index === 0 ? '14' : '23', side: s.side, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 })) : [],
       },
       aircraft: position(this.aircraft.position),
@@ -412,8 +425,9 @@ export class SceneView {
         labels: ['满油圆点', '空油菱形'],
       },
       controlSurfaces: this.wingMeshes.map((_mesh, index) => ({ fraction: this.surfaceParameters[index], angle: this.wingAngles[index], hingeVisible: this.hingeLines[index].visible })),
-      centers: { cg: position(this.cg.position), lift: position(this.liftCenter.position), drag: position(this.dragCenter.position) },
-      centerVisibility: { cg: this.cg.visible, lift: this.liftCenter.visible, drag: this.dragCenter.visible },
+      centers: { cg: position(this.cg.position), lift: position(this.liftCenter.position), drag: position(this.dragCenter.position), thrust: position(this.thrustCenter.position) },
+      centerVisibility: { cg: this.cg.visible, lift: this.liftCenter.visible, drag: this.dragCenter.visible, thrust: this.thrustCenter.visible },
+      thrustCenter: { body: position(this.designThrustCenter), direction: position(new THREE.Vector3(0, 1, 0).applyQuaternion(this.thrustCenter.quaternion)) },
       wingGeometry: this.wingMeshes.map((mesh, index) => {
         const points = mesh.geometry.getAttribute('position');
         return { incidence: this.wingParameters[index * 12 + 11], leading: { x: points.getX(0), y: points.getY(0), z: points.getZ(0) }, trailing: { x: points.getX(16), y: points.getY(16), z: points.getZ(16) } };
@@ -520,9 +534,9 @@ export class SceneView {
     this.aircraft.position.set(LAUNCH.startX, launchHeight(this.definition, this.designCG), 0);
   }
 
-  private centerMarker(kind: 'cg' | 'lift' | 'drag'): THREE.Group {
+  private centerMarker(kind: 'cg' | 'lift' | 'drag' | 'thrust'): THREE.Group {
     const marker = new THREE.Group();
-    const surface = new THREE.MeshBasicMaterial({ color: kind === 'cg' ? 0xffd52a : kind === 'lift' ? 0x19b9ef : 0xe43c3c, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
+    const surface = new THREE.MeshBasicMaterial({ color: kind === 'cg' ? 0xffd52a : kind === 'lift' ? 0x19b9ef : kind === 'thrust' ? 0xd58032 : 0xe43c3c, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
     const black = new THREE.MeshBasicMaterial({ color: 0x17201d, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
     const add = (geometry: THREE.BufferGeometry, material: THREE.MeshBasicMaterial) => {
       const mesh = new THREE.Mesh(geometry, material);
@@ -560,11 +574,16 @@ export class SceneView {
     this.cg.visible = visible;
     this.liftCenter.visible = visible && !!lift;
     this.dragCenter.visible = visible && !!drag;
+    this.thrustCenter.visible = !sim && this.definition.engine.count > 0;
     this.cg.position.copy(this.aircraft.position);
     if (lift) this.liftCenter.position.copy(lift).sub(sim ? this.renderCG : this.designCG)
       .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
     if (drag) this.dragCenter.position.copy(drag).sub(sim ? this.renderCG : this.designCG)
       .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+    this.thrustCenter.position.copy(this.designThrustCenter).sub(this.designCG)
+      .applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+    this.vector.set(1, 0, 0).applyQuaternion(this.aircraft.quaternion);
+    this.thrustCenter.quaternion.setFromUnitVectors(UP, this.vector);
     this.cg.quaternion.copy(this.camera.quaternion);
     const aero = sim?.telemetry.aerodynamics;
     this.vector.copy(aero?.lift ?? this.designLiftDirection).applyQuaternion(this.aircraft.quaternion);
@@ -646,7 +665,7 @@ export class SceneView {
   private buildEditorOverlay(): void {
     const overlay = this.editorOverlay;
     overlay.classList.add('scene-editor');
-    overlay.setAttribute('aria-label', '真实翼面与部件位置编辑');
+    overlay.setAttribute('aria-label', t('真实翼面与部件位置编辑'));
     overlay.style.cssText = 'display:none;position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none;touch-action:none';
     for (let i = 0; i < 2; i++) {
       const polygon = document.createElementNS(SVG_NS, 'polygon');
@@ -689,12 +708,12 @@ export class SceneView {
       hit.setAttribute('stroke', 'none');
       const text = document.createElementNS(SVG_NS, 'text');
       text.classList.add('editor-control-label');
-      text.textContent = i === 0 ? '根弦 1–4' : '梢弦 2–3';
+      text.textContent = t(i === 0 ? '根弦 1–4' : '梢弦 2–3');
       const focus = document.createElementNS(SVG_NS, 'circle');
       focus.classList.add('editor-focus-ring');
       focus.setAttribute('r', '17');
       group.append(hit, knob, focus, text);
-      this.editorSegments.push({ group, index: i === 0 ? 0 : 1, side: i === 2 ? -1 : 1, x: 0, y: 0, x1: 0, y1: 0, x2: 0, y2: 0 });
+      this.editorSegments.push({ group, index: i === 0 ? 0 : 1, side: i === 2 ? -1 : 1, x: 0, y: 0, ax: 0, ay: 0, x1: 0, y1: 0, x2: 0, y2: 0 });
       group.addEventListener('pointerdown', e => this.beginEditorDrag(e, i, true));
       group.addEventListener('keydown', e => this.keyEditor(e, i, true));
       overlay.appendChild(group);
@@ -802,7 +821,7 @@ export class SceneView {
     this.editorOverlay.setAttribute('viewBox', `0 0 ${this.width} ${this.height}`);
     this.aircraft.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
-    const label = key === 'mainWing' ? '主翼' : key === 'horizontalTail' ? '水平尾翼' : '垂直尾翼';
+    const label = t(key === 'mainWing' ? '主翼' : key === 'horizontalTail' ? '水平尾翼' : '垂直尾翼');
     for (let i = 0; i < this.editorHandles.length; i++) {
       const handle = this.editorHandles[i];
       const show = key === 'assembly' ? i < 6 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
@@ -814,15 +833,16 @@ export class SceneView {
       if (assemblyIndex >= 0) this.assemblyEditorPoint(assemblyIndex, this.editProjection);
       else this.wingEditorPoint(handle.index, handle.side, this.editProjection);
       this.body.localToWorld(this.editProjection).project(this.camera);
-      handle.x = (this.editProjection.x + 1) * this.width / 2;
-      handle.y = (1 - this.editProjection.y) * this.height / 2;
-      handle.ax = handle.x; handle.ay = handle.y;
+      const ax = (this.editProjection.x + 1) * this.width / 2, ay = (1 - this.editProjection.y) * this.height / 2;
+      // Preserve the layout offset; tiny anchor changes must not restart collision placement.
+      handle.x += ax - handle.ax; handle.y += ay - handle.ay;
+      handle.ax = ax; handle.ay = ay;
       handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
-      const name = assemblyIndex >= 0 ? ['主翼位置', '水平尾翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex] : `${label}${handle.side < 0 ? '左翼' : ''}顶点${handle.index + 1}`;
+      const name = assemblyIndex >= 0 ? t(['主翼位置', '水平尾翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
       handle.group.setAttribute('aria-label', name);
       handle.group.setAttribute('data-handle', String(i));
-      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? ['主翼安装', '平尾安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex] : String(handle.index + 1);
+      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '平尾安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : String(handle.index + 1);
     }
     for (let i = 0; i < this.editorSegments.length; i++) {
       const segment = this.editorSegments[i];
@@ -836,8 +856,8 @@ export class SceneView {
       const id = segment.index === 0 ? '14' : '23';
       segment.group.setAttribute('data-segment', id);
       segment.group.setAttribute('data-side', String(segment.side));
-      const side = key === 'verticalTail' ? '' : segment.side > 0 ? '右翼' : '左翼';
-      segment.group.setAttribute('aria-label', `${label}${segment.index === 0 ? '根弦线段1–4' : `${side}梢弦线段2–3`}`);
+      const side = key === 'verticalTail' ? '' : t(segment.side > 0 ? '右翼' : '左翼');
+      segment.group.setAttribute('aria-label', t('{wing}{chord}', { wing: label, chord: segment.index === 0 ? t('根弦线段1–4') : t('{side}梢弦线段2–3', { side }) }));
       for (const line of Array.from(segment.group.children).slice(0, 2)) {
         line.setAttribute('x1', String(segment.x1)); line.setAttribute('y1', String(segment.y1));
         line.setAttribute('x2', String(segment.x2)); line.setAttribute('y2', String(segment.y2));
@@ -846,16 +866,18 @@ export class SceneView {
       const dx = segment.x2 - segment.x1, dy = segment.y2 - segment.y1;
       const length = Math.hypot(dx, dy) || 1;
       const direction = segment.index === 0 ? -1 : segment.side;
-      segment.x = (segment.x1 + segment.x2) / 2 + dy / length * 52 * direction;
-      segment.y = (segment.y1 + segment.y2) / 2 - dx / length * 52 * direction;
-      const desiredX = segment.x, desiredY = segment.y;
-      let placed = false;
+      const desiredX = (segment.x1 + segment.x2) / 2 + dy / length * 52 * direction;
+      const desiredY = (segment.y1 + segment.y2) / 2 - dx / length * 52 * direction;
+      segment.x += desiredX - segment.ax; segment.y += desiredY - segment.ay;
+      segment.ax = desiredX; segment.ay = desiredY;
+      const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
+        && !this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < 52 - 1e-6);
+      let placed = fits(segment.x, segment.y);
       for (let radius = 0; radius <= Math.max(this.width, this.height) && !placed; radius += 26) {
         for (let step = 0; step < 16; step++) {
           const x = desiredX + Math.cos(step * Math.PI / 8) * radius;
           const y = desiredY + Math.sin(step * Math.PI / 8) * radius;
-          if (x < 24 || x > this.width - 24 || y < 64 || y > this.height - 24) continue;
-          if (this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < 52)) continue;
+          if (!fits(x, y)) continue;
           segment.x = x; segment.y = y; placed = true; break;
         }
       }
@@ -867,28 +889,29 @@ export class SceneView {
         circle.setAttribute('cx', String(segment.x)); circle.setAttribute('cy', String(segment.y));
       }
       const text = segment.group.querySelector('text')!;
+      text.textContent = t(segment.index === 0 ? '根弦 1–4' : '梢弦 2–3');
       text.setAttribute('x', String(segment.x + 15)); text.setAttribute('y', String(segment.y + 4));
     }
     if (key !== 'assembly') {
       const handles = this.editorHandles.filter(h => h.group.style.display !== 'none');
       const occupied = this.editorSegments.filter(s => s.group.style.display !== 'none').map(s => ({ x: s.x, y: s.y }));
       for (const handle of handles) {
-        // Only crowded points move; leaders retain the actual geometry position.
-        const crowded = handles.some(other => other !== handle && Math.hypot(other.ax - handle.ax, other.ay - handle.ay) < 52);
-        if (crowded || handle.y < 64 || occupied.some(other => Math.hypot(other.x - handle.x, other.y - handle.y) < 52)) {
+        // Occupancy uses immutable screen positions, never mutable geometry anchors.
+        const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
+          && !occupied.some(other => Math.hypot(other.x - x, other.y - y) < 52 - 1e-6)
+          && !handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < 52 - 1e-6);
+        if (!fits(handle.x, handle.y)) {
           let found = false;
           for (let radius = 52; radius <= Math.max(this.width, this.height) && !found; radius += 26) {
             for (let step = 0; step < 16; step++) {
               const angle = (handle.index < 2 ? -Math.PI / 2 : Math.PI / 2) + step * Math.PI / 8;
               const x = handle.ax + Math.cos(angle) * radius, y = handle.ay + Math.sin(angle) * radius;
-              if (x < 24 || x > this.width - 24 || y < 64 || y > this.height - 24) continue;
-              if (occupied.some(other => Math.hypot(other.x - x, other.y - y) < 52)) continue;
-              if (handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < 52)) continue;
+              if (!fits(x, y)) continue;
               handle.x = x; handle.y = y; found = true; break;
             }
           }
         }
-        occupied.push(handle);
+        occupied.push({ x: handle.x, y: handle.y });
         handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
         handle.leader.style.display = handle.x === handle.ax && handle.y === handle.ay ? 'none' : '';
         handle.leader.setAttribute('x1', String(handle.ax)); handle.leader.setAttribute('y1', String(handle.ay));
@@ -1376,12 +1399,14 @@ export class SceneView {
     const ends = fuselageEnds(d);
     this.propulsionBounds.min.set(ends.tail, -0.5, -0.5);
     this.propulsionBounds.max.set(ends.nose, 0.85, 0.5);
+    this.designThrustCenter.set(0, 0, 0);
     for (let index = 0; index < this.engines.length; index++) {
       const group = this.engines[index], support = this.engineSupports[index], mount = mounts[index];
       group.visible = !!mount;
       support.visible = !!mount && mount.supportLength > 0;
       if (!mount) continue;
       group.position.set(mount.x, mount.y, mount.z);
+      this.designThrustCenter.add(group.position);
       group.scale.set(specification.length, specification.radius, specification.radius);
       this.propulsionBounds.expandByPoint(this.vector.set(mount.x - specification.length / 2, mount.y - specification.radius, mount.z - specification.radius));
       this.propulsionBounds.expandByPoint(this.vector.set(mount.x + specification.length / 2, mount.y + specification.radius, mount.z + specification.radius));
@@ -1392,6 +1417,8 @@ export class SceneView {
       support.scale.set(mount.supportWidth, mount.supportLength, 1);
       support.quaternion.setFromUnitVectors(UP, this.vector);
     }
+    // All installed engines receive equal thrust along body +X in the physics model.
+    if (mounts.length) this.designThrustCenter.divideScalar(mounts.length);
     this.fuelTank.visible = d.engine.count > 0 && d.fuelTank.capacity > 0;
     const tankPosition = fuelTankPosition(d);
     this.fuelTank.position.set(tankPosition.x, tankPosition.y, tankPosition.z);
@@ -1667,6 +1694,7 @@ export class SceneView {
     this.resizeObserver.disconnect();
     this.layoutObserver.disconnect();
     window.removeEventListener('blur', this.cancelEditorDrag);
+    this.unsubscribeLanguage();
     this.controls.dispose();
     this.editorOverlay.remove();
     for (const geometry of this.wingNormalGeometry) geometry.dispose();
@@ -2189,7 +2217,7 @@ export class SceneView {
         target.name = 'low-altitude-scoring-height';
         group.add(target);
       }
-      const sign = this.label(timingStart ? '计时起点 START' : finish ? '终点 FINISH' : `检查点 ${checkpointIndex} · ${gate.x.toFixed(1)} m`, '#213d40', timingStart ? '#a7dfff' : finish ? '#a6eee4' : '#ffe0a0', 512, 96);
+      const sign = this.label(timingStart ? '计时起点 START' : finish ? '终点 FINISH' : '检查点 {index} · {distance} m', '#213d40', timingStart ? '#a7dfff' : finish ? '#a6eee4' : '#ffe0a0', 512, 96, false, { index: checkpointIndex, distance: gate.x.toFixed(1) });
       sign.position.set(0, downhill ? gate.maxHeight + 9 : LOW_ALTITUDE.scoringHeight + 4, 0);
       sign.scale.set(downhill ? 40 : 24, downhill ? 7.5 : 4.5, 1);
       group.add(sign);
@@ -2555,7 +2583,7 @@ export class SceneView {
       label.scale.set(5.2, 2.15, 1);
       this.environment.add(label);
     }
-    this.scene.add(this.cg, this.liftCenter, this.dragCenter);
+    this.scene.add(...this.centerMarkers);
     this.scene.updateMatrixWorld(true);
   }
 
@@ -2619,21 +2647,26 @@ export class SceneView {
     }
   }
 
-  private label(text: string, color: string, background: string, width: number, height: number, flat = false): THREE.Sprite | THREE.Mesh {
+  private label(text: string, color: string, background: string, width: number, height: number, flat = false, params?: Record<string, string | number>): THREE.Sprite | THREE.Mesh {
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const context = canvas.getContext('2d')!;
-    context.fillStyle = background;
-    context.fillRect(0, 0, width, height);
-    context.fillStyle = color;
-    context.font = '500 36px system-ui, sans-serif';
-    context.textAlign = 'center'; context.textBaseline = 'middle';
-    context.fillText(text, width / 2, height / 2, width - 20);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    if (flat) return new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, depthWrite: false }));
-    return new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: false, depthWrite: false }));
+    const label = flat ? new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, depthWrite: false }))
+      : new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: false, depthWrite: false }));
+    label.userData.redrawLabel = () => {
+      context.fillStyle = background;
+      context.fillRect(0, 0, width, height);
+      context.fillStyle = color;
+      context.font = '500 36px system-ui, sans-serif';
+      context.textAlign = 'center'; context.textBaseline = 'middle';
+      context.fillText(t(text, params), width / 2, height / 2, width - 20);
+      texture.needsUpdate = true;
+    };
+    label.userData.redrawLabel();
+    return label;
   }
 
   private resize(): void {
@@ -2729,6 +2762,8 @@ export class SceneView {
   }
 
   private updateCameraInteraction(dt: number): void {
+    // Editing disables OrbitControls; do not mistake that for a flight camera orbit.
+    if (this.editorPointerId >= 0) return;
     const returning = !this.cameraDragging && this.elapsed - this.cameraReleasedAt > 3;
     const blend = 1 - Math.exp(-dt * 0.35);
     if (this.controls.enabled) {

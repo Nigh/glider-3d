@@ -36,6 +36,21 @@ export interface WingFragment extends StructuralBody {
   candidateVelocity: Vector3; candidateOmega: Vector3;
 }
 
+export function summarizeWingStructure(sections: readonly Pick<StructureSection, 'wingKey' | 'stressRatio' | 'yieldRatio' | 'bodyId'>[], wings = [
+  { key: 'mainWing', name: '主翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+  { key: 'horizontalTail', name: '水平尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+  { key: 'verticalTail', name: '垂直尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+]) {
+ for (const wing of wings) wing.stress = wing.yieldRatio = wing.attached = wing.detached = 0;
+ for (const section of sections) {
+  const wing = wings[section.wingKey === 'mainWing' ? 0 : section.wingKey === 'horizontalTail' ? 1 : 2];
+  wing.stress = Math.max(wing.stress, section.stressRatio);
+  wing.yieldRatio = Math.max(wing.yieldRatio, section.yieldRatio);
+  if (section.bodyId === 0) wing.attached++; else wing.detached++;
+ }
+ return wings;
+}
+
 /** 非对称断翼使用完整对称惯量张量；三个非对角项不可省略。 */
 export function setInertia(out: Matrix3, ix: number, iy: number, iz: number, ixy = 0, ixz = 0, iyz = 0) {
   return out.set(ix, ixy, ixz, ixy, iy, iyz, ixz, iyz, iz);

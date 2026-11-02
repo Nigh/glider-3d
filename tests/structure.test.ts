@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, clone, defaultAircraft, wing, type Controls } from '../src/model';
 import { FlightSimulation, GRAVITY } from '../src/physics';
-import { rotationalEnergy, type StructuralBody } from '../src/structure';
+import { rotationalEnergy, summarizeWingStructure, type StructuralBody } from '../src/structure';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
 interface FlightSnapshot {
@@ -27,6 +27,28 @@ function state(simulation: FlightSimulation) {
     fragments: simulation.fragments.map(fragment => [fragment.id, fragment.landed, fragment.mass, ...fragment.position.toArray(), ...fragment.quaternion.toArray(), ...fragment.velocity.toArray(), ...fragment.omega.toArray()]),
   };
 }
+
+it('三翼分别汇总当前极限、弹性限与分离状态，不复用全机最大值', () => {
+ const sections = [
+  { wingKey: 'mainWing', stressRatio: 1.25, yieldRatio: 2.4, bodyId: 0 },
+  { wingKey: 'mainWing', stressRatio: 0.8, yieldRatio: 1.6, bodyId: 7 },
+  { wingKey: 'horizontalTail', stressRatio: 0.12, yieldRatio: 0.3, bodyId: 0 },
+  { wingKey: 'verticalTail', stressRatio: 0.41, yieldRatio: 0.7, bodyId: 0 },
+ ] as const;
+ const summary = summarizeWingStructure(sections);
+ expect(summary).toMatchObject([
+  { key: 'mainWing', stress: 1.25, yieldRatio: 2.4, attached: 1, detached: 1 },
+  { key: 'horizontalTail', stress: 0.12, yieldRatio: 0.3, attached: 1, detached: 0 },
+  { key: 'verticalTail', stress: 0.41, yieldRatio: 0.7, attached: 1, detached: 0 },
+ ]);
+ const afterFracture = sections.map(section => section.wingKey === 'mainWing'
+  ? { ...section, stressRatio: 0.02, yieldRatio: 0.04, bodyId: 7 } : section);
+ expect(summarizeWingStructure(afterFracture, summary)).toMatchObject([
+  { key: 'mainWing', stress: 0.02, yieldRatio: 0.04, attached: 0, detached: 2 },
+  { key: 'horizontalTail', stress: 0.12, yieldRatio: 0.3, attached: 1, detached: 0 },
+  { key: 'verticalTail', stress: 0.41, yieldRatio: 0.7, attached: 1, detached: 0 },
+ ]);
+});
 
 describe('分段等效弹性梁', () => {
   it.each(['birdman', 'downhill', 'low-altitude'] as const)('%s待发射零速时，支撑重力产生真实应力与下垂', challenge => {

@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { engineCatalog, type EngineType } from './engines';
 import { defaultStructures, materialCatalog, type BeamStructure, type MaterialId } from './materials';
 
@@ -157,7 +158,7 @@ export function planform(w:Wing,symmetric=true) {
 export function validateAircraft(value:unknown):AircraftDefinition {
  if(!value || typeof value!=='object')throw Error('飞机数据必须是对象');
  const d=clone(value) as AircraftDefinition;
- const finite=(n:unknown,a:number,b:number)=>{if(typeof n!=='number'||!Number.isFinite(n)||n<a||n>b)throw Error(`参数必须在 ${a} 至 ${b} 之间`);};
+ const finite=(n:unknown,a:number,b:number)=>{if(typeof n!=='number'||!Number.isFinite(n)||n<a||n>b)throw Error(t('参数必须在 {p0} 至 {p1} 之间',{p0:a,p1:b}));};
  if(typeof d.name!=='string'||!d.name.trim()||d.name.length>60)throw Error('名称长度须为 1–60 字符');
  finite(d.fuselage?.length,3,12);finite(d.cockpit?.position,-3,4);finite(d.pilot?.mass,40,100);finite(d.controls?.travel,0.1,0.8);
  if (d.birdman === undefined) d.birdman = true;
