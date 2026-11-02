@@ -29,6 +29,60 @@ function state(simulation: FlightSimulation) {
 }
 
 describe('分段等效弹性梁', () => {
+  it.each(['birdman', 'downhill', 'low-altitude'] as const)('%s待发射零速时，支撑重力产生真实应力与下垂', challenge => {
+    const simulation = new FlightSimulation(defaultAircraft, challenge, 0);
+    const tip = simulation.structure.sections.filter(section => section.wingKey === 'mainWing' && section.side === 1).at(-1)!;
+    expect(simulation.launching).toBe(true); expect(simulation.velocity.lengthSq()).toBe(0);
+    expect(tip.tip.position.y).toBeLessThan(tip.referenceTip.y);
+    expect(simulation.structure.maxStressRatio).toBeGreaterThan(0);
+    expect(simulation.structure.maxDeflection).toBeGreaterThan(0);
+    expect(simulation.structure.fractureCount).toBe(0);
+    expect(simulation.surfaces.every(surface => surface.force.lengthSq() === 0)).toBe(true);
+  });
+
+  it.each(['birdman', 'downhill'] as const)('%s加速发射通过气动抬升机翼，离轨保留受力形状', challenge => {
+    const simulation = new FlightSimulation(defaultAircraft, challenge, 0);
+    const tip = simulation.structure.sections.filter(section => section.wingKey === 'mainWing' && section.side === 1).at(-1)!;
+    const sag = tip.tip.position.y - tip.referenceTip.y;
+    const lift = () => simulation.surfaces.filter(surface => surface.kind === 'main').reduce((sum, surface) => sum + surface.force.y, 0);
+    simulation.step(neutral, 0.25);
+    const slowLift = lift(), slowDeflection = tip.tip.position.y - tip.referenceTip.y;
+    expect(simulation.launching).toBe(true);
+    for (let i = 0; i < 3; i++) simulation.step(neutral, 0.25);
+    expect(simulation.launching).toBe(true); expect(simulation.structure.fractureCount).toBe(0);
+    expect(lift()).toBeGreaterThan(slowLift);
+    expect(tip.tip.position.y - tip.referenceTip.y).toBeGreaterThan(slowDeflection);
+    expect(tip.tip.position.y - tip.referenceTip.y).toBeGreaterThan(sag);
+    for (let i = 0; i < 4; i++) simulation.step(neutral, 0.25);
+    expect(simulation.launching).toBe(false); expect(simulation.ended).toBe(false);
+    expect(tip.tip.position.distanceTo(tip.referenceTip)).toBeGreaterThan(1e-5);
+    expect(tip.tip.quaternion.angleTo(new Quaternion())).toBeGreaterThan(1e-5);
+    simulation.step(neutral, 1e-4);
+    expect(tip.tip.position.distanceTo(tip.referenceTip)).toBeGreaterThan(1e-5);
+    expect(lift()).toBeGreaterThan(0);
+  });
+
+  it('低空滑跑共用飞行积分，轨道支撑时随来流增加抬升而不清空形变', () => {
+    const simulation = new FlightSimulation(defaultAircraft, 'low-altitude', 0);
+    const tip = simulation.structure.sections.filter(section => section.wingKey === 'mainWing' && section.side === 1).at(-1)!;
+    const sag = tip.tip.position.y - tip.referenceTip.y;
+    simulation.step(neutral, 1e-4);
+    expect(simulation.velocity.lengthSq()).toBe(0);
+    expect(tip.tip.position.y).toBeLessThan(tip.referenceTip.y);
+    simulation.velocity.set(2, 0, 0); simulation.step(neutral, 1e-4);
+    expect(simulation.launching).toBe(true);
+    const slowDeflection = tip.tip.position.y - tip.referenceTip.y, slowLift = simulation.telemetry.force.y;
+    simulation.velocity.set(4, 0, 0); simulation.step(neutral, 1e-4);
+    expect(simulation.launching).toBe(true); expect(simulation.ended).toBe(false);
+    expect(simulation.structure.fractureCount).toBe(0);
+    expect(slowLift).toBeGreaterThan(0);
+    expect(simulation.telemetry.force.y).toBeGreaterThan(slowLift);
+    expect(simulation.telemetry.force.y).toBeLessThan(simulation.mass * GRAVITY);
+    expect(slowDeflection).toBeGreaterThan(sag);
+    expect(tip.tip.position.y - tip.referenceTip.y).toBeGreaterThan(slowDeflection);
+    expect(simulation.structure.maxStressRatio).toBeGreaterThan(0);
+  });
+
   it('同一来流下三材料实际改变质量、形变和极限利用率；增厚梁降低形变', () => {
     const sample = (materialId: 'spruce' | 'aluminum-6061-t6' | 'carbon-epoxy', thickness = 1) => {
       const definition = clone(defaultAircraft);
@@ -174,12 +228,13 @@ describe('真实超载、独立断片和完整能量账本', () => {
     expect(simulation.position.y).toBeGreaterThan(100);
   });
 
-  it('正常发射产生的真实断裂可确定性回放；reset恢复完整质量、边界和节点', () => {
+  it('正常发射产生的真实断裂可确定性回放；reset恢复完整质量、边界和静载节点', () => {
     const d = clone(defaultAircraft);
     for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
       d[key].materialId = 'spruce'; d[key].structure = { width: 0.005, height: 0.005, wallThickness: 0.0002 };
     }
     const simulation = new FlightSimulation(d, 'birdman', 0), mass = simulation.mass;
+    const initialSections = state(simulation).sections;
     const states: FlightSnapshot[] = [];
     for (let i = 0; i < 150 && !simulation.ended; i++) { simulation.step(neutral); states.push(state(simulation)); }
     expect(simulation.structure.fractureCount).toBeGreaterThan(0);
@@ -188,11 +243,9 @@ describe('真实超载、独立断片和完整能量账本', () => {
     simulation.reset(0);
     expect(simulation.fragments).toHaveLength(0); expect(simulation.structure.fractureCount).toBe(0);
     expect(simulation.mass).toBe(mass);
+    expect(state(simulation).sections).toEqual(initialSections);
     for (const section of simulation.structure.sections) {
       expect(section.bodyId).toBe(0); expect(section.surface.bodyId).toBe(0);
-      expect(section.root.position.toArray()).toEqual(section.referenceRoot.toArray());
-      expect(section.tip.position.toArray()).toEqual(section.referenceTip.toArray());
-      expect(section.root.quaternion.toArray()).toEqual([0, 0, 0, 1]); expect(section.tip.quaternion.toArray()).toEqual([0, 0, 0, 1]);
     }
   });
 });

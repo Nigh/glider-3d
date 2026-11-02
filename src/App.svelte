@@ -27,7 +27,7 @@
  let recording:ReturnType<FlightSimulation['getRecording']>|null=null;let recordedLength=$state(0);let isReplay=$state(false);let lastDefinition=$state.raw(clone(defaultAircraft));
  let weight=$state(0),lateral=$state(0),rudder=$state(0),elevator=$state(0),aileron=$state(0);const keys=new Set<string>();const controls:Controls={weight:0,lateral:0,rudder:0,elevator:0,aileron:0};
  let throttle=$state(0.6);
- const flightViews=['追尾','原追尾','侧面','驾驶员','自由'];
+ const flightViews=['追尾','侧追尾','侧面','驾驶员','自由'];
  let flightCamera=$state('追尾');
  let messageTimeout:ReturnType<typeof setTimeout>;
  type FlightSample={time:number;distance:number;height:number;speed:number;scoringHeight:number;energyRatio:number;energyPerDistance:number|null};
@@ -293,7 +293,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  </div>
  <details class="advanced-hud"><summary>姿态与结构 · {(hud.fractureCount??0)>0?`已断裂 ${hud.fractureCount} 次`:'结构完整'} · 极限 {((hud.maxStressRatio??0)*100).toFixed(0)}%</summary><div class="structure-status" aria-label="结构载荷与断裂状态"><p>结构极限利用率 <output aria-label="结构极限利用率">{((hud.maxStressRatio??0)*100).toFixed(1)}%</output> · 弹性限利用率 {((hud.maxYieldRatio??0)*100).toFixed(1)}%</p><p>最大形变 <output aria-label="最大结构形变">{((hud.maxDeflection??0)*1000).toFixed(1)}</output> mm · 独立断片 <output aria-label="独立断片数量">{hud.fragmentCount??0}</output> 片</p>{#if (hud.fractureCount??0)>0}<p role="status"><strong>承力梁已断裂 {hud.fractureCount} 次。</strong>主体继续飞行；断片独立运动，断片落地不结束主体。</p>{:else if (hud.maxStressRatio??0)>=0.8}<p role="status"><strong>接近结构极限，减小载荷。</strong></p>{/if}{#if (hud.maxYieldRatio??0)>1}<p>超过等效弹性限。当前仍为线弹性近似，不模拟塑性或真实颤振。</p>{/if}</div><p>俯仰 {hud.pitch.toFixed(1)}° · 滚转 {hud.roll.toFixed(1)}°</p><p>下沉率 {hud.sink.toFixed(2)} m/s · 航迹滑翔比 {Number.isFinite(hud.glide)?hud.glide.toFixed(1):'—'}</p>{#if !lastDefinition.birdman}<label>升降舵<input disabled={!flightReady} aria-label="升降舵" type="range" min="-1" max="1" step="0.05" bind:value={elevator}/></label><label>副翼<input disabled={!flightReady} aria-label="副翼" type="range" min="-1" max="1" step="0.05" bind:value={aileron}/></label>{/if}</details>
  {:else if screen==='result'&&result}
- <section class="results">
+ <section class="results" aria-label="飞行结算">
  <div class="result-heading"><h1>{lastChallenge==='birdman'?'每一米，都来自你的设计。':result.completed?'挑战完成':'挑战未完成'}</h1><span>{challengeDefinitions[lastChallenge].name} · {isReplay?'飞行重放':'挑战成绩'}</span></div>
  <div class="score">{(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score).toFixed(2)}<small>{lastChallenge==='birdman'?'m':lastChallenge==='downhill'?'s':'分'}</small></div>
  <p class="best">个人最佳 {best?best.toFixed(2):'暂无'} {lastChallenge==='birdman'?'m':lastChallenge==='downhill'?'s':'分'} · {result.completed?'到达终点':lastChallenge!=='birdman'?'未通过全部检查点或碰撞地形':result.landing==='water'?'接触湖面':'达到飞行边界'}</p>

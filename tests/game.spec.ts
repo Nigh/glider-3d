@@ -429,7 +429,7 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   await beginFlight(page);
   await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0), { timeout: 20_000 }).toBeGreaterThan(30);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
-  for (const camera of ['追尾', '原追尾', '侧面', '驾驶员', '自由']) {
+  for (const camera of ['追尾', '侧追尾', '侧面', '驾驶员', '自由']) {
     await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(camera);
     await expect.poll(() => page.evaluate(() => {
       const s = window.glider.scene;
@@ -437,6 +437,28 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
     })).toBeGreaterThanOrEqual(0.549);
   }
   expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
+});
+
+test('所有飞行视角可拖动，松开三秒后缓缓回正', async ({ page, isMobile }) => {
+  test.skip(isMobile, '鼠标拖动在桌面验证');
+  await enterDesign(page);
+  await page.getByRole('button', { name: '前往挑战' }).click();
+  type CameraPoint = { x: number; y: number; z: number };
+  const snapshot = () => page.evaluate(() => {
+    const scene = window.glider.scene as typeof window.glider.scene & { target: { x: number; y: number; z: number } };
+    return [scene.camera, scene.target];
+  });
+  const distance = (a: CameraPoint[], b: CameraPoint[]) =>
+    a.reduce((sum, point, index) => sum + Math.hypot(point.x - b[index].x, point.y - b[index].y, point.z - b[index].z), 0);
+  for (const name of ['追尾', '侧追尾', '侧面', '驾驶员', '自由']) {
+    await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(name);
+    const before = await snapshot();
+    await page.mouse.move(1000, 420); await page.mouse.down();
+    await page.mouse.move(1120, 470, { steps: 8 }); await page.mouse.up();
+    const dragged = await snapshot();
+    expect(distance(before, dragged)).toBeGreaterThan(1);
+    await expect.poll(async () => distance(before, await snapshot()), { timeout: 12_000 }).toBeLessThan(0.3);
+  }
 });
 
 test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', async ({ page, isMobile }) => {
@@ -551,7 +573,7 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await expect(page.locator('.pause-banner')).toBeVisible();
   const stopped = await page.evaluate(() => window.glider.time);
   const camera = page.getByRole('combobox', { name: '飞行相机', exact: true });
-  for (const view of ['原追尾', '侧面', '驾驶员', '自由', '追尾']) {
+  for (const view of ['侧追尾', '侧面', '驾驶员', '自由', '追尾']) {
     await page.keyboard.press('c');
     await expect(camera).toHaveValue(view);
   }

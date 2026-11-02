@@ -82,6 +82,7 @@ function approachingPlatform(axis: number, sign: number, speed = 3, gap = 0.01) 
 describe('展向条带与完整翼面', () => {
   it('所有翼面按0.8m截短分段，面积和面积加权作用点保持完整梯形，左右镜像', () => {
     const d = definition(), s = new FlightSimulation(d, 'birdman', 0);
+    s.structure.reset(); // 此处验证未变形设计的条带离散，不使用发射架自重形状。
     for (const [key, kind] of [['mainWing', 'main'], ['horizontalTail', 'tail'], ['verticalTail', 'vertical']] as const) {
       const p = planform(d[key], key !== 'verticalTail'), panels = s.surfaces.filter(surface => surface.kind === kind);
       expect(panels.reduce((sum, panel) => sum + panel.area, 0)).toBeCloseTo(p.area, 12);
@@ -137,7 +138,11 @@ describe('展向条带与完整翼面', () => {
 
   it('远离水面的分段合力与设计参考一致，三翼和机身完整重建力与力矩', () => {
     const p = derive(defaultAircraft), a = p.aerodynamics;
-    const s = probe(undefined, s => { s.position.y = 280; s.velocity.set(12 * Math.cos(a.alpha) * Math.cos(a.beta), -12 * Math.sin(a.alpha) * Math.cos(a.beta), 12 * Math.sin(a.beta)); });
+    const s = probe(undefined, s => {
+      s.structure.reset(); // 与derive的刚性设计参考使用同一几何。
+      s.position.y = 280;
+      s.velocity.set(12 * Math.cos(a.alpha) * Math.cos(a.beta), -12 * Math.sin(a.alpha) * Math.cos(a.beta), 12 * Math.sin(a.beta));
+    });
     const sum = a.bodyDrag.clone(), torque = new Vector3();
     for (let i = 0; i < a.wings.length; i++) {
       expect(s.telemetry.aerodynamics.wings[i].force.distanceTo(a.wings[i].force)).toBeLessThan(0.02);

@@ -200,6 +200,22 @@ export class SceneView {
   private readonly desiredTarget = new THREE.Vector3();
   private readonly vector = new THREE.Vector3();
   private readonly chaseHeading = new THREE.Vector3(1, 0, 0);
+  private cameraDragging = false;
+  private cameraReleasedAt = -Infinity;
+  private cameraPointer = -1;
+  private cameraPointerX = 0;
+  private cameraPointerY = 0;
+  private cameraYaw = 0;
+  private cameraPitch = 0;
+  private readonly cameraHome = new THREE.Vector3();
+  private readonly targetHome = new THREE.Vector3();
+  private readonly cameraAngles = new THREE.Spherical();
+  private resultOrbit = false;
+  private readonly resultOffset = new THREE.Vector3();
+  private readonly resultTarget = new THREE.Vector3();
+  private readonly followPosition = new THREE.Vector3();
+  private readonly followTarget = new THREE.Vector3();
+  private followInitialized = false;
   private readonly vector2 = new THREE.Vector3();
   private wingTrailTime = -1;
   private readonly designCG = new THREE.Vector3();
@@ -304,6 +320,29 @@ export class SceneView {
     this.controls.minZoom = 0.1;
     this.controls.maxZoom = 10;
     this.controls.addEventListener('change', () => { this.editorDirty = true; });
+    this.controls.addEventListener('start', () => { this.cameraDragging = true; });
+    this.controls.addEventListener('end', () => { this.cameraDragging = false; this.cameraReleasedAt = this.elapsed; });
+    this.renderer.domElement.addEventListener('pointerdown', event => {
+      if (this.controls.enabled || event.button !== 0) return;
+      this.cameraPointer = event.pointerId;
+      this.cameraPointerX = event.clientX; this.cameraPointerY = event.clientY;
+      this.cameraDragging = true;
+      this.renderer.domElement.setPointerCapture(event.pointerId);
+    });
+    this.renderer.domElement.addEventListener('pointermove', event => {
+      if (event.pointerId !== this.cameraPointer) return;
+      this.cameraYaw -= (event.clientX - this.cameraPointerX) * 0.006;
+      this.cameraPitch += (event.clientY - this.cameraPointerY) * 0.006;
+      this.cameraPitch = clamp(this.cameraPitch, -1.35, 1.35);
+      this.cameraPointerX = event.clientX; this.cameraPointerY = event.clientY;
+    });
+    const releaseCamera = (event: PointerEvent) => {
+      if (event.pointerId !== this.cameraPointer) return;
+      this.cameraPointer = -1; this.cameraDragging = false;
+      this.cameraReleasedAt = this.elapsed;
+    };
+    this.renderer.domElement.addEventListener('pointerup', releaseCamera);
+    this.renderer.domElement.addEventListener('pointercancel', releaseCamera);
     this.level = 0;
     this.applyQuality();
     this.buildAircraft();
@@ -622,69 +661,83 @@ export class SceneView {
       const group = document.createElementNS(SVG_NS, 'g');
       group.setAttribute('role', 'button');
       group.setAttribute('tabindex', '0');
-      group.style.cssText = 'pointer-events:all;cursor:grab;outline:none';
+      group.classList.add('editor-control', 'editor-chord', i === 0 ? 'editor-root-chord' : 'editor-tip-chord');
+      group.style.cssText = 'pointer-events:all;cursor:grab';
       for (const hit of [true, false]) {
         const line = document.createElementNS(SVG_NS, 'line');
-        line.setAttribute('stroke', hit ? 'transparent' : '#a33f24');
+        line.setAttribute('stroke', hit ? 'transparent' : 'currentColor');
         line.setAttribute('stroke-width', hit ? '18' : '3');
         if (!hit) line.style.pointerEvents = 'none';
         group.appendChild(line);
       }
       const leader = document.createElementNS(SVG_NS, 'line');
-      leader.setAttribute('stroke', '#a33f24');
+      leader.setAttribute('stroke', 'currentColor');
       leader.setAttribute('stroke-dasharray', '3 3');
       leader.style.pointerEvents = 'none';
       group.appendChild(leader);
       const knob = document.createElementNS(SVG_NS, 'circle');
-      knob.setAttribute('r', '9');
-      knob.setAttribute('fill', '#fafbf6');
-      knob.setAttribute('stroke', '#a33f24');
+      knob.setAttribute('r', i === 0 ? '11' : '9');
+      knob.classList.add('editor-knob');
+      knob.setAttribute('stroke', 'currentColor');
       knob.setAttribute('stroke-width', '3');
       knob.setAttribute('data-segment-knob', '');
       const hit = knob.cloneNode() as SVGCircleElement;
       hit.removeAttribute('data-segment-knob');
+      hit.removeAttribute('class');
       hit.setAttribute('r', '22');
       hit.setAttribute('fill', 'transparent');
       hit.setAttribute('stroke', 'none');
-      group.append(hit, knob);
+      const text = document.createElementNS(SVG_NS, 'text');
+      text.classList.add('editor-control-label');
+      text.textContent = i === 0 ? '根弦 1–4' : '梢弦 2–3';
+      const focus = document.createElementNS(SVG_NS, 'circle');
+      focus.classList.add('editor-focus-ring');
+      focus.setAttribute('r', '17');
+      group.append(hit, knob, focus, text);
       this.editorSegments.push({ group, index: i === 0 ? 0 : 1, side: i === 2 ? -1 : 1, x: 0, y: 0, x1: 0, y1: 0, x2: 0, y2: 0 });
       group.addEventListener('pointerdown', e => this.beginEditorDrag(e, i, true));
       group.addEventListener('keydown', e => this.keyEditor(e, i, true));
-      group.addEventListener('focus', () => group.lastElementChild!.setAttribute('stroke-width', '6'));
-      group.addEventListener('blur', () => group.lastElementChild!.setAttribute('stroke-width', '3'));
       overlay.appendChild(group);
     }
     for (let i = 0; i < 8; i++) {
       const group = document.createElementNS(SVG_NS, 'g');
       group.setAttribute('role', 'button');
       group.setAttribute('tabindex', '0');
-      group.style.cssText = 'pointer-events:all;cursor:grab;outline:none';
+      group.classList.add('editor-control', 'editor-point');
+      group.style.cssText = 'pointer-events:all;cursor:grab';
       const hit = document.createElementNS(SVG_NS, 'circle');
       hit.setAttribute('r', '22');
       hit.setAttribute('fill', 'transparent');
       const point = document.createElementNS(SVG_NS, 'circle');
       point.setAttribute('r', '6');
+      point.classList.add('editor-vertex-mark');
       point.setAttribute('fill', '#fafbf6');
-      point.setAttribute('stroke', '#a33f24');
+      point.setAttribute('stroke', 'currentColor');
       point.setAttribute('stroke-width', '2');
       point.style.pointerEvents = 'none';
+      const mount = document.createElementNS(SVG_NS, 'path');
+      mount.classList.add('editor-mount-mark');
+      mount.setAttribute('d', 'M 0 -11 L 11 0 L 0 11 L -11 0 Z');
+      const focus = document.createElementNS(SVG_NS, 'circle');
+      focus.classList.add('editor-focus-ring');
+      focus.setAttribute('r', '17');
       const text = document.createElementNS(SVG_NS, 'text');
+      text.classList.add('editor-control-label');
       text.setAttribute('x', '11'); text.setAttribute('y', '-10');
       text.setAttribute('fill', '#173e43'); text.setAttribute('font-size', '12');
       text.setAttribute('paint-order', 'stroke'); text.setAttribute('stroke', '#fafbf6');
       text.setAttribute('stroke-width', '3');
       text.style.pointerEvents = 'none';
       const leader = document.createElementNS(SVG_NS, 'line');
-      leader.setAttribute('stroke', '#a33f24');
+      leader.classList.add('editor-point-leader');
+      leader.setAttribute('stroke', 'currentColor');
       leader.setAttribute('stroke-dasharray', '3 3');
       leader.style.pointerEvents = 'none';
       overlay.appendChild(leader);
-      group.append(hit, point, text);
+      group.append(hit, point, mount, focus, text);
       const handle = { group, leader, index: i < 4 ? i : i - 3, side: i < 4 ? 1 : -1, x: 0, y: 0, ax: 0, ay: 0 };
       this.editorHandles.push(handle);
       group.addEventListener('pointerdown', e => this.beginEditorDrag(e, i));
-      group.addEventListener('focus', () => { point.setAttribute('r', '9'); });
-      group.addEventListener('blur', () => { point.setAttribute('r', '6'); });
       group.addEventListener('keydown', e => this.keyEditor(e, i));
       overlay.appendChild(group);
     }
@@ -756,6 +809,8 @@ export class SceneView {
       handle.group.style.display = show ? '' : 'none';
       if (!show) { handle.leader.style.display = 'none'; continue; }
       const assemblyIndex = this.editorAssemblyIndex(i);
+      handle.group.classList.toggle('editor-mount', assemblyIndex >= 0);
+      handle.leader.classList.toggle('editor-mount', assemblyIndex >= 0);
       if (assemblyIndex >= 0) this.assemblyEditorPoint(assemblyIndex, this.editProjection);
       else this.wingEditorPoint(handle.index, handle.side, this.editProjection);
       this.body.localToWorld(this.editProjection).project(this.camera);
@@ -767,7 +822,7 @@ export class SceneView {
       const name = assemblyIndex >= 0 ? ['主翼位置', '水平尾翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex] : `${label}${handle.side < 0 ? '左翼' : ''}顶点${handle.index + 1}`;
       handle.group.setAttribute('aria-label', name);
       handle.group.setAttribute('data-handle', String(i));
-      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? ['主翼', '平尾', '垂尾', '驾驶舱', '机头', '机尾', '引擎', '油箱'][assemblyIndex] : String(handle.index + 1);
+      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? ['主翼安装', '平尾安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex] : String(handle.index + 1);
     }
     for (let i = 0; i < this.editorSegments.length; i++) {
       const segment = this.editorSegments[i];
@@ -808,9 +863,11 @@ export class SceneView {
       leader.setAttribute('x1', String((segment.x1 + segment.x2) / 2));
       leader.setAttribute('y1', String((segment.y1 + segment.y2) / 2));
       leader.setAttribute('x2', String(segment.x)); leader.setAttribute('y2', String(segment.y));
-      for (const circle of Array.from(segment.group.children).slice(3)) {
+      for (const circle of segment.group.querySelectorAll('circle')) {
         circle.setAttribute('cx', String(segment.x)); circle.setAttribute('cy', String(segment.y));
       }
+      const text = segment.group.querySelector('text')!;
+      text.setAttribute('x', String(segment.x + 15)); text.setAttribute('y', String(segment.y + 4));
     }
     if (key !== 'assembly') {
       const handles = this.editorHandles.filter(h => h.group.style.display !== 'none');
@@ -1384,6 +1441,7 @@ export class SceneView {
   }
 
   setFlight(sim: FlightSimulation | null): void {
+    this.resultOrbit = false;
     this.endEditorDrag();
     this.editorDirty = true;
     this.applyAircraft();
@@ -1453,14 +1511,18 @@ export class SceneView {
   }
 
   cameraView(name: string): void {
-    const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '原追尾': 'legacy-chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
+    const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '侧追尾': 'legacy-chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
     this.view = names[name] ?? name;
+    this.cameraYaw = this.cameraPitch = 0;
+    this.followInitialized = false;
+    this.cameraDragging = false;
+    this.cameraReleasedAt = -Infinity;
     if (!this.simulation && this.editorTarget) this.view = this.editorTarget === 'mainWing' || this.editorTarget === 'horizontalTail' ? 'top' : 'side';
     const orthographic = ['top', 'side', 'front', 'rear'].includes(this.view);
     this.camera = orthographic ? this.orthographic : this.perspective;
     this.controls.object = this.camera;
     this.controls.enabled = !this.simulation || this.view === 'free' || this.view === 'orbit' || orthographic;
-    this.controls.enableRotate = !orthographic;
+    this.controls.enableRotate = true;
     this.target.copy(this.aircraft.position);
     if (this.editorTarget && this.editorTarget !== 'assembly' && this.editorTarget !== 'propulsion' && !this.simulation) {
       const key = this.editorTarget, wing = this.definition[key], origin = wingOrigin(this.definition, key);
@@ -1492,6 +1554,8 @@ export class SceneView {
     this.controls.update();
     this.constrainCamera();
     if (this.simulation && !this.controls.enabled) this.followCamera(1, true);
+    this.cameraHome.copy(this.camera.position);
+    this.targetHome.copy(this.controls.target);
   }
 
   setQuality(name: Quality): void {
@@ -1571,6 +1635,7 @@ export class SceneView {
     this.updateExhaust();
     if (this.splashAge >= 0) this.updateSplash(seconds);
     if (this.controls.enabled) this.controls.update();
+    this.updateCameraInteraction(seconds);
     this.constrainCamera();
     this.updateCenters();
     this.updateFuelCgRange();
@@ -2602,6 +2667,26 @@ export class SceneView {
   }
 
   private followCamera(dt: number, immediate: boolean): void {
+    if (!immediate && !this.simulation?.ended && !this.controls.enabled && this.followInitialized) {
+      this.camera.position.copy(this.followPosition);
+      this.target.copy(this.followTarget);
+    }
+    if (this.simulation?.ended) {
+      if (!this.resultOrbit) {
+        this.resultOrbit = true;
+        this.resultOffset.subVectors(this.camera.position, this.aircraft.position);
+        this.resultTarget.copy(this.controls.enabled ? this.controls.target : this.target);
+        this.controls.enabled = false;
+        this.cameraYaw = this.cameraPitch = 0;
+      }
+      if (!this.cameraDragging && !this.reducedMotion) this.resultOffset.applyAxisAngle(UP, dt * 0.12);
+      this.camera.position.copy(this.aircraft.position).add(this.resultOffset);
+      this.resultTarget.lerp(this.aircraft.position, 1 - Math.exp(-dt * 0.8));
+      this.target.copy(this.resultTarget);
+      this.camera.up.copy(UP);
+      this.camera.lookAt(this.target);
+      return;
+    }
     if (this.controls.enabled) return;
     const sim = this.simulation;
     if (!sim) return;
@@ -2640,6 +2725,35 @@ export class SceneView {
     this.camera.position.lerp(this.desiredPosition, blend);
     this.target.lerp(this.desiredTarget, blend);
     this.camera.up.copy(pilot ? this.vector.copy(UP).applyQuaternion(this.aircraft.quaternion) : UP);
+    this.camera.lookAt(this.target);
+  }
+
+  private updateCameraInteraction(dt: number): void {
+    const returning = !this.cameraDragging && this.elapsed - this.cameraReleasedAt > 3;
+    const blend = 1 - Math.exp(-dt * 1.5);
+    if (this.controls.enabled) {
+      if (returning) {
+        this.camera.position.lerp(this.cameraHome, blend);
+        this.controls.target.lerp(this.targetHome, blend);
+        this.controls.update();
+      }
+      return;
+    }
+    if (returning) {
+      this.cameraYaw *= 1 - blend;
+      this.cameraPitch *= 1 - blend;
+    }
+    this.followPosition.copy(this.camera.position);
+    this.followTarget.copy(this.target);
+    this.followInitialized = true;
+    const pilot = this.view === 'pilot' && !this.resultOrbit;
+    this.vector.subVectors(pilot ? this.target : this.camera.position, pilot ? this.camera.position : this.target);
+    this.cameraAngles.setFromVector3(this.vector);
+    this.cameraAngles.theta += this.cameraYaw;
+    this.cameraAngles.phi = clamp(this.cameraAngles.phi + this.cameraPitch, 0.05, Math.PI - 0.05);
+    this.vector.setFromSpherical(this.cameraAngles);
+    if (pilot) this.target.copy(this.camera.position).add(this.vector);
+    else this.camera.position.copy(this.target).add(this.vector);
     this.camera.lookAt(this.target);
   }
 
