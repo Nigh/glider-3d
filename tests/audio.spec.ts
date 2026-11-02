@@ -6,6 +6,7 @@ import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
  await page.addInitScript(() => {
+  localStorage.setItem('aero-formula.language', 'zh');
   const NativeContext = window.AudioContext;
   const probes: { context: AudioContext; meter: AnalyserNode }[] = [];
    window.audioProbes = probes;

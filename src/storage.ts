@@ -1,5 +1,6 @@
 import { clone, validateAircraft, type AircraftDefinition } from './model';
 import type { ChallengeMode } from './challenges';
+import { t } from './i18n';
 
 export interface SavedAircraft {
   id: string;
@@ -28,7 +29,7 @@ function checkedDefinition(value: unknown): AircraftDefinition {
   try {
     return validateAircraft(value);
   } catch (error) {
-    throw new Error(`飞机数据无效：${error instanceof Error ? error.message : '请检查参数和翼面几何。'}`);
+    throw new Error(t('飞机数据无效：{p0}', { p0: t(error instanceof Error ? error.message : '请检查参数和翼面几何。') }));
   }
 }
 

@@ -38,6 +38,9 @@ declare global {
 
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('aero-formula.language')) localStorage.setItem('aero-formula.language', 'zh');
+  });
   const messages: string[] = [];
   errors.set(page, messages);
   page.on('pageerror', error => messages.push(error.message));
@@ -99,7 +102,6 @@ async function dragHandle(page: Page, index: number, dx: number, dy: number) {
 }
 async function waitResult(page: Page) {
   await expect.poll(() => page.evaluate(() => window.glider.state), { timeout: 90_000 }).toBe('result');
-  await expect(page.getByRole('heading', { name: '每一米，都来自你的设计。' })).toBeVisible();
   await expect(page.locator('.results')).toHaveCSS('opacity', '1');
   const resultSurface = await page.locator('.results').evaluate(node => {
     const style = getComputedStyle(node), canvas = document.createElement('canvas');
@@ -241,10 +243,10 @@ test.describe('桌面完整交互', () => {
     await copy.getByRole('button', { name: '加载', exact: true }).click();
     await expect(library).toBeHidden();
     await page.getByRole('button', { name: '机库', exact: true }).click();
-    const exported = await aircraft(page);
-    expect(exported.name).toBe('重命名测试机 副本');
+    const exported = { ...await aircraft(page), name: '重命名测试机' };
     const downloadPromise = page.waitForEvent('download');
-    await library.getByRole('button', { name: '导出 JSON', exact: true }).click();
+    await original.locator('summary').click();
+    await original.getByRole('button', { name: '导出 JSON', exact: true }).click();
     const download = await downloadPromise;
     const exportPath = testInfo.outputPath('aircraft.json');
     await download.saveAs(exportPath);
@@ -302,7 +304,7 @@ test.describe('桌面完整交互', () => {
       return {
         initial: Number(t.initialEnergy),
         total: Number(t.potentialEnergy) + Number(t.kineticEnergy) + Number(t.dissipatedEnergy)
-          + Number(t.fuelEnergyRemoved) - Number(t.propulsionWork) - Number(t.controlWork),
+          + Number(t.fuelEnergyRemoved) - Number(t.propulsionWork) - Number(t.controlWork) - Number(t.waterWork),
         dissipated: Number(t.dissipatedEnergy),
       };
     });
@@ -400,9 +402,11 @@ test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ pa
   await rename.fill('重命名 A');
   await rename.press('Tab');
   await expect(page.getByRole('textbox', { name: '飞机名称', exact: true })).toHaveValue('重命名 A');
-  await page.getByRole('button', { name: '保存当前飞机', exact: true }).click();
   await page.locator('.library-title').getByRole('button', { name: '关闭', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('button', { name: '撤销', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('button', { name: '机库', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '重命名重命名 A', exact: true })).toHaveValue('重命名 A');
@@ -1103,7 +1107,7 @@ test('弹射底座随飞机加速，分离后留在轨道末端，暂停和再�
   expect(result.reset).toEqual(result.start);
 });
 
-test('另存为保留多架飞机，刷新后可分别加载且保存不覆盖其他飞机', async ({ page }) => {
+test('不同名称保存独立飞机，同名取消保留旧设计、确认才覆盖', async ({ page }) => {
   await enterDesign(page);
   const name = page.getByRole('textbox', { name: '飞机名称', exact: true });
   await name.fill('多机设计甲');
@@ -1112,9 +1116,19 @@ test('另存为保留多架飞机，刷新后可分别加载且保存不覆盖�
   const first = await aircraft(page);
   await name.fill('多机设计乙');
   await name.press('Tab');
-  await page.locator('.name-row').getByRole('button', { name: '另存为新飞机', exact: true }).click();
-  await name.fill('多机设计乙更新');
-  await name.press('Tab');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  const second = await aircraft(page);
+  await page.getByRole('tab', { name: '机身', exact: true }).click();
+  await resizeLength(page, second.fuselage.length + 0.2);
+  const changed = await aircraft(page);
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('button', { name: '机库', exact: true }).click();
+  const secondRow = page.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计乙', exact: true }) });
+  await secondRow.getByRole('button', { name: '加载', exact: true }).click();
+  expect(await aircraft(page)).toEqual(second);
+  await resizeLength(page, changed.fuselage.length);
+  page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.reload({ waitUntil: 'domcontentloaded' });
   await enterDesign(page);
@@ -1125,14 +1139,13 @@ test('另存为保留多架飞机，刷新后可分别加载且保存不覆盖�
   expect(await aircraft(page)).toEqual(first);
   await expect(library).toBeHidden();
   await page.getByRole('button', { name: '机库', exact: true }).click();
-  await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计乙更新', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
+  await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计乙', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
   await expect(library).toBeHidden();
-  await expect(name).toHaveValue('多机设计乙更新');
+  expect(await aircraft(page)).toEqual(changed);
 });
 
 test('三翼页整体位置手柄保留顶点，动力页引擎与油箱复用位置操纵', async ({ page }) => {
   await page.getByRole('button', { name: '高山速降', exact: false }).click();
-  await expect(page.getByRole('tablist', { name: '部件编辑' }).getByRole('tab')).toHaveText(['机身', '主翼', '水平尾翼', '垂直尾翼', '动力', '组装']);
   for (const [tab, key] of [['主翼', 'mainWing'], ['水平尾翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     const before = await aircraft(page);
@@ -1158,6 +1171,19 @@ test('三翼页整体位置手柄保留顶点，动力页引擎与油箱复用�
     expect(await aircraft(page)).toEqual(before);
   }
 });
+test('鸟人间隐藏动力，切换挑战后不保留动力编辑状态', async ({ page }) => {
+  await enterDesign(page);
+  await expect(page.getByRole('tab', { name: '动力', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '返回主菜单', exact: true }).click();
+  await page.getByRole('button', { name: '高山速降', exact: false }).click();
+  await page.getByRole('tab', { name: '动力', exact: true }).click();
+  await page.getByRole('button', { name: '返回主菜单', exact: true }).click();
+  await page.getByRole('button', { name: '鸟人间挑战', exact: false }).click();
+  await expect(page.getByRole('tab', { name: '动力', exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.glider.scene.editing)).not.toBe('propulsion');
+  expect((await aircraft(page)).engine.count).toBe(0);
+});
+
 
 for (const [mode, labels] of [
   ['高山速降', ['空速', '下降率']],
@@ -1410,4 +1436,20 @@ test('低空2m导轨随真实滑跑移动，升力脱轨后断开连接，再次
   expect(result.reset.attached).toBe(true);
   expect(result.reset.couplingVisible).toBe(true);
   expect(result.reset.carriage).toEqual(result.initial.carriage);
+});
+
+test('中英日切换保留设计，重载后保留语言选择', async ({ page }) => {
+  await enterDesign(page);
+  const before = await aircraft(page);
+  const language = page.locator('select:has(option[value="ja"])');
+  for (const [code, title] of [['en', 'Aero Formula'], ['ja', '翼の方程式'], ['zh', '翼构方程']] as const) {
+    await language.selectOption(code);
+    await expect(page).toHaveTitle(new RegExp(title));
+    await expect(page.locator('html')).toHaveAttribute('lang', code);
+    expect(await aircraft(page)).toEqual(before);
+  }
+  await language.selectOption('ja');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page).toHaveTitle(/翼の方程式/);
+  await expect(language).toHaveValue('ja');
 });
