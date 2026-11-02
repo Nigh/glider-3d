@@ -206,6 +206,16 @@ describe('最远纪录', () => {
     expect(storage.getItem(`lakewind.best.${PHYSICS_VERSION}.birdman`)).toBe('broken');
   });
 
+  it('三倍赛道与逐门计分不混用旧关卡纪录，保留原始成绩与鸟人间纪录', () => {
+    for (const mode of ['downhill','low-altitude'] as const) {
+      const key = `lakewind.best.${PHYSICS_VERSION}.${mode}`;
+      storage.setItem(key,'100');
+      expect(readBest(mode)).toBe(0);expect(writeBest(200,mode)).toBe(200);
+      expect(storage.getItem(key)).toBe('100');
+    }
+    expect(writeBest(150)).toBe(150);expect(readBest()).toBe(150);
+  });
+
   it('旧物理版本纪录不混榜，且不删除原始数据', () => {
     storage.setItem('lakewind.best.official-v1.standard', '900');
     storage.setItem('lakewind.best.challenge-v2.birdman', '850');

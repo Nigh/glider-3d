@@ -13,7 +13,7 @@ test.beforeEach(async({page})=>{
 
 test('气动窗口按流布局，配平中点吸附、热键步进和临时显示',async({page},testInfo)=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- await page.getByRole('button',{name:'气动图层',exact:true}).click();
+ await page.getByRole('switch',{name:'气动图层',exact:true}).click();
  const panel=page.getByRole('complementary',{name:'实时气动数据'});
  const pitch=panel.getByRole('slider',{name:'升降舵配平',exact:true}),roll=panel.getByRole('slider',{name:'副翼配平',exact:true});
  await expect(pitch).toHaveValue('50');await expect(roll).toHaveValue('50');
@@ -30,13 +30,13 @@ test('气动窗口按流布局，配平中点吸附、热键步进和临时显�
   const panel=document.querySelector('.aero-live')!.getBoundingClientRect(),hud=document.querySelector('.flight-hud')!.getBoundingClientRect();
   return {left:panel.left,right:panel.right,top:panel.top,hudBottom:hud.bottom,width:innerWidth,bg:getComputedStyle(document.querySelector('.aero-live')!).backgroundColor};
  });
- expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.top).toBeGreaterThanOrEqual(bounds.hudBottom);
+ expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width);if(testInfo.project.name==='desktop-chromium')expect(bounds.left).toBeGreaterThan(700);
  expect(bounds.bg).toBe('rgb(18, 61, 67)');
  await panel.scrollIntoViewIfNeeded();
  await page.screenshot({path:testInfo.outputPath('aero-trim.png')});
- await page.getByRole('button',{name:'气动图层',exact:true}).click();
+ await page.getByRole('switch',{name:'气动图层',exact:true}).click();
  await expect(panel).toHaveCount(0,{timeout:4000});
- await page.getByRole('button',{name:'气动图层',exact:true}).focus();
+ await page.getByRole('switch',{name:'气动图层',exact:true}).focus();
  const flash=await page.evaluate(async()=>{
   document.activeElement!.dispatchEvent(new KeyboardEvent('keydown',{key:'h',code:'KeyH',bubbles:true}));
   await Promise.resolve();
@@ -46,4 +46,20 @@ test('气动窗口按流布局，配平中点吸附、热键步进和临时显�
  const transient=page.getByRole('complementary',{name:'实时气动数据'});
  await expect(transient).toHaveCount(0,{timeout:6000});
  expect(errors).toEqual([]);
+});
+
+test('操作后焦点回到游戏，Ctrl+A不全选，飞行操作在右上方',async({page},testInfo)=>{
+ const camera=page.getByRole('combobox',{name:'飞行相机'});
+ await camera.selectOption('侧面');
+ expect(await camera.evaluate(e=>document.activeElement===e)).toBe(false);
+ const toggle=page.getByRole('switch',{name:'气动图层',exact:true});
+ await toggle.click();await expect(toggle).toHaveAttribute('aria-checked','true');
+ expect(await toggle.evaluate(e=>document.activeElement===e)).toBe(false);
+ await page.keyboard.press('Control+a');
+ expect(await page.evaluate(()=>getSelection()?.toString())).toBe('');
+ await page.keyboard.press('c');await expect(camera).not.toHaveValue('侧面');
+ await expect(page.getByRole('button',{name:'抬头',exact:true})).toHaveCount(0);
+ if(testInfo.project.name==='desktop-chromium'){
+  const box=await camera.boundingBox();expect(box!.x).toBeGreaterThan(700);expect(box!.y).toBeLessThan(150);
+ }
 });

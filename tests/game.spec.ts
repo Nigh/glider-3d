@@ -61,8 +61,8 @@ async function enterDesign(page: Page) {
 }
 async function expectWaiting(page: Page) {
   await expect(page.getByRole('button', { name: '开始试飞', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '低头', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '暂停', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '低头', exact: true })).toHaveCount(0);
   const storedInputs = await page.evaluate(() => window.glider.recordingLength);
   for (let check = 0; check < 2; check++) {
     expect(await page.evaluate(() => ({
@@ -283,15 +283,11 @@ test.describe('桌面完整交互', () => {
     await expect.poll(() => page.evaluate(() => window.glider.telemetry!.cg.x)).toBeGreaterThan(initialCg);
     await page.keyboard.up('w');
     await page.keyboard.up('d');
-    const button = page.getByRole('button', { name: '抬头', exact: true });
-    const box = await button.boundingBox();
-    if (!box) throw new Error('鼠标飞控不可见');
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await expect(page.getByRole('progressbar', { name: '重心操纵输入' })).toHaveAttribute('value', '0');
-    await page.waitForTimeout(200);
-    await page.mouse.up();
-    await expect(page.getByRole('progressbar', { name: '重心操纵输入' })).toHaveAttribute('value', '1');
+    await page.keyboard.down('x');
+    await page.mouse.move(800,400);
+    await expect(page.getByLabel('虚拟操纵杆')).toBeVisible();
+    await page.keyboard.up('x');
+    await expect(page.getByLabel('虚拟操纵杆')).toHaveCount(0);
     await page.getByRole('button', { name: '暂停', exact: true }).click();
     const stopped = await page.evaluate(() => window.glider.telemetry?.distance);
     await page.waitForTimeout(200);
@@ -330,7 +326,7 @@ test.describe('桌面完整交互', () => {
   });
 });
 
-test('手机竖屏与横屏无页面溢出，真实浏览器触摸事件可操纵并释放', async ({ page, isMobile, context }) => {
+test('手机竖屏与横屏无页面溢出，保留相机操作并移除虚拟飞控', async ({ page, isMobile, context }) => {
   test.skip(!isMobile, '此测试仅使用触摸视口；不代表真实手机硬件验证');
   await noOverflow(page);
   await enterDesign(page);
@@ -346,28 +342,8 @@ test('手机竖屏与横屏无页面溢出，真实浏览器触摸事件可操�
   await page.getByRole('button', { name: '前往挑战' }).tap();
   await beginFlight(page);
   await noOverflow(page);
-  const session = await context.newCDPSession(page);
-  let touchActive = false;
-  try {
-    for (const [name, progress, expected] of [
-      ['低头', '重心操纵输入', '2'], ['抬头', '重心操纵输入', '0'],
-      ['向左转向', '方向操纵输入', '0'], ['向右转向', '方向操纵输入', '2'],
-    ]) {
-      const control = page.getByRole('button', { name, exact: true });
-      await insideViewport(page, control);
-      const box = (await control.boundingBox())!;
-      await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
-      touchActive = true;
-      await expect(page.getByRole('progressbar', { name: progress })).toHaveAttribute('value', expected);
-      await page.waitForTimeout(120);
-      await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      touchActive = false;
-      await expect(page.getByRole('progressbar', { name: progress })).toHaveAttribute('value', '1');
-    }
-  } finally {
-    if (touchActive) await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await session.detach();
-  }
+  await expect(page.locator('.flight-controls')).toHaveCount(0);
+  await insideViewport(page,page.getByRole('combobox',{name:'飞行相机'}));
   await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0)).toBeGreaterThan(0);
   await waitResult(page);
   await noOverflow(page);
@@ -598,7 +574,7 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await page.keyboard.press('Space');
   await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(0);
   expect(await page.evaluate(() => window.glider.telemetry!.cg.x)).toBe(cg);
-  await expect(page.getByRole('progressbar', { name: '重心操纵输入' })).toHaveAttribute('value', '1');
+  await expect(page.getByRole('progressbar', { name: '重心操纵输入' })).toHaveCount(0);
   await page.keyboard.up('w');
   await page.keyboard.up('d');
   await page.keyboard.press('Space');
@@ -1006,20 +982,15 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
   }
 });
 
-test('底部主按钮启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
+test('右上角按钮启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
   await enterDesign(page);
   await page.getByRole('button', { name: '前往挑战' }).click();
   await expectWaiting(page);
   const start = page.getByRole('button', { name: '开始试飞', exact: true });
   const box = await start.boundingBox(), viewport = page.viewportSize()!;
   if (!box) throw new Error('开始按钮不可见');
-  expect(box.x + box.width / 2).toBeCloseTo(viewport.width / 2, 0);
-  expect(viewport.height - box.y - box.height).toBeLessThan(box.height);
-  const otherButtons = await page.getByRole('button').evaluateAll(buttons => buttons
-    .filter(button => button.getAttribute('aria-label') !== '开始试飞')
-    .map(button => { const rect=button.getBoundingClientRect(); return {area:rect.width*rect.height,height:rect.height}; }));
-  expect(box.width * box.height).toBeGreaterThan(Math.max(...otherButtons.map(button=>button.area)));
-  expect(box.height).toBeGreaterThan(Math.max(...otherButtons.map(button=>button.height)));
+  expect(box.x + box.width / 2).toBeGreaterThan(viewport.width / 2);
+  expect(box.y).toBeLessThan(viewport.height / 2);
   const cost = page.getByLabel('实时能耗', { exact: true });
   await expect(cost).toHaveText('—');
   await start.focus();
@@ -1464,7 +1435,7 @@ test('快捷键、独立气动窗口与鼠标操纵杆释放复位', async ({pag
  await enterDesign(page);
  await page.getByRole('button',{name:'试飞',exact:true}).click();
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
- await page.getByRole('button',{name:'气动图层',exact:true}).click();
+ await page.getByRole('switch',{name:'气动图层',exact:true}).click();
  await expect(page.getByRole('complementary',{name:'实时气动数据'})).toBeVisible();
  await expect(page.getByRole('complementary',{name:'开发性能面板'})).toHaveCount(0);
  await page.keyboard.down('x');

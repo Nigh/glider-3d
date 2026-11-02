@@ -142,7 +142,7 @@ describe('三轴操纵与高山路径边界', () => {
     const gate = challengeCheckpoints(challenge)[0];
     airborne(s, gate.x - 0.1, 2.5); s.position.set(gate.x - 0.1, gate.y + 2.5, gate.z);
     s.velocity.set(30, 0, 0); s.step(neutral, 0.01);
-    expect(s.ended).toBe(false); expect(s.telemetry.challengeProgress).toBe(0.1);
+    expect(s.ended).toBe(false); expect(s.telemetry.challengeProgress).toBe(1 / challengeCheckpoints(s.challenge).length);
     s.position.y = challengeCollisionHeight(challenge, s.position.x, s.position.z) - 1;
     s.step(neutral);
     expect(['terrain', 'water']).toContain(s.result?.landing);
@@ -166,7 +166,7 @@ describe('三轴操纵与高山路径边界', () => {
   it('仅向前穿过下一门算进度，漏门和直达终点不能完成', () => {
     const gates = challengeCheckpoints('downhill'), first = gates[0], last = gates[gates.length - 1];
     const s = crossStart(create(), 60); airborne(s, first.x - 0.2, 60); s.position.z = first.z; s.position.y = first.y + 60; s.velocity.set(30, 0, 0); s.step(neutral);
-    expect(s.telemetry.challengeProgress).toBe(0.1); expect(s.ended).toBe(false);
+    expect(s.telemetry.challengeProgress).toBe(1 / challengeCheckpoints(s.challenge).length); expect(s.ended).toBe(false);
     const skipped = crossStart(create(), 60); airborne(skipped, last.x - 0.2, 60); skipped.position.z = last.z; skipped.velocity.set(30, 0, 0); skipped.step(neutral);
     expect(skipped.result?.completed).toBe(false); expect(skipped.result?.landing).toBe('boundary'); expect(skipped.telemetry.challengeProgress).toBe(0);
     const completed = crossStart(create(), 60);
@@ -203,7 +203,7 @@ describe('三轴操纵与高山路径边界', () => {
       s.step(neutral, 0.01); expect(s.ended).toBe(false);
       expect(s.telemetry.timingStarted).toBe(true);
     }
-    expect(s.telemetry.challengeProgress).toBe(0.1);
+    expect(s.telemetry.challengeProgress).toBe(1 / challengeCheckpoints(s.challenge).length);
   });
 });
 
@@ -380,17 +380,34 @@ describe('低空地形、滑跑与计分', () => {
     }
   });
 
-  it('同段首次前进贴地更近、完成更快分更高，反复走同段不重复得距离', () => {
-    const fast = crossStart(lowAltitude()), slow = crossStart(lowAltitude()), high = crossStart(lowAltitude());
-    const gate = challengeStartGate('low-altitude')!, x = gate.x + 1, z = gate.z, y = challengeCollisionHeight('low-altitude', x, z);
-    for (const s of [fast, slow, high]) { s.position.set(x, y + 8, z); s.quaternion.identity(); }
-    fast.velocity.set(40, 0, 0); slow.velocity.set(20, 0, 0); high.velocity.set(40, 0, 0); high.position.y += 10;
-    fast.step(neutral, 0.01); slow.step(neutral, 0.02); high.step(neutral, 0.01);
-    expect(fast.telemetry.score).toBeGreaterThan(slow.telemetry.score); expect(fast.telemetry.score).toBeGreaterThan(high.telemetry.score);
-    const score = fast.telemetry.score, farthest = fast.position.x;
-    fast.velocity.set(-40, 0, 0); fast.quaternion.set(0, 1, 0, 0); fast.step(neutral, 0.01);
-    fast.velocity.set(40, 0, 0); fast.quaternion.identity(); fast.step(neutral, 0.01);
-    expect(fast.position.x).toBeCloseTo(farthest, 3); expect(fast.telemetry.score).toBeLessThan(score); expect(fast.ended).toBe(false);
+  it('逐门记录低空分与贴地奖励，速度分只在终点加入，回头不重复得分', () => {
+    const cross = (s: FlightSimulation, index: number, clearance: number, speed = 30) => {
+      const gate = challengeCheckpoints('low-altitude')[index];
+      airborne(s, gate.x - 0.1, clearance);
+      s.position.set(gate.x - 0.1, challengeCollisionHeight('low-altitude', gate.x, gate.z) + clearance, gate.z);
+      s.velocity.set(speed, 0, 0); s.step(neutral, 0.01);
+    };
+    const low = crossStart(lowAltitude()), high = crossStart(lowAltitude()), fast = crossStart(lowAltitude());
+    cross(low, 0, 4); cross(high, 0, 15); cross(fast, 0, 4, 60);
+    expect(low.checkpointScores).toHaveLength(1);
+    expect(low.telemetry.score).toBeGreaterThan(high.telemetry.score);
+    expect(fast.telemetry.score).toBeCloseTo(low.telemetry.score, 0);
+    const score = low.telemetry.score;
+    cross(low, 0, 4);
+    expect(low.checkpointScores).toHaveLength(1); expect(low.telemetry.score).toBe(score);
+    for (let i = 1; i < challengeCheckpoints('low-altitude').length; i++) cross(low, i, 4);
+    expect(low.telemetry.completed).toBe(true);
+    expect(low.telemetry.score).toBeGreaterThan(low.checkpointScores.reduce((a, b) => a + b, 0));
+    low.reset(); expect(low.checkpointScores).toHaveLength(0);
+  });
+
+  it('赛道延长三倍，速降中段有陡降并在终点回到平原', () => {
+    expect(challengeCheckpoints('downhill').at(-1)!.x).toBe(5400);
+    expect(challengeCheckpoints('low-altitude').at(-1)!.x).toBe(4800);
+    const ground = (x: number) => challengeTerrainHeight('downhill', x, challengeCenter('downhill', x));
+    expect(ground(2400) - ground(2750)).toBeGreaterThan(700);
+    expect(ground(5400)).toBeLessThan(100);
+    expect(Math.abs(ground(5300) - ground(5400))).toBeLessThan(25);
   });
 
   it('持续超高按真实秒数加重扣分；起点前不扣分，落河返回water', () => {

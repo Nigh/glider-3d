@@ -1,5 +1,11 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
 export const messages: Record<string, readonly [string, string]> = {
+ "低空分": ["Low flight points", "低空スコア"],
+ "速度分": ["Speed points", "速度スコア"],
+ "超高扣分": ["Height penalty", "高度超過減点"],
+ "逐门得分": ["Checkpoint points", "各ゲートのスコア"],
+ "导出": ["Export", "エクスポート"],
+ "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · X 鼠标操纵 · C 镜头 · Space 开始/暂停": ["W / S pitch · A / D roll · Q / E yaw · X mouse stick · C camera · Space start/pause", "W / S ピッチ · A / D ロール · Q / E ヨー · X マウス操縦 · C カメラ · Space 開始/一時停止"],
  "航迹滑翔比": ["Flight path glide ratio", "飛行経路滑空比"],
  "本次飞行翼面峰值": ["Wing load peaks this flight", "今回の飛行の翼面最大負荷"],
  "50% 中立 · 鼠标吸附中点 · 快捷键每格 10%": ["50% neutral · Mouse snaps to center · Keys step 10%", "50%で中立 · マウスは中央に吸着 · キーは10%刻み"],
