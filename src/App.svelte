@@ -46,7 +46,7 @@
  let scoringCurvePoints=$derived(screen==='result'&&lastChallenge==='low-altitude'?trajectory.map(p=>`${(38+p.distance/chartMaxDistance*290).toFixed(2)},${(98-p.scoringHeight/chartMaxHeight*76).toFixed(2)}`).join(' '):'');
  let energyParts=$derived([{key:'potential',name:'势能',value:hud.potentialEnergy},{key:'kinetic',name:'动能',value:hud.kineticEnergy},{key:'dissipated',name:'已耗散',value:hud.dissipatedEnergy}]);
  let energyTotal=$derived(hud.potentialEnergy+hud.kineticEnergy+hud.dissipatedEnergy);
- let energyBudget=$derived(hud.initialEnergy+(hud.propulsionWork??0)+(hud.controlWork??0)-(hud.fuelEnergyRemoved??0));
+ let energyBudget=$derived(hud.initialEnergy+(hud.propulsionWork??0)+(hud.controlWork??0)+(hud.waterWork??0)-(hud.fuelEnergyRemoved??0));
  let assemblyPositions=$derived([{key:'mainWing',label:'主翼纵向位置',value:aircraft.assembly.mainWing,min:mainMountLimits.min,max:mainMountLimits.max},{key:'horizontalTail',label:'水平尾翼位置',value:aircraft.assembly.horizontalTail,min:tailMin,max:tailMax},{key:'verticalTail',label:'垂直尾翼位置',value:aircraft.assembly.verticalTail,min:tailMin,max:tailMax},{key:'cockpit',label:'驾驶舱位置',value:aircraft.cockpit.position,min:cockpitMin,max:cockpitMax}] as const);
  function setPosition(key:typeof assemblyPositions[number]['key'],input:HTMLInputElement){const n=input.valueAsNumber,position=assemblyPositions.find(p=>p.key===key)!;if(Number.isFinite(n)){const supported=clamp(n,position.min,position.max);change(d=>{if(key==='cockpit')d.cockpit.position=supported;else d.assembly[key]=supported;});if(n!==supported)notify('已限制在机身支撑范围内；可先延长机头或机尾。');commit();}else notify('位置必须是有限数值');input.value=String(key==='cockpit'?aircraft.cockpit.position:aircraft.assembly[key]);}
  function setEnd(end:'nose'|'tail',input:HTMLInputElement){const n=input.valueAsNumber;if(Number.isFinite(n)){change(d=>resizeFuselage(d,end,n));commit();if(Math.abs(fuselageEnds(aircraft)[end]-n)>1e-6)notify('端点受 3–12 m 机身长度、驾驶舱和尾翼支撑限制。');}else notify('端点必须是有限数值');input.value=String(Number(fuselageEnds(aircraft)[end].toFixed(6)));}
@@ -161,7 +161,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  <div class="energy-track" aria-hidden="true">{#each energyParts as part}<span class={part.key} style:width={`${energyBudget>0?part.value/energyBudget*100:0}%`}></span>{/each}</div>
  <dl class="energy-values">{#each energyParts as part}<div class={part.key}><dt>{part.name}</dt><dd>{part.value.toFixed(0)} J <small>{(energyBudget>0?part.value/energyBudget*100:0).toFixed(1)}%</small></dd></div>{/each}</dl>
  <p class="energy-total">合计 {energyTotal.toFixed(0)} J <span>能量预算 {energyBudget.toFixed(0)} J</span></p>
- <p class="energy-caption">动能含平动与转动；耗散含空气阻力与阻尼。引擎做功 {(hud.propulsionWork??0).toFixed(0)} J · 驾驶员做功 {(hud.controlWork??0).toFixed(0)} J · 燃油带走 {(hud.fuelEnergyRemoved??0).toFixed(0)} J。</p>
+ <p class="energy-caption">动能含平动与转动；耗散含空气、水体阻力与阻尼。引擎做功 {(hud.propulsionWork??0).toFixed(0)} J · 驾驶员做功 {(hud.controlWork??0).toFixed(0)} J · 浮力做功 {(hud.waterWork??0).toFixed(0)} J · 燃油带走 {(hud.fuelEnergyRemoved??0).toFixed(0)} J。</p>
  {/if}
  </section>
 {/snippet}
