@@ -1,0 +1,123 @@
+{
+  "name": "喷气巡航50M型",
+  "birdman": false,
+  "fuselage": {
+    "length": 5.662751556898547,
+    "center": 0.41862422155072654
+  },
+  "cockpit": {
+    "position": 1.8382784571126816
+  },
+  "mainWing": {
+    "points": [
+      {
+        "x": 0.03738577661348044,
+        "y": 0
+      },
+      {
+        "x": 0.9,
+        "y": 4.277435864067994
+      },
+      {
+        "x": 1.4500000000000002,
+        "y": 4.277435864067994
+      },
+      {
+        "x": 1.461754905965915,
+        "y": 0
+      }
+    ],
+    "dihedral": 3,
+    "controlSurface": 0.28,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 0.9,
+    "structure": {
+      "width": 0.06,
+      "height": 0.14,
+      "wallThickness": 0.0025
+    }
+  },
+  "horizontalTail": {
+    "points": [
+      {
+        "x": 0,
+        "y": 0
+      },
+      {
+        "x": 0.4538781330334313,
+        "y": 1.457917749846019
+      },
+      {
+        "x": 0.8538781330334313,
+        "y": 1.457917749846019
+      },
+      {
+        "x": 0.65,
+        "y": 0
+      }
+    ],
+    "dihedral": 0,
+    "controlSurface": 0.4,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.03,
+      "height": 0.065,
+      "wallThickness": 0.0015
+    }
+  },
+  "verticalTail": {
+    "points": [
+      {
+        "x": 0,
+        "y": 0
+      },
+      {
+        "x": 0.15,
+        "y": 1.2
+      },
+      {
+        "x": 0.5,
+        "y": 1.2
+      },
+      {
+        "x": 0.7,
+        "y": 0
+      }
+    ],
+    "dihedral": 0,
+    "controlSurface": 1,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.03,
+      "height": 0.065,
+      "wallThickness": 0.0015
+    }
+  },
+  "assembly": {
+    "mainWing": 0.7358216394410271,
+    "mainWingHeight": 0,
+    "horizontalTail": -1.9728134928797862,
+    "verticalTail": -2.047962524100256,
+    "mainIncidence": 1,
+    "tailIncidence": 0
+  },
+  "pilot": {
+    "mass": 60
+  },
+  "controls": {
+    "travel": 0.3,
+    "lateralTravel": 0.1
+  },
+  "engine": {
+    "type": "jet-01",
+    "count": 1,
+    "x": -1.3926465859162032,
+    "y": 0.29000000000000004
+  },
+  "fuelTank": {
+    "x": 0.4806982956435517,
+    "capacity": 4
+  }
+}
