@@ -331,8 +331,8 @@ export class SceneView {
     });
     this.renderer.domElement.addEventListener('pointermove', event => {
       if (event.pointerId !== this.cameraPointer) return;
-      this.cameraYaw -= (event.clientX - this.cameraPointerX) * 0.006;
-      this.cameraPitch += (event.clientY - this.cameraPointerY) * 0.006;
+      if (!this.resultOrbit) this.cameraYaw -= (event.clientX - this.cameraPointerX) * 0.006;
+      this.cameraPitch -= (event.clientY - this.cameraPointerY) * 0.006;
       this.cameraPitch = clamp(this.cameraPitch, -1.35, 1.35);
       this.cameraPointerX = event.clientX; this.cameraPointerY = event.clientY;
     });
@@ -2679,7 +2679,7 @@ export class SceneView {
         this.controls.enabled = false;
         this.cameraYaw = this.cameraPitch = 0;
       }
-      if (!this.cameraDragging && !this.reducedMotion) this.resultOffset.applyAxisAngle(UP, dt * 0.12);
+      if (!this.reducedMotion) this.resultOffset.applyAxisAngle(UP, dt * 0.12);
       this.camera.position.copy(this.aircraft.position).add(this.resultOffset);
       this.resultTarget.lerp(this.aircraft.position, 1 - Math.exp(-dt * 0.8));
       this.target.copy(this.resultTarget);
@@ -2730,7 +2730,7 @@ export class SceneView {
 
   private updateCameraInteraction(dt: number): void {
     const returning = !this.cameraDragging && this.elapsed - this.cameraReleasedAt > 3;
-    const blend = 1 - Math.exp(-dt * 1.5);
+    const blend = 1 - Math.exp(-dt * 0.35);
     if (this.controls.enabled) {
       if (returning) {
         this.camera.position.lerp(this.cameraHome, blend);

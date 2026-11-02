@@ -457,8 +457,36 @@ test('所有飞行视角可拖动，松开三秒后缓缓回正', async ({ page,
     await page.mouse.move(1120, 470, { steps: 8 }); await page.mouse.up();
     const dragged = await snapshot();
     expect(distance(before, dragged)).toBeGreaterThan(1);
-    await expect.poll(async () => distance(before, await snapshot()), { timeout: 12_000 }).toBeLessThan(0.3);
+    expect(name === '驾驶员' ? dragged[1].y : dragged[0].y).toBeGreaterThan(name === '驾驶员' ? before[1].y : before[0].y);
+    if (name === '追尾') {
+      await page.waitForTimeout(4_000);
+      expect(distance(before, await snapshot())).toBeGreaterThan(distance(before, dragged) * 0.5);
+    }
+    await expect.poll(async () => distance(before, await snapshot()), { timeout: 25_000 }).toBeLessThan(0.3);
   }
+});
+
+test('结算拖动只改变仰角，按住鼠标仍自动环绕', async ({ page, isMobile }) => {
+  test.skip(isMobile, '鼠标交互在桌面验证');
+  await enterDesign(page);
+  await page.getByRole('button', { name: '前往挑战' }).click();
+  await beginFlight(page);
+  await expect(page.locator('.results')).toBeVisible({ timeout: 90_000 });
+  const snapshot = () => page.evaluate(() => {
+    const { camera, aircraft } = window.glider.scene;
+    return { bearing: Math.atan2(camera.x - aircraft.x, camera.z - aircraft.z), height: camera.y };
+  });
+  const turn = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  const before = await snapshot();
+  await page.mouse.move(450, 260); await page.mouse.down();
+  await page.mouse.move(650, 260, { steps: 8 });
+  const horizontal = await snapshot();
+  expect(Math.abs(turn(before.bearing, horizontal.bearing))).toBeLessThan(0.3);
+  expect(horizontal.height).toBeCloseTo(before.height, 5);
+  await expect.poll(async () => turn(horizontal.bearing, (await snapshot()).bearing)).toBeGreaterThan(0.04);
+  await page.mouse.move(650, 210, { steps: 8 });
+  expect((await snapshot()).height).toBeLessThan(horizontal.height);
+  await page.mouse.up();
 });
 
 test('120Hz侧面飞行无交替抖动，暂停、恢复和新飞行不回跳', async ({ page, isMobile }) => {
