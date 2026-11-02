@@ -2176,7 +2176,7 @@ export class SceneView {
     const uvs = new Float32Array(columns * rows * 2);
     const colors = new Float32Array(vertices.length);
     const indices = new Uint32Array((columns - 1) * (rows - 1) * 6);
-    const color = new THREE.Color(), grass = new THREE.Color(0x71856a), rock = new THREE.Color(0x8f928d), snow = new THREE.Color(0xeaf1ef);
+    const color = new THREE.Color(), grass = new THREE.Color(0x71856a), rock = new THREE.Color(0x8f928d), soil = new THREE.Color(0x967956), snow = new THREE.Color(0xeaf1ef);
     let triangle = 0;
     for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
       const x = minX + column * step, z = minZ + row * step;
@@ -2186,7 +2186,11 @@ export class SceneView {
       vertices[offset] = x; vertices[offset + 1] = y; vertices[offset + 2] = z;
       const slope = Math.abs(challengeTerrainHeight(challenge, x, z + step) - challengeTerrainHeight(challenge, x, z - step)) / (step * 2);
       color.copy(grass).lerp(rock, clamp(slope * 0.9 + (y - 250) / 1000, 0, 1));
-      if (downhill) color.lerp(snow, clamp((y - 690) / 95, 0, 1) * clamp(1.5 - slope, 0, 1));
+      if (downhill) {
+        color.copy(grass).lerp(soil, clamp((y - 90) / 260, 0, 1));
+        color.lerp(rock, clamp((y - 450) / 350, 0, 1));
+        color.lerp(snow, clamp((y - 1050) / 350, 0, 1));
+      }
       color.multiplyScalar(0.94 + 0.06 * Math.sin(x * 0.06 + z * 0.08));
       color.toArray(colors, offset);
       if (column === columns - 1 || row === rows - 1) continue;
@@ -2205,7 +2209,7 @@ export class SceneView {
     terrain.castShadow = false;
 
     this.buildChallengeLaunch(challenge);
-    if (!downhill) this.buildChallengeRiver();
+    this.buildChallengeRiver();
     const course = challengeDefinitions[challenge], startGate = challengeStartGate(challenge), launch = challengeLaunch(challenge);
     const checkpoints = challengeCheckpoints(challenge);
     const gates = startGate ? [startGate, ...checkpoints] : checkpoints;
@@ -2246,11 +2250,12 @@ export class SceneView {
         vertexShader:'varying vec2 stripe; void main(){stripe=position.yz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
         fragmentShader:'varying vec2 stripe;uniform float opacity;uniform float finish;void main(){float band=step(0.5,fract((stripe.x+stripe.y)*0.35));vec3 color=finish>0.5?mix(vec3(0.15,0.55,0.48),vec3(0.8,1.,0.92),band):mix(vec3(0.45,0.01,0.02),vec3(1.,0.08,0.05),band);gl_FragColor=vec4(color,finish>0.5?0.38:opacity);}' });
       const regions=[[-gate.halfWidth-80,-gate.halfWidth,-80,gate.maxHeight+80],[gate.halfWidth,gate.halfWidth+80,-80,gate.maxHeight+80],[-gate.halfWidth,gate.halfWidth,gate.maxHeight,gate.maxHeight+80],[-gate.halfWidth,gate.halfWidth,-80,0]];
+      if (!downhill) regions.pop();
       if(finish) regions.push([-gate.halfWidth,gate.halfWidth,0,gate.maxHeight]);
       for(const [regionIndex,[left,right,bottom,top]] of regions.entries()){
         const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute([0,bottom,left,0,top,left,0,bottom,right,0,top,right],3));geometry.setIndex([0,1,2,2,1,3]);
-        const regionMaterial=finish&&regionIndex===4?stripeMaterial.clone():stripeMaterial;
-        if(finish&&regionIndex===4)regionMaterial.uniforms.finish.value=1;
+        const regionMaterial=finish&&regionIndex===(downhill?4:3)?stripeMaterial.clone():stripeMaterial;
+        if(finish&&regionIndex===(downhill?4:3))regionMaterial.uniforms.finish.value=1;
         const stripes=new THREE.Mesh(geometry,regionMaterial);stripes.userData.warning=true;group.add(stripes);
       }
       const height = downhill ? 20 : gate.maxHeight;
@@ -2267,6 +2272,19 @@ export class SceneView {
         bar.castShadow = bar.receiveShadow = false;
       }
       if (!downhill) {
+        if (!timingStart) {
+          const goldVertices: number[] = [];
+          for (let z = -gate.halfWidth; z < gate.halfWidth; z += step) {
+            const nextZ = Math.min(gate.halfWidth, z + step);
+            const a = challengeCollisionHeight(challenge, gate.x, gate.z + z) - gate.y;
+            const b = challengeCollisionHeight(challenge, gate.x, gate.z + nextZ) - gate.y;
+            goldVertices.push(0,a,z,0,a+LOW_ALTITUDE.bonusHeight,z,0,b,nextZ,0,b,nextZ,0,a+LOW_ALTITUDE.bonusHeight,z,0,b+LOW_ALTITUDE.bonusHeight,nextZ);
+          }
+          const gold = stripeMaterial.clone();
+          gold.fragmentShader = 'varying vec2 stripe;uniform float opacity;void main(){float band=step(0.65,fract((stripe.x+stripe.y)*0.6));gl_FragColor=vec4(1.,0.73,0.16,opacity*band*0.22);}';
+          const zone = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(goldVertices,3)),gold);
+          zone.name='low-altitude-bonus-zone';zone.userData.warning=true;group.add(zone);
+        }
         const targetVertices: number[] = [];
         for (let z = -gate.halfWidth; z < gate.halfWidth; z += step) {
           const nextZ = Math.min(gate.halfWidth, z + step);
@@ -2401,11 +2419,13 @@ export class SceneView {
   private buildChallengeRiver(): void {
     const { minX, maxX, step } = challengeTerrainGrid;
     const vertices: number[] = [], indices: number[] = [];
-    for (let x = minX, sample = 0; x <= maxX; x += step, sample++) {
-      const z = challengeRiverCenter(x), y = challengeRiverHeight(x);
+    for (let x = minX; x <= maxX; x += step) {
+      const downhill = this.environmentChallenge === 'downhill';
+      if (downhill && x < 3300) continue;
+      const z = downhill ? challengeCenter('downhill', x) : challengeRiverCenter(x), y = downhill ? challengeTerrainHeight('downhill', x, z) + 0.15 : challengeRiverHeight(x);
       vertices.push(x, y, z - CHALLENGE_RIVER.width / 2, x, y, z + CHALLENGE_RIVER.width / 2);
-      if (!sample) continue;
-      const a = (sample - 1) * 2;
+      if (vertices.length === 6) continue;
+      const a = vertices.length / 3 - 4;
       indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
     }
     const geometry = new THREE.BufferGeometry();

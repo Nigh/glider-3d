@@ -168,7 +168,7 @@ export interface FlightResult {
   minSpeed: number;
   maxHeight: number;
   landing: 'water' | 'terrain' | 'boundary' | 'finish';
-  challenge: ChallengeMode; score: number; completed: boolean;
+  challenge: ChallengeMode; score: number; completed: boolean; checkpointScores: number[]; speedScore: number; heightPenalty: number;
 }
 export interface FlightTelemetry {
   speed: number; altitude: number; distance: number;
@@ -689,8 +689,7 @@ export class FlightSimulation {
   private fuelRemaining = 0;
   private thrust = 0;
   private propulsionPower = 0;
-  private lowAltitudeDistance = 0;
-  private farthestX = 0;
+  readonly checkpointScores: number[] = [];
   private heightPenalty = 0;
   private aboveHeightTime = 0;
   private aboveHeightStreak = 0;
@@ -821,7 +820,7 @@ export class FlightSimulation {
     this.travelled = 0; this.weight = 0; this.lateral = 0; this.checkpointIndex = 0; this.completed = false;
     this.engineRpm = 0; this.thrust = 0; this.propulsionPower = 0;
     this.fuelRemaining = this.definition.fuelTank.capacity;
-    this.lowAltitudeDistance = 0; this.farthestX = 0; this.heightPenalty = 0; this.aboveHeightTime = 0; this.aboveHeightStreak = 0;
+    this.checkpointScores.length = 0; this.heightPenalty = 0; this.aboveHeightTime = 0; this.aboveHeightStreak = 0;
     this.pilotOffset.x = 0; this.pilotOffset.z = 0;
     this.structure.reset(); this.fragments.length = 0; this.nextFragmentId = 1;
     this.updateSurfaceExtents();
@@ -1713,9 +1712,14 @@ export class FlightSimulation {
     if (Math.abs(z - gate.z) > gate.halfWidth || y > gate.y + gate.maxHeight) return timed;
     if (!this.raceStarted) {
       this.raceStarted = true;
-      this.farthestX = gate.x;
       this.travelled = 0;
       return dt * (1 - fraction);
+    }
+    if (this.challenge === 'low-altitude') {
+      const clearance = y - challengeCollisionHeight(this.challenge, gate.x, z);
+      const low = LOW_ALTITUDE.scoreScale * clamp(1 - clearance / LOW_ALTITUDE.scoringHeight, 0, 1);
+      const bonus = LOW_ALTITUDE.scoreScale * 0.5 * clamp(1 - clearance / LOW_ALTITUDE.bonusHeight, 0, 1);
+      this.checkpointScores.push(low + bonus);
     }
     this.checkpointIndex++;
     this.completed = this.checkpointIndex === challengeCheckpoints(this.challenge).length;
@@ -1730,12 +1734,6 @@ export class FlightSimulation {
       this.aboveHeightStreak += dt;
     } else {
       this.aboveHeightStreak = 0;
-    }
-    if (!this.outsideChallenge()) {
-      const x = clamp(this.position.x, challengeStartGate(this.challenge)!.x, challengeDefinitions['low-altitude'].length);
-      const distance = Math.max(0, x - Math.max(this.farthestX, this.previousPosition.x));
-      this.lowAltitudeDistance += distance * clamp(1 - clearance / LOW_ALTITUDE.scoringHeight, 0, 1);
-      this.farthestX = Math.max(this.farthestX, x);
     }
   }
 
@@ -1841,7 +1839,7 @@ export class FlightSimulation {
     t.completed = this.completed;
     t.timingStarted = this.challenge === 'birdman' || this.raceStarted;
     t.score = this.challenge === 'birdman' ? t.distance : this.challenge === 'low-altitude'
-      ? (this.time > 0 ? LOW_ALTITUDE.scoreScale * this.lowAltitudeDistance / this.time : 0) - this.heightPenalty : this.completed ? this.time : 0;
+      ? (this.checkpointScores.reduce((sum, score) => sum + score, 0) + (this.completed && this.time > 0 ? LOW_ALTITUDE.scoreScale * (challengeDefinitions['low-altitude'].length - challengeStartGate(this.challenge)!.x) / this.time : 0)) - this.heightPenalty : this.completed ? this.time : 0;
     t.throttle = this.definition.engine.count > 0 ? this.effective.throttle ?? 0 : 0;
     t.engineRpm = this.engineRpm; t.fuelRemaining = this.fuelRemaining; t.thrust = this.thrust;
     t.aboveHeightTime = this.aboveHeightTime;
@@ -1945,6 +1943,9 @@ export class FlightSimulation {
     this.ended = true;
     this.result = { distance: this.telemetry.distance, time: this.time, averageSpeed: this.time > 0 ? this.travelled / this.time : 0,
       maxSpeed: this.maxSpeed, minSpeed: this.minSpeed, maxHeight: this.maxHeight, landing,
-      challenge: this.challenge, score: this.telemetry.score, completed: this.completed };
+      challenge: this.challenge, score: this.telemetry.score, completed: this.completed,
+      checkpointScores: [...this.checkpointScores], heightPenalty: this.heightPenalty,
+      speedScore: this.challenge === 'low-altitude' && this.completed && this.time > 0
+        ? LOW_ALTITUDE.scoreScale * (challengeDefinitions['low-altitude'].length - challengeStartGate(this.challenge)!.x) / this.time : 0 };
   }
 }

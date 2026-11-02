@@ -128,7 +128,7 @@ export function importAircraft(json: string): AircraftDefinition {
 }
 
 export function readBest(challenge: ChallengeMode = 'birdman'): number {
-  const raw = storageCall(storage => storage.getItem(BEST_PREFIX + challenge));
+  const raw = storageCall(storage => storage.getItem(BEST_PREFIX + challenge + (challenge === 'birdman' ? '' : '.course-v2')));
   if (raw === null) return 0;
   const distance = Number(raw);
   if (!raw.trim() || !Number.isFinite(distance) || challenge !== 'low-altitude' && distance < 0) {
@@ -140,7 +140,7 @@ export function readBest(challenge: ChallengeMode = 'birdman'): number {
 export function writeBest(distance: number, challenge: ChallengeMode = 'birdman'): number {
   if (!Number.isFinite(distance) || challenge !== 'low-altitude' && distance < 0) throw new Error('距离和时间须为非负有限数值，得分须为有限数值。');
   const previous = readBest(challenge);
-  const key = BEST_PREFIX + challenge;
+  const key = BEST_PREFIX + challenge + (challenge === 'birdman' ? '' : '.course-v2');
   const first = storageCall(storage => storage.getItem(key)) === null;
   const best = first ? distance : challenge === 'downhill' ? Math.min(previous, distance) : Math.max(previous, distance);
   storageCall(storage => storage.setItem(key, String(best)));

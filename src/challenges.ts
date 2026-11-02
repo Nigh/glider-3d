@@ -2,21 +2,21 @@ export type ChallengeMode = 'birdman' | 'downhill' | 'low-altitude';
 
 export const challengeDefinitions = {
   birdman: { name: '鸟人间', length: 0 },
-  downhill: { name: '高山速降', length: 1800 },
-  'low-altitude': { name: '低空挑战', length: 1600 },
+  downhill: { name: '高山速降', length: 5400 },
+  'low-altitude': { name: '低空挑战', length: 4800 },
 } as const;
 
-export const LOW_ALTITUDE = { scoringHeight: 25, scoreScale: 1000, penaltyPerSecond: 4, sustainedPenalty: 2 } as const;
+export const LOW_ALTITUDE = { scoringHeight: 25, bonusHeight: 8, scoreScale: 1000, penaltyPerSecond: 4, sustainedPenalty: 2 } as const;
 export const LOW_ALTITUDE_RAIL = { height: 2, retentionAcceleration: 0.8, rollingResistance: 0.02 } as const;
 export const CHALLENGE_RIVER = { width: 24, depth: 3 } as const;
 
 /** 所有地形顶点与碰撞共用10m网格；每格沿(x0,z1)至(x1,z0)对角线分成两三角形。 */
-export const challengeTerrainGrid = { minX: -600, maxX: 2000, minZ: -700, maxZ: 700, step: 10 } as const;
+export const challengeTerrainGrid = { minX: -600, maxX: 5600, minZ: -700, maxZ: 700, step: 10 } as const;
 
 export function challengeCenter(challenge: ChallengeMode, x: number): number {
   const bend = Math.max(0, x) - 100 * Math.sin(Math.max(0, x) / 100);
-  return challenge === 'downhill' ? 90 * Math.sin(bend / 115) + 55 * Math.sin(bend / 260)
-    : challenge === 'low-altitude' ? 55 * Math.sin(bend / 160) + 35 * Math.sin(bend / 330) : 0;
+  return challenge === 'downhill' ? 90 * Math.sin(bend / 115) + 55 * Math.sin(bend / 260) + 25 * Math.sin(bend / 63) * Math.min(1, Math.max(0, x - 400) / 600)
+    : challenge === 'low-altitude' ? 55 * Math.sin(bend / 160) + 35 * Math.sin(bend / 330) + 18 * Math.sin(bend / 75) * Math.min(1, Math.max(0, x - 500) / 500) : 0;
 }
 
 export function challengeRiverCenter(x: number): number {
@@ -51,7 +51,10 @@ function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
   const offset = z - challengeCenter(challenge, x);
   if (challenge === 'downhill') {
     // 山脊在弹射台后方抬升；前方谷底快速下降，两侧山峰形成曲折谷道。
-    return 620 - 0.30 * x + 10 * Math.sin(x / 135) + 0.012 * offset * offset
+    const progress = Math.max(0, x) / 5400;
+    const drop = 720 * Math.max(0, Math.min(1, (x - 2400) / 350));
+    return 1620 - 0.15 * x - drop + 10 * Math.sin(x / 135) * Math.max(0, 1 - progress)
+      + (0.012 * offset * offset + 25 * Math.sin(x / 83) ** 2) * Math.max(0, 1 - progress)
       + (x < -35 ? Math.min(220, (-x - 35) * 2) : 0);
   }
   const riverOffset = Math.abs(z - challengeRiverCenter(x));
@@ -117,8 +120,8 @@ const downhillStart = gate('downhill', 130), lowAltitudeStart = gate('low-altitu
 export function challengeStartGate(challenge: ChallengeMode): Readonly<ChallengeCheckpoint> | null {
   return challenge === 'downhill' ? downhillStart : challenge === 'low-altitude' ? lowAltitudeStart : null;
 }
-const downhillCheckpoints = Array.from({ length: 10 }, (_, index) => gate('downhill', 260 + index * (1800 - 260) / 9));
-const lowAltitudeCheckpoints = Array.from({ length: 10 }, (_, index) => gate('low-altitude', 280 + index * (1600 - 280) / 9));
+const downhillCheckpoints = Array.from({ length: 30 }, (_, index) => gate('downhill', 260 + index * (5400 - 260) / 29));
+const lowAltitudeCheckpoints = Array.from({ length: 30 }, (_, index) => gate('low-altitude', 280 + index * (4800 - 280) / 29));
 const noCheckpoints: readonly ChallengeCheckpoint[] = [];
 export function challengeCheckpoints(challenge: ChallengeMode): readonly ChallengeCheckpoint[] {
   return challenge === 'downhill' ? downhillCheckpoints : challenge === 'low-altitude' ? lowAltitudeCheckpoints : noCheckpoints;
