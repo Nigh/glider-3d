@@ -5,7 +5,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
-import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
 import { language, t } from './i18n';
 
@@ -209,7 +209,6 @@ export class SceneView {
   private readonly desiredPosition = new THREE.Vector3();
   private readonly desiredTarget = new THREE.Vector3();
   private readonly vector = new THREE.Vector3();
-  private readonly chaseHeading = new THREE.Vector3(1, 0, 0);
   private cameraDragging = false;
   private cameraReleasedAt = -Infinity;
   private cameraPointer = -1;
@@ -219,7 +218,6 @@ export class SceneView {
   private cameraPitch = 0;
   private readonly cameraHome = new THREE.Vector3();
   private readonly targetHome = new THREE.Vector3();
-  private readonly cameraAngles = new THREE.Spherical();
   private resultOrbit = false;
   private readonly resultOffset = new THREE.Vector3();
   private readonly resultTarget = new THREE.Vector3();
@@ -2208,16 +2206,16 @@ export class SceneView {
     terrain.name = 'challenge-terrain';
     terrain.castShadow = false;
 
+    if (downhill) this.buildDownhillRuins();
     this.buildChallengeLaunch(challenge);
     this.buildChallengeRiver();
     const course = challengeDefinitions[challenge], startGate = challengeStartGate(challenge), launch = challengeLaunch(challenge);
     const checkpoints = challengeCheckpoints(challenge);
     const gates = startGate ? [startGate, ...checkpoints] : checkpoints;
     const route: number[] = [], routeIndices: number[] = [];
-    const clearance = downhill && gates.length ? gates[0].maxHeight / 2 : LOW_ALTITUDE.scoringHeight / 2;
     for (let x = 0, sample = 0; x <= course.length; x += step, sample++) {
-      const z = challengeCenter(challenge, x);
-      const routeY = challengeCollisionHeight(challenge, x, z) + clearance;
+      const z = downhill ? downhillRouteCenter(x) : challengeCenter(challenge, x);
+      const routeY = challengeCollisionHeight(challenge, x, z) + (downhill ? downhillHeightLimit(x) / 2 : LOW_ALTITUDE.scoringHeight / 2);
       const y = THREE.MathUtils.lerp(launch?.y ?? 0, routeY, clamp(x / 180, 0, 1));
       route.push(x, y, z - 1.5, x, y, z + 1.5);
       if (sample === 0) continue;
@@ -2414,6 +2412,29 @@ export class SceneView {
     // 独立几何归山谷环境所有，切换挑战时不释放飞机共用的strutGeometry。
     this.railCoupling = this.mesh(new THREE.CylinderGeometry(1, 1, 1, 8), bracket, carriage);
     this.railCoupling.name = 'low-altitude-rail-coupling';
+  }
+
+  private buildDownhillRuins(): void {
+    const concrete = this.groundMaterial(0x777b77), dark = new THREE.MeshStandardMaterial({color:0x293335,roughness:1});
+    const box = new THREE.BoxGeometry(1,1,1), transform = new THREE.Object3D(), local = new THREE.Matrix4(), matrix = new THREE.Matrix4();
+    const bodies = new THREE.InstancedMesh(box,concrete,downhillRuins.length);
+    const bands = new THREE.InstancedMesh(box,dark,downhillRuins.reduce((sum,r)=>sum+Math.ceil(r.length/6)*2+1,0));
+    bodies.name='fallen-highrises';bands.name='ruin-window-bands';bodies.castShadow=bodies.receiveShadow=true;
+    this.mountainEnvironment.add(bodies,bands);
+    let band=0;
+    for (const [index,ruin] of downhillRuins.entries()) {
+      transform.position.set(ruin.x,ruin.y,ruin.z);transform.rotation.set(ruin.tilt,ruin.yaw,0,'YXZ');
+      transform.scale.set(ruin.width,ruin.height,ruin.length);transform.updateMatrix();bodies.setMatrixAt(index,transform.matrix);
+      transform.scale.set(1,1,1);transform.updateMatrix();
+      // Floor/window bands share one draw call across the ruined city.
+      for (let floor=-ruin.length/2+4;floor<ruin.length/2-2;floor+=6) for (const side of [-1,1]) {
+        local.makeScale(0.08,ruin.height*0.68,3.5).setPosition(side*(ruin.width/2+0.02),0,floor);
+        bands.setMatrixAt(band++,matrix.multiplyMatrices(transform.matrix,local));
+      }
+      local.makeScale(ruin.width*0.8,ruin.height*0.8,0.08).setPosition(0,0,ruin.length/2+0.03);
+      bands.setMatrixAt(band++,matrix.multiplyMatrices(transform.matrix,local));
+    }
+    bands.count=band;
   }
 
   private buildChallengeRiver(): void {
@@ -2809,16 +2830,13 @@ export class SceneView {
     const pilot = this.view === 'pilot';
     if (this.view === 'chase') {
       this.vector.set(1, 0, 0).applyQuaternion(this.aircraft.quaternion);
-      this.vector.y = 0;
-      if (this.vector.lengthSq() > 1e-6) this.chaseHeading.copy(this.vector).normalize();
+      this.vector2.copy(UP).applyQuaternion(this.aircraft.quaternion);
       const distance = Math.max(23, this.definition.mainWing.points[1].y * 1.8 / Math.max(0.65, this.width / this.height));
-      this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.chaseHeading, -distance);
-      this.desiredPosition.y += distance * 0.3;
-      this.desiredTarget.copy(this.aircraft.position).addScaledVector(this.chaseHeading, 6);
-      this.desiredTarget.y += 1;
+      this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.vector, -distance).addScaledVector(this.vector2, distance * 0.3);
+      this.desiredTarget.copy(this.aircraft.position).addScaledVector(this.vector, 6).add(this.vector2);
       this.camera.position.copy(this.desiredPosition);
       this.target.copy(this.desiredTarget);
-      this.camera.up.copy(UP);
+      this.camera.up.copy(this.vector2);
       this.camera.lookAt(this.target);
       return;
     }
@@ -2866,10 +2884,9 @@ export class SceneView {
     this.followInitialized = true;
     const pilot = this.view === 'pilot' && !this.resultOrbit;
     this.vector.subVectors(pilot ? this.target : this.camera.position, pilot ? this.camera.position : this.target);
-    this.cameraAngles.setFromVector3(this.vector);
-    this.cameraAngles.theta += this.cameraYaw;
-    this.cameraAngles.phi = clamp(this.cameraAngles.phi + this.cameraPitch, 0.05, Math.PI - 0.05);
-    this.vector.setFromSpherical(this.cameraAngles);
+    this.vector.applyAxisAngle(this.camera.up, this.cameraYaw);
+    this.vector2.crossVectors(this.camera.up, this.vector).normalize();
+    this.vector.applyAxisAngle(this.vector2, this.cameraPitch);
     if (pilot) this.target.copy(this.camera.position).add(this.vector);
     else this.camera.position.copy(this.target).add(this.vector);
     this.camera.lookAt(this.target);

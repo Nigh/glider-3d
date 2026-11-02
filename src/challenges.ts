@@ -6,6 +6,9 @@ export const challengeDefinitions = {
   'low-altitude': { name: '低空挑战', length: 4800 },
 } as const;
 
+export const DOWNHILL_PLAIN_START = 4300;
+export function downhillHeightLimit(x: number): number { return x >= DOWNHILL_PLAIN_START ? 62.5 : 125; }
+
 export const LOW_ALTITUDE = { scoringHeight: 25, bonusHeight: 8, scoreScale: 1000, penaltyPerSecond: 4, sustainedPenalty: 2 } as const;
 export const LOW_ALTITUDE_RAIL = { height: 2, retentionAcceleration: 0.8, rollingResistance: 0.02 } as const;
 export const CHALLENGE_RIVER = { width: 24, depth: 3 } as const;
@@ -55,6 +58,7 @@ function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
     const drop = 720 * Math.max(0, Math.min(1, (x - 2400) / 350));
     return 1620 - 0.15 * x - drop + 10 * Math.sin(x / 135) * Math.max(0, 1 - progress)
       + (0.012 * offset * offset + 25 * Math.sin(x / 83) ** 2) * Math.max(0, 1 - progress)
+        * Math.max(0, Math.min(1, (DOWNHILL_PLAIN_START - x) / 600))
       + (x < -35 ? Math.min(220, (-x - 35) * 2) : 0);
   }
   const riverOffset = Math.abs(z - challengeRiverCenter(x));
@@ -114,7 +118,7 @@ function gate(challenge: ChallengeMode, x: number): ChallengeCheckpoint {
   const z = challengeCenter(challenge, x);
   return { x, z, y: challengeTerrainHeight(challenge, x, z),
     halfWidth: challenge === 'downhill' ? Math.max(Math.abs(challengeTerrainGrid.minZ - z), Math.abs(challengeTerrainGrid.maxZ - z)) + 10 : 100,
-    maxHeight: challenge === 'downhill' ? 125 : 500 };
+    maxHeight: challenge === 'downhill' ? downhillHeightLimit(x) : 500 };
 }
 const downhillStart = gate('downhill', 130), lowAltitudeStart = gate('low-altitude', 140);
 export function challengeStartGate(challenge: ChallengeMode): Readonly<ChallengeCheckpoint> | null {
@@ -125,4 +129,68 @@ const lowAltitudeCheckpoints = Array.from({ length: 30 }, (_, index) => gate('lo
 const noCheckpoints: readonly ChallengeCheckpoint[] = [];
 export function challengeCheckpoints(challenge: ChallengeMode): readonly ChallengeCheckpoint[] {
   return challenge === 'downhill' ? downhillCheckpoints : challenge === 'low-altitude' ? lowAltitudeCheckpoints : noCheckpoints;
+}
+
+export interface ChallengeRuin {
+  x: number; y: number; z: number;
+  width: number; height: number; length: number; yaw: number; tilt: number; radiusX: number;
+}
+
+// The same oriented boxes define concrete bodies in rendering and swept aircraft/fragment collision.
+export const downhillRuinPassages = [4380, 4620, 4860, 5100, 5310].map((x,row) => ({x,offset:row%2?70:-70}));
+
+export function downhillRouteCenter(x: number): number {
+  const points = [{x:DOWNHILL_PLAIN_START-150,offset:0},...downhillRuinPassages,{x:5400,offset:0}];
+  for (let i=1;i<points.length;i++) {
+    if (x <= points[i].x) {
+      const a=points[i-1],b=points[i],t=Math.max(0,(x-a.x)/(b.x-a.x));
+      return challengeCenter('downhill',x)+a.offset+(b.offset-a.offset)*t;
+    }
+  }
+  return challengeCenter('downhill',x);
+}
+
+export const downhillRuins: readonly ChallengeRuin[] = downhillRuinPassages.flatMap(({x,offset:gap}, row) => {
+  const center = challengeCenter('downhill', x);
+  const blocks: ChallengeRuin[] = [];
+  const add = (z: number, width: number, height: number, length: number, yaw: number, tilt: number) => {
+    const halfY = (Math.abs(Math.cos(tilt)) * height + Math.abs(Math.sin(tilt)) * length) / 2;
+    const radiusX = (Math.abs(Math.cos(yaw)) * width + Math.abs(Math.sin(yaw)) * (Math.abs(Math.sin(tilt)) * height + Math.abs(Math.cos(tilt)) * length)) / 2;
+    blocks.push({x,y:challengeTerrainHeight('downhill',x,z)+halfY,z,width,height,length,yaw,tilt,radiusX});
+  };
+  for (const [left, right] of [[-750, gap - 34], [gap + 34, 750]]) {
+    const count = Math.ceil((right - left) / 110), length = (right - left) / count;
+    for (let i = 0; i < count; i++) {
+      add(center + left + (i + 0.5) * length, 26 + (i % 3) * 4, 22, length - 4, (i % 3 - 1) * 0.08, (i % 2 ? 1 : -1) * (0.65 + (i % 3) * 0.13));
+    }
+  }
+  // A broken standing core blocks the straight line; the 68 m gaps alternate sides.
+  add(center, 32, 85, 52, 0.05 * (row % 2 ? 1 : -1), 0.08);
+  return blocks;
+});
+
+export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:number;z:number}, b = a): boolean {
+  if (challenge !== 'downhill' || Math.max(a.x,b.x) < DOWNHILL_PLAIN_START) return false;
+  for (const ruin of downhillRuins) {
+    if (Math.max(a.x,b.x) < ruin.x - ruin.radiusX || Math.min(a.x,b.x) > ruin.x + ruin.radiusX) continue;
+    const cy = Math.cos(ruin.yaw), sy = Math.sin(ruin.yaw), ct = Math.cos(ruin.tilt), st = Math.sin(ruin.tilt);
+    const ax = a.x - ruin.x, ay = a.y - ruin.y, az = a.z - ruin.z;
+    const bx = b.x - ruin.x, by = b.y - ruin.y, bz = b.z - ruin.z;
+    const ar = sy * ax + cy * az, br = sy * bx + cy * bz;
+    let entry = 0, exit = 1;
+    for (let axis = 0; axis < 3; axis++) {
+      const start = axis === 0 ? cy * ax - sy * az : axis === 1 ? ct * ay + st * ar : -st * ay + ct * ar;
+      const end = axis === 0 ? cy * bx - sy * bz : axis === 1 ? ct * by + st * br : -st * by + ct * br;
+      const half = (axis === 0 ? ruin.width : axis === 1 ? ruin.height : ruin.length) / 2;
+      const delta = end - start;
+      if (Math.abs(delta) < 1e-12) {
+        if (Math.abs(start) > half) { entry = Infinity; break; }
+      } else {
+        const first = (-half - start) / delta, last = (half - start) / delta;
+        entry = Math.max(entry, Math.min(first,last)); exit = Math.min(exit, Math.max(first,last));
+      }
+    }
+    if (entry <= exit) return true;
+  }
+  return false;
 }

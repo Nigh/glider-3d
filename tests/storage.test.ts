@@ -216,6 +216,11 @@ describe('最远纪录', () => {
     expect(writeBest(150)).toBe(150);expect(readBest()).toBe(150);
   });
 
+  it('废墟赛道不与原三倍赛道混榜，原数据保留',()=>{
+    const key=`lakewind.best.${PHYSICS_VERSION}.downhill.course-v2`;storage.setItem(key,'100');
+    expect(readBest('downhill')).toBe(0);expect(writeBest(250,'downhill')).toBe(250);expect(storage.getItem(key)).toBe('100');
+  });
+
   it('旧物理版本纪录不混榜，且不删除原始数据', () => {
     storage.setItem('lakewind.best.official-v1.standard', '900');
     storage.setItem('lakewind.best.challenge-v2.birdman', '850');

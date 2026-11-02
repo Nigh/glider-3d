@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, validateAircraft, wing, type Controls } from '../src/model';
 import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY } from '../src/physics';
-import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
+import { DOWNHILL_PLAIN_START, downhillHeightLimit, downhillRuinPassages, downhillRuins, downhillRouteCenter, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
 import { engineCatalog } from '../src/engines';
 import jetCruise50m from './fixtures/jet-cruise-50m.json';
 
@@ -171,7 +171,8 @@ describe('三轴操纵与高山路径边界', () => {
     expect(skipped.result?.completed).toBe(false); expect(skipped.result?.landing).toBe('boundary'); expect(skipped.telemetry.challengeProgress).toBe(0);
     const completed = crossStart(create(), 60);
     for (const gate of gates) {
-      airborne(completed, gate.x - 0.1, 60); completed.position.z = gate.z; completed.position.y = gate.y + 60;
+      const z=downhillRouteCenter(gate.x);
+      airborne(completed, gate.x - 0.1, 25); completed.position.z = z; completed.position.y = challengeTerrainHeight('downhill',gate.x,z)+25;
       completed.velocity.set(30, 0, 0); completed.step(neutral, 0.01);
     }
     expect(completed.result?.landing).toBe('finish'); expect(completed.result?.completed).toBe(true);
@@ -549,4 +550,35 @@ describe('物理smoke：低展弦比三角翼质量、发射和高速受力', ()
       thrust: s.telemetry.thrust, actualDrag: s.telemetry.drag.length(), displayedAeroDrag: s.telemetry.aerodynamics.drag.length(),
     }));
   });
+});
+
+describe('平原废墟与门高',()=>{
+ it('平原门与实际飞行上限减半，其余山谷门不变',()=>{
+  for(const gate of challengeCheckpoints('downhill'))expect(gate.maxHeight).toBe(gate.x>=DOWNHILL_PLAIN_START?62.5:125);
+  expect(challengeTerrainHeight('downhill',4500,-600)).toBeCloseTo(challengeTerrainHeight('downhill',4500,600),8);
+  expect(downhillHeightLimit(DOWNHILL_PLAIN_START-1)).toBe(125);expect(downhillHeightLimit(DOWNHILL_PLAIN_START)).toBe(62.5);
+  const s=crossStart(create());airborne(s,DOWNHILL_PLAIN_START+10,70);s.step(neutral,0.001);
+  expect(s.result?.landing).toBe('boundary');
+ });
+ it('大量旋转倒塌楼体有真实碰撞，高速线段不能穿墙，交错通道保持可通行',()=>{
+  expect(downhillRuins.length).toBeGreaterThan(60);
+  for(const ruin of downhillRuins){
+   const a=new Vector3(ruin.x-200,ruin.y,ruin.z),b=new Vector3(ruin.x+200,ruin.y,ruin.z);
+   expect(hitsChallengeRuin('downhill',a,b)).toBe(true);
+   expect(hitsChallengeRuin('downhill',ruin)).toBe(true);
+   expect(hitsChallengeRuin('low-altitude',a,b)).toBe(false);
+  }
+  for(const {x,offset} of downhillRuinPassages){
+   const z=downhillRouteCenter(x),y=challengeTerrainHeight('downhill',x,z)+25;
+   expect(z-challengeCenter('downhill',x)).toBeCloseTo(offset,8);
+   for(const dz of [-10,0,10])expect(hitsChallengeRuin('downhill',new Vector3(x-50,y,z+dz),new Vector3(x+50,y,z+dz))).toBe(false);
+  }
+ });
+ it('楼体碰撞在真实积分中结束主体而非穿透',()=>{
+  const s=crossStart(create()),ruin=downhillRuins.find(r=>r.height===85)!;
+  Reflect.set(s,'checkpointIndex',challengeCheckpoints('downhill').findIndex(g=>g.x>ruin.x+60));
+  airborne(s,ruin.x-45,40);s.position.z=ruin.z;s.position.y=ruin.y;s.velocity.set(200,0,0);
+  for(let i=0;i<30&&!s.ended;i++)s.step(neutral,0.01);
+  expect(s.result?.landing).toBe('terrain');expect(s.position.x).toBeLessThan(ruin.x+ruin.radiusX);
+ });
 });

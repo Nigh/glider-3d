@@ -1,6 +1,6 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing } from './model';
-import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { downhillHeightLimit, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { engineCatalog, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type StructuralBody, type WingFragment } from './structure';
 
@@ -1489,7 +1489,7 @@ export class FlightSimulation {
       this.platformStart.copy(point).sub(fragment.cg).applyQuaternion(fragment.quaternion).add(fragment.position);
       this.platformEnd.copy(point).sub(fragment.cg).applyQuaternion(orientation).add(position);
       const a = this.platformStart, b = this.platformEnd;
-      if (b.y <= challengeCollisionHeight(this.challenge, b.x, b.z) || this.sweepsLaunchBox(a, b) || this.sweepsRiver(a, b)) return true;
+      if (hitsChallengeRuin(this.challenge,a,b) || b.y <= challengeCollisionHeight(this.challenge, b.x, b.z) || this.sweepsLaunchBox(a, b) || this.sweepsRiver(a, b)) return true;
       const step = challengeTerrainGrid.step;
       for (let axis = 0; axis < 3; axis++) {
         const start = axis === 0 ? a.x : axis === 1 ? a.z : a.x + a.z;
@@ -1745,7 +1745,7 @@ export class FlightSimulation {
     const downhill = this.challenge === 'downhill';
     return x < challengeLaunch(this.challenge)!.startX - 50 || x > challengeDefinitions[this.challenge].length + 100
       || (!downhill && Math.abs(z - challengeCenter(this.challenge, x)) > 100)
-      || (downhill ? this.raceStarted && y - challengeCollisionHeight(this.challenge, x, z) > 125
+      || (downhill ? this.raceStarted && y - challengeCollisionHeight(this.challenge, x, z) > downhillHeightLimit(x)
         : y - challengeCollisionHeight(this.challenge, x, z) > 1000)
       || (next != null && x > next.x);
   }
@@ -1762,6 +1762,7 @@ export class FlightSimulation {
       this.platformStart.copy(point).sub(this.aircraft.cg).applyQuaternion(this.quaternion).add(this.position);
       this.platformEnd.copy(point).sub(this.aircraft.cg).applyQuaternion(this.candidateQuaternion).add(this.candidatePosition);
       const a = this.platformStart, b = this.platformEnd;
+      if (hitsChallengeRuin(this.challenge, a, b)) return true;
       // 河面是流体，不进入硬地递归；仍扫掠原三角河床、岸坡与有限起飞台。
       if (this.challenge !== 'low-altitude' && this.sweepsLaunchBox(a, b)) return true;
       if (!this.onRunway(b.x, b.z) && b.y <= challengeTerrainHeight(this.challenge, b.x, b.z)) return true;
@@ -1920,7 +1921,7 @@ export class FlightSimulation {
       this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
       if (this.onRunway(this.cross.x, this.cross.z)) continue;
       if (this.challenge !== 'birdman' && this.cross.y <= challengeTerrainHeight(this.challenge, this.cross.x, this.cross.z)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
-      if (this.sweepsLaunchBox(this.cross, this.cross)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+      if (hitsChallengeRuin(this.challenge, this.cross) || this.sweepsLaunchBox(this.cross, this.cross)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
     }
     this.noseAt(position, orientation, this.nosePoint);
     if (this.nosePoint.y <= this.waterHeight(this.nosePoint.x, this.nosePoint.z)) return 'water';
