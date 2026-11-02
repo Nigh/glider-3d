@@ -37,6 +37,10 @@ type FragmentRender = {
 /** 湖区常驻；山谷按挑战切换释放，动态飞机与轨迹缓冲区重复使用。 */
 export class SceneView {
   readonly metrics = { fps: 60, mean: 16.7, p95: 16.7, p99: 16.7, renderMs: 0, geometryMs: 0, drawCalls: 0, triangles: 0, memory: 0, quality: 'Medium', geometries: 0, textures: 0, programs: 0 };
+  private readonly crashMark = new THREE.Group();
+  private crashAge = -1;
+  private crashStroke: (() => void) | null = null;
+  private crashSecond = false;
   private readonly scene = new THREE.Scene();
   private readonly renderer: THREE.WebGLRenderer;
   private readonly perspective = new THREE.PerspectiveCamera(43, 1, 0.1, 3000);
@@ -1467,7 +1471,34 @@ export class SceneView {
     }
   }
 
+  markCrash(stroke: () => void): void {
+    const sim = this.simulation;
+    if (!sim) return;
+    this.crashAge = 0; this.crashSecond = false; this.crashStroke = stroke;
+    this.crashMark.position.copy(sim.groundImpactPoint);
+    if (!this.crashMark.children.length) {
+      for (const side of [-1, 1]) {
+        const points: number[] = [];
+        for (let i = 0; i <= 64; i++) {
+          const x = -5 + i * 10 / 64, z = x * side;
+          const y = challengeTerrainHeight(sim.challenge, this.crashMark.position.x + x, this.crashMark.position.z + z) - this.crashMark.position.y + 0.12;
+          points.push(x, y, z - 0.22, x, y, z + 0.22);
+        }
+        const geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+        const indices: number[] = [];
+        for (let i = 0; i < 64; i++) {const v=i*2;indices.push(v,v+1,v+2,v+1,v+3,v+2);}
+        geometry.setIndex(indices); geometry.setDrawRange(0,0);
+        this.crashMark.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color:0xe32636,side:THREE.DoubleSide,depthWrite:false})));
+      }
+      this.scene.add(this.crashMark);
+    }
+    this.crashMark.visible = true;
+  }
+
   setFlight(sim: FlightSimulation | null): void {
+    this.crashMark.visible = false; this.crashAge = -1; this.crashStroke = null;
+    for (const child of [...this.crashMark.children]) {const mesh=child as THREE.Mesh;mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();this.crashMark.remove(child);}
+
     this.resultOrbit = false;
     this.endEditorDrag();
     this.editorDirty = true;
@@ -1658,6 +1689,17 @@ export class SceneView {
       const inWater = sim.telemetry.waterContact || sim.result?.landing === 'water';
       if (inWater && !this.wasInWater) this.beginSplash(sim.telemetry.waterContact ? sim.telemetry.waterContactPoint : sim.position);
       this.wasInWater = inWater;
+    }
+    if (this.crashAge >= 0) {
+      const previous = this.crashAge; this.crashAge += seconds;
+      if (previous < 0.4 && this.crashAge >= 0.4) this.crashStroke?.();
+      if (!this.crashSecond && this.crashAge >= 0.8) {this.crashSecond=true;this.crashStroke?.();}
+      this.crashMark.children.forEach((child,index)=>(child as THREE.Mesh).geometry.setDrawRange(0,Math.floor(clamp((this.crashAge-0.4-index*0.4)/0.32,0,1)*64)*6));
+    }
+    if (sim) for (const gate of this.mountainEnvironment.children) {
+      if (!gate.userData.gate) continue;
+      const proximity=1-clamp(Math.abs(sim.position.x-gate.position.x)/90,0,1);
+      for(const child of gate.children) if(child.userData.warning) (child as THREE.Mesh<THREE.BufferGeometry,THREE.ShaderMaterial>).material.uniforms.opacity.value=proximity;
     }
     this.updateExhaust();
     if (this.splashAge >= 0) this.updateSplash(seconds);
@@ -2190,6 +2232,18 @@ export class SceneView {
       // 门框仅作导航标记，不注册为地形或物理碰撞体；开口直接使用判门共享参数。
       group.userData.gate = { halfWidth: gate.halfWidth, maxHeight: gate.maxHeight, collision: false };
       this.mountainEnvironment.add(group);
+      const stripeMaterial = new THREE.ShaderMaterial({transparent:true,depthWrite:false,side:THREE.DoubleSide,
+        uniforms:{opacity:{value:0},finish:{value:0}},
+        vertexShader:'varying vec2 stripe; void main(){stripe=position.yz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+        fragmentShader:'varying vec2 stripe;uniform float opacity;uniform float finish;void main(){float band=step(0.5,fract((stripe.x+stripe.y)*0.35));vec3 color=finish>0.5?mix(vec3(0.15,0.55,0.48),vec3(0.8,1.,0.92),band):mix(vec3(0.45,0.01,0.02),vec3(1.,0.08,0.05),band);gl_FragColor=vec4(color,finish>0.5?0.38:opacity);}' });
+      const regions=[[-gate.halfWidth-80,-gate.halfWidth,-80,gate.maxHeight+80],[gate.halfWidth,gate.halfWidth+80,-80,gate.maxHeight+80],[-gate.halfWidth,gate.halfWidth,gate.maxHeight,gate.maxHeight+80],[-gate.halfWidth,gate.halfWidth,-80,0]];
+      if(finish) regions.push([-gate.halfWidth,gate.halfWidth,0,gate.maxHeight]);
+      for(const [regionIndex,[left,right,bottom,top]] of regions.entries()){
+        const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute([0,bottom,left,0,top,left,0,bottom,right,0,top,right],3));geometry.setIndex([0,1,2,2,1,3]);
+        const regionMaterial=finish&&regionIndex===4?stripeMaterial.clone():stripeMaterial;
+        if(finish&&regionIndex===4)regionMaterial.uniforms.finish.value=1;
+        const stripes=new THREE.Mesh(geometry,regionMaterial);stripes.userData.warning=true;group.add(stripes);
+      }
       const height = downhill ? 20 : gate.maxHeight;
       for (const side of [-1, 1]) {
         const post = this.mesh(frameGeometry, material, group);
@@ -2857,32 +2911,34 @@ export class SceneView {
         this.vector.copy(this.wingTrailOlder).sub(this.wingTrailPoint);
         if (this.vector.lengthSq() < 1e-12) continue;
         const length = Math.min(18 + strength * 42, this.wingTrailLengths[side]);
-        const distance = this.wingTrailDistances[side];
+        let distance = this.wingTrailDistances[side];
         if (distance >= length) continue;
         const segmentLength = Math.min(this.vector.length(), length - distance);
         this.wingTrailOlder.copy(this.wingTrailPoint).addScaledVector(this.vector, segmentLength / this.vector.length());
         const endDistance = distance + segmentLength;
         this.wingTrailDistances[side] = endDistance;
+        const gap = 0.1 + Math.max(0, sim.telemetry.speed - 10) * 0.03;
+        if (endDistance <= gap) continue;
+        if (distance < gap) {this.wingTrailPoint.lerp(this.wingTrailOlder,(gap-distance)/segmentLength);distance=gap;}
         this.vector2.copy(this.camera.position).sub(this.wingTrailPoint);
         this.wingTrailWidth.crossVectors(this.vector, this.vector2);
         if (this.wingTrailWidth.lengthSq() < 1e-12) this.wingTrailWidth.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
         const pixelWidth = this.camera === this.orthographic
           ? (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height
           : 2 * this.vector2.length() * Math.tan(this.perspective.fov * DEG / 2) / this.height;
-        const fade = clamp(1 - distance / length, 0, 1);
-        this.wingTrailWidth.normalize().multiplyScalar(Math.max(0.055 + strength * 0.12, pixelWidth * 1.8) * (0.3 + fade * 0.7));
+        this.wingTrailWidth.normalize().multiplyScalar(Math.max(0.055 + strength * 0.12, pixelWidth * 1.8));
         // Two camera-facing triangles per segment; width never depends on WebGL lineWidth.
         for (let vertex = 0; vertex < 6; vertex++) {
           const start = vertex === 0 || vertex === 1 || vertex === 3;
           const sign = vertex === 0 || vertex === 3 || vertex === 5 ? -1 : 1;
+          const vertexDistance = start ? distance : endDistance;
+          const taper = clamp((vertexDistance-gap)/2,0,1)*clamp((length-vertexDistance)/2,0,1);
           const point = start ? this.wingTrailPoint : this.wingTrailOlder;
           for (let axis = 0; axis < 3; axis++) {
-            this.wingTrailArray[offset++] = point.getComponent(axis) + this.wingTrailWidth.getComponent(axis) * sign;
+            this.wingTrailArray[offset++] = point.getComponent(axis) + this.wingTrailWidth.getComponent(axis) * sign * taper;
             this.wingTrailColors[colorOffset++] = 1;
           }
-          const vertexDistance = start ? distance : endDistance;
-          const ramp = Math.min(0.8, length / 2);
-          this.wingTrailColors[colorOffset++] = Math.min(1, vertexDistance / ramp) * clamp((length - vertexDistance) / (length - ramp), 0, 1);
+          this.wingTrailColors[colorOffset++] = taper;
         }
       }
     }

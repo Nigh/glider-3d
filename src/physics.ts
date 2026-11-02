@@ -669,6 +669,7 @@ export class FlightSimulation {
   readonly recording = new Float64Array(MAX_FRAMES * FRAME_WIDTH);
   recordingLength = 0;
   time = 0;
+  readonly groundImpactPoint = new Vector3();
   ended = false;
   result: FlightResult | null = null;
   replayFinished = false;
@@ -1905,8 +1906,8 @@ export class FlightSimulation {
       if (!this.mainContact(point)) continue;
       this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
       if (this.onRunway(this.cross.x, this.cross.z)) continue;
-      if (this.challenge !== 'birdman' && this.cross.y <= challengeTerrainHeight(this.challenge, this.cross.x, this.cross.z)) return 'terrain';
-      if (this.sweepsLaunchBox(this.cross, this.cross)) return 'terrain';
+      if (this.challenge !== 'birdman' && this.cross.y <= challengeTerrainHeight(this.challenge, this.cross.x, this.cross.z)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+      if (this.sweepsLaunchBox(this.cross, this.cross)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
     }
     this.noseAt(position, orientation, this.nosePoint);
     if (this.nosePoint.y <= this.waterHeight(this.nosePoint.x, this.nosePoint.z)) return 'water';

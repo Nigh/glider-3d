@@ -1211,7 +1211,7 @@ for (const [mode, labels] of [
     expect(samples.at(-1)!.speed).toBeCloseTo(telemetry.speed, 10);
     expect(samples.at(-1)!.height).toBeCloseTo(telemetry.altitude, 10);
     for (let index = 1; index < samples.length; index++) expect(samples[index].time).toBeGreaterThanOrEqual(samples[index - 1].time);
-    const speedChart = page.getByRole('region', { name: '空速曲线', exact: true });
+    const speedChart = page.getByRole('region', { name: '距离高度曲线', exact: true });
     await speedChart.scrollIntoViewIfNeeded();
     const speedPoints = (await speedChart.locator('.chart-speed-line').getAttribute('points'))!.trim().split(/\s+/).map(point => point.split(',').map(Number));
     expect(speedPoints).toHaveLength(samples.length);
@@ -1221,7 +1221,7 @@ for (const [mode, labels] of [
     expect(speedPoints.at(-1)![1]).toBeCloseTo(98 - telemetry.speed / maxSpeed * 76, 2);
     const heightChart = page.getByRole('region', { name: '距离高度曲线', exact: true });
     await heightChart.scrollIntoViewIfNeeded();
-    await expect(heightChart.locator('.chart-energy-line,.chart-cost-line')).toHaveCount(0);
+    await expect(heightChart.locator('.chart-energy-line,.chart-cost-line')).toHaveCount(2);
     await expect(heightChart.locator('.chart-scoring-line')).toHaveCount(mode === '低空飞行' ? 1 : 0);
     if (mode === '低空飞行') {
       expect(samples.at(-1)!.scoringHeight).toBeCloseTo(telemetry.altitude - Number(telemetry.groundClearance) + 25, 10);
@@ -1452,4 +1452,53 @@ test('中英日切换保留设计，重载后保留语言选择', async ({ page 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page).toHaveTitle(/翼の方程式/);
   await expect(language).toHaveValue('ja');
+});
+
+
+test('快捷键、独立气动窗口与鼠标操纵杆释放复位', async ({page,isMobile})=>{
+ test.skip(isMobile,'键鼠控制在桌面验证');
+ await enterDesign(page);
+ await page.keyboard.press('Escape');
+ await expect.poll(()=>page.evaluate(()=>window.glider.state)).toBe('menu');
+ await enterDesign(page);
+ await page.getByRole('button',{name:'试飞',exact:true}).click();
+ await page.getByRole('button',{name:'开始试飞',exact:true}).click();
+ await page.getByRole('button',{name:'气动图层',exact:true}).click();
+ await expect(page.getByRole('complementary',{name:'实时气动数据'})).toBeVisible();
+ await expect(page.getByRole('complementary',{name:'开发性能面板'})).toHaveCount(0);
+ await page.keyboard.down('x');
+ await page.mouse.move(800,400);
+ await expect(page.getByLabel('虚拟操纵杆')).toBeVisible();
+ await page.keyboard.up('x');
+ await expect(page.getByLabel('虚拟操纵杆')).toHaveCount(0);
+ await page.keyboard.press('r');
+ await expect.poll(()=>page.evaluate(()=>window.glider.flightReady)).toBe(false);
+ await page.keyboard.press('Escape');
+ await expect.poll(()=>page.evaluate(()=>window.glider.state)).toBe('design');
+});
+
+
+test('地面X分两笔同步发声，计时门外侧随接近变红',async({page,isMobile})=>{
+ test.skip(isMobile,'场景几何在桌面验证');
+ const result=await page.evaluate(async()=>{
+  const scenePath='/src/scene.ts',physicsPath='/src/physics.ts',modelPath='/src/model.ts';
+  const {SceneView}=await import(scenePath),{FlightSimulation}=await import(physicsPath),{presets}=await import(modelPath);
+  const host=document.createElement('div');host.style.cssText='width:800px;height:600px';document.body.append(host);
+  const view=new SceneView(host),sim=new FlightSimulation(presets.find((p:any)=>p.name==='高山速降机动型'),'downhill',0);
+  try{
+   view.setFlight(sim);sim.ended=true;sim.groundImpactPoint.copy(sim.position);
+   const internals=view as any,gate=internals.mountainEnvironment.children.find((g:any)=>g.userData.gate),warning=gate.children.find((c:any)=>c.userData.warning);
+   sim.position.x=gate.position.x-120;view.render(0);const far=warning.material.uniforms.opacity.value;
+   sim.position.x=gate.position.x;view.render(0);const near=warning.material.uniforms.opacity.value;
+   let sounds=0;view.markCrash(()=>sounds++);
+   for(let i=0;i<7;i++)view.render(0.1);
+   const first=internals.crashMark.children.map((c:any)=>c.geometry.drawRange.count),oneSound=sounds;
+   for(let i=0;i<6;i++)view.render(0.1);
+   const second=internals.crashMark.children.map((c:any)=>c.geometry.drawRange.count);
+   return {far,near,first,second,oneSound,sounds};
+  }finally{view.dispose();host.remove();}
+ });
+ expect(result.far).toBe(0);expect(result.near).toBe(1);
+ expect(result.first[0]).toBeGreaterThan(0);expect(result.first[1]).toBe(0);expect(result.oneSound).toBe(1);
+ expect(result.second).toEqual([384,384]);expect(result.sounds).toBe(2);
 });

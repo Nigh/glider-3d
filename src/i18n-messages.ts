@@ -1,5 +1,12 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
 export const messages: Record<string, readonly [string, string]> = {
+ "横轴为试飞时间，各曲线使用独立纵轴。": ["The horizontal axis is flight time; each curve has its own vertical scale.", "横軸は飛行時間、各曲線は独立した縦軸を使用。"],
+ "飞行数据曲线": ["Flight data curves", "飛行データ曲線"],
+ "侧滑角": ["Sideslip", "横滑り角"],
+ "速度×升阻比": ["Speed × lift/drag", "速度×揚抗比"],
+ "虚拟操纵杆": ["Virtual joystick", "仮想ジョイスティック"],
+ "实时气动数据": ["Live aerodynamics", "リアルタイム空力データ"],
+ "气动图层": ["Aerodynamics", "空力レイヤー"],
  "翼构方程": [
   "Aero Formula",
   "翼の方程式"
