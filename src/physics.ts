@@ -1241,8 +1241,8 @@ export class FlightSimulation {
       return;
     }
     if (this.launching && this.challenge === 'low-altitude'
-      && (this.telemetry.force.y > mass * (GRAVITY + LOW_ALTITUDE_RAIL.retentionAcceleration)
-        || this.position.x - (this.aircraft.cg.x - this.launchCg.x) >= LOW_RUNWAY.endX)) {
+      && (this.position.x - (this.aircraft.cg.x - this.launchCg.x) >= LOW_RUNWAY.endX
+        || this.canLiftOffRail())) {
       this.launching = false;
       this.integrateFlight(input, dt);
       return;
@@ -1317,6 +1317,21 @@ export class FlightSimulation {
     if (landing) this.finish(landing);
     else if (this.completed) this.finish('finish');
     else if (this.outsideChallenge()) this.finish('boundary');
+  }
+
+  private canLiftOffRail(): boolean {
+    const upwardAcceleration = this.telemetry.force.y / this.mass - GRAVITY;
+    if (upwardAcceleration <= LOW_ALTITUDE_RAIL.retentionAcceleration) return false;
+    // 附轨时角速度为零。解除约束后的各接触点还受俯仰/滚转角加速度影响；
+    // 不能只因CG上升就释放仍会向跑道压低机头或翼尖的构型。
+    this.angularAcceleration.copy(this.torque).applyMatrix3(this.inverseInertia);
+    this.inverse.copy(this.midpointQuaternion).invert();
+    this.cross.set(0, 1, 0).applyQuaternion(this.inverse).cross(this.angularAcceleration);
+    const threshold = LOW_ALTITUDE_RAIL.retentionAcceleration - upwardAcceleration + this.cross.dot(this.cg);
+    for (const point of this.contacts) {
+      if (this.mainContact(point) && this.cross.dot(point) <= threshold) return false;
+    }
+    return true;
   }
 
   private advanceStructure(dt: number, force: Vector3, torque: Vector3) {

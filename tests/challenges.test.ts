@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, wing, type Controls } from '../src/model';
+import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, validateAircraft, wing, type Controls } from '../src/model';
 import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY } from '../src/physics';
 import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
 import { engineCatalog } from '../src/engines';
+import jetCruise50m from './fixtures/jet-cruise-50m.json';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
 const downhillAircraft = presets.find(d => !d.birdman && d.engine.count === 0)!;
@@ -221,7 +222,7 @@ describe('低空地形、滑跑与计分', () => {
     expect(challengeRiverHeight(205)).toBeCloseTo((challengeRiverHeight(200) + challengeRiverHeight(210)) / 2, 12);
   });
 
-  it('2m导轨从静止靠真实推力滑跑，无动力不动，净升力超过保持力才离轨', () => {
+  it('2m导轨从静止靠真实推力滑跑，无动力不动，未整体抬升时滑至轨端释放', () => {
     const launch = challengeLaunch('low-altitude')!, d = clone(poweredAircraft); d.engine.count = 0; d.fuelTank.capacity = 0;
     const stationary = new FlightSimulation(d, 'low-altitude', 0);
     for (let i = 0; i < 20; i++) stationary.step({ ...neutral, throttle: 1 }, 0.25);
@@ -236,9 +237,8 @@ describe('低空地形、滑跑与计分', () => {
     for (let i = 0; i < 3600 && s.launching && !s.ended; i++) {
       s.step({ ...neutral, throttle: 1 }); rollWork = Math.max(rollWork, s.telemetry.propulsionWork);
     }
-    expect(s.ended).toBe(false); expect(s.launching).toBe(false); expect(s.position.x).toBeLessThan(launch.endX);
+    expect(s.ended).toBe(false); expect(s.launching).toBe(false); expect(s.position.x).toBeGreaterThanOrEqual(launch.endX);
     expect(s.position.x).toBeGreaterThan(launch.startX + 20); expect(s.velocity.x).toBeGreaterThan(10);
-    expect(s.telemetry.force.y).toBeGreaterThan(s.aircraft.mass * (GRAVITY + LOW_ALTITUDE_RAIL.retentionAcceleration));
     expect(rollWork).toBeGreaterThan(0); expect(s.telemetry.fuelRemaining).toBeLessThan(poweredAircraft.fuelTank.capacity);
     expect(s.telemetry.propulsionWork).toBeGreaterThan(0); expect(s.telemetry.fuelEnergyRemoved).toBeGreaterThan(0);
     const t = s.telemetry;
@@ -259,9 +259,17 @@ describe('低空地形、滑跑与计分', () => {
     expect(s.ended).toBe(false); expect(s.launching).toBe(true); expect(s.velocity.length()).toBe(0);
   });
 
-  it('保持力按当前质量缩放，升力高于重量但不足保持力仍附轨', () => {
+  it('配平飞机的保持力按当前质量缩放，超过门槛可在轨端前正常抬升', () => {
     for (const materialAmount of [0.5, 2]) {
       const d = clone(poweredAircraft); d.mainWing.materialAmount = materialAmount;
+      // 用实际气动力配平俯仰，不让低头力矩遮蔽这项质量/保持力边界检查。
+      let aft = -1, forward = 2;
+      for (let iteration = 0; iteration < 24; iteration++) {
+        d.cockpit.position = (aft + forward) / 2;
+        const trim = new FlightSimulation(d, 'low-altitude', 0);
+        trim.velocity.x = 20; trim.step(neutral, 1e-6);
+        if (trim.telemetry.torque.z > 0) aft = d.cockpit.position; else forward = d.cockpit.position;
+      }
       for (const target of [LOW_ALTITUDE_RAIL.retentionAcceleration / 2, LOW_ALTITUDE_RAIL.retentionAcceleration * 1.5]) {
         let low = 0, high = 50, sample!: FlightSimulation;
         for (let iteration = 0; iteration < 18; iteration++) {
@@ -274,6 +282,45 @@ describe('低空地形、滑跑与计分', () => {
         expect(sample.launching).toBe(target < LOW_ALTITUDE_RAIL.retentionAcceleration);
         if (sample.launching) expect(sample.velocity.y).toBe(0); else expect(sample.velocity.y).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it('净升力足够但低头力矩会压低机头时保持附轨，不在滑跑中掉向跑道', () => {
+    const s = new FlightSimulation(validateAircraft(jetCruise50m), 'low-altitude', 0);
+    const initialCg = s.cg.clone(), height = s.position.y, launch = challengeLaunch('low-altitude')!;
+    let exceededRetention = false;
+    for (let i = 0; i < 3600 && s.launching && !s.ended; i++) {
+      s.step({ ...neutral, throttle: 1 });
+      exceededRetention ||= s.telemetry.force.y > s.mass * (GRAVITY + LOW_ALTITUDE_RAIL.retentionAcceleration);
+      if (!s.launching) {
+        expect(s.position.x - (s.cg.x - initialCg.x)).toBeGreaterThanOrEqual(launch.endX);
+        break;
+      }
+      expect(s.ended).toBe(false);
+      expect(s.position.y - (s.cg.y - initialCg.y)).toBeCloseTo(height, 9);
+      expect(s.velocity.y).toBe(0);
+      expect(s.quaternion.toArray()).toEqual([0, 0, 0, 1]);
+    }
+    expect(exceededRetention).toBe(true);
+    expect(s.launching).toBe(false);
+    expect(s.ended).toBe(false);
+    expect(s.position.x - (s.cg.x - initialCg.x)).toBeGreaterThanOrEqual(launch.endX);
+    const t = s.telemetry;
+    expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork - t.waterWork).toBeCloseTo(t.initialEnergy, 8);
+  });
+
+  it('向下载荷大于保持力也不脱轨，继续约束高度与姿态', () => {
+    const d = clone(poweredAircraft);
+    d.assembly.mainIncidence = -10; d.assembly.tailIncidence = -10;
+    const s = new FlightSimulation(d, 'low-altitude', 0), height = s.position.y, cg = s.cg.clone();
+    s.velocity.x = 30;
+    for (let i = 0; i < 120; i++) {
+      s.step({ ...neutral, throttle: 0 });
+      expect(s.telemetry.force.y).toBeLessThan(-s.mass * LOW_ALTITUDE_RAIL.retentionAcceleration);
+      expect(s.launching).toBe(true);
+      expect(s.position.y - (s.cg.y - cg.y)).toBeCloseTo(height, 9);
+      expect(s.velocity.y).toBe(0);
+      expect(s.quaternion.toArray()).toEqual([0, 0, 0, 1]);
     }
   });
 

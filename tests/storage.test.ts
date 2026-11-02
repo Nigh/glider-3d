@@ -211,6 +211,10 @@ describe('最远纪录', () => {
     storage.setItem('lakewind.best.challenge-v2.birdman', '850');
     storage.setItem('lakewind.best.aeroelastic-v3.birdman', '950');
     storage.setItem('lakewind.best.flight-update-v4.birdman', '975');
+    storage.setItem('lakewind.best.water-skim-v5.low-altitude', '980');
+    expect(readBest('low-altitude')).toBe(0);
+    expect(writeBest(150, 'low-altitude')).toBe(150);
+    expect(storage.getItem('lakewind.best.water-skim-v5.low-altitude')).toBe('980');
     expect(readBest()).toBe(0);
     expect(writeBest(120)).toBe(120);
     expect(storage.getItem('lakewind.best.official-v1.standard')).toBe('900');

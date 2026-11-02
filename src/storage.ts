@@ -10,8 +10,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 擦水受力和入水终止规则改变成绩；保留旧物理版本数据，不混榜。
-export const PHYSICS_VERSION = 'water-skim-v5';
+// 导轨提前释放改为全机抬升判定，保留旧物理版本成绩但不混榜。
+export const PHYSICS_VERSION = 'rail-release-v6';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function storageCall<T>(operation: (storage: Storage) => T): T {
