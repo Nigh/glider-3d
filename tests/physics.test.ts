@@ -491,6 +491,7 @@ describe('气动、质量、能量与消费者边界', () => {
     const position = s.position.clone(); s.step(neutral); expect(s.position.equals(position)).toBe(true);
   }, 15_000);
 
+  // 极端展长包含最多梁段、断片及碰撞子步；这是正确性检查，不以CI机器的5秒墙钟作性能门槛。
   it.each([{ name: '最小弦与半展', span: 0.5, chord: 0.15 }, { name: '最大展长与大弦', span: 24, chord: 5.8 }])('$name 的三翼分段受力保持有限并满足真实能量账本', ({ span, chord }) => {
     const d = definition(d => {
       d.mainWing = wing(span, chord, chord);
@@ -505,7 +506,7 @@ describe('气动、质量、能量与消费者边界', () => {
       expect(s.quaternion.length()).toBeCloseTo(1, 10);
       for (const value of [...s.position.toArray(), ...s.velocity.toArray(), ...s.omega.toArray(), s.telemetry.energy]) expect(Number.isFinite(value)).toBe(true);
     }
-  });
+  }, 15_000);
 
   it('重置清空统计，拒绝无效输入/回放，零速度保持有限', () => {
     const s = probe(undefined, s => { s.velocity.set(0, 0, 0); }); expect(s.velocity.y).toBeLessThan(0); expect(Number.isFinite(s.telemetry.energy)).toBe(true);
