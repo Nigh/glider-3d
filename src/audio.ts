@@ -1,3 +1,5 @@
+import type { ChallengeLaunch, ChallengeMode } from './challenges';
+
 type AudioPreferences = { muted: boolean; music: number; effects: number };
 type AudioState = {
   screen: 'menu' | 'design' | 'flight' | 'result';
@@ -6,8 +8,11 @@ type AudioState = {
   hidden: boolean;
   speed: number;
   launching: boolean;
+  challenge: ChallengeMode;
+  launchKind: ChallengeLaunch['kind'];
+  timingStarted: boolean;
+  challengeProgress: number;
   engineRpm?: number;
-  checkpointProgress?: number;
 };
 type Voice = { source: AudioScheduledSourceNode; gain: GainNode; flight: boolean };
 
@@ -40,6 +45,7 @@ export class GameAudio {
    private preferences: AudioPreferences = { muted: false, music: 0.35, effects: 0.65 };
   private state: AudioState = {
     screen: 'menu', ready: false, paused: false, hidden: false, speed: 0, launching: false,
+    challenge: 'birdman', launchKind: 'catapult', timingStarted: false, challengeProgress: 0,
   };
   private unlocked = false;
   private steamActive = false;
@@ -70,6 +76,7 @@ export class GameAudio {
   }
 
   setPreferences(preferences: AudioPreferences): void {
+    if (preferences.muted || volume(preferences.effects) === 0) this.clearVoices();
     this.preferences = {
       muted: preferences.muted,
       music: volume(preferences.music),
@@ -82,8 +89,9 @@ export class GameAudio {
     const wasFlight = this.state.screen === 'flight' && this.state.ready;
     const isFlight = state.screen === 'flight' && state.ready;
     const screenChanged = state.screen !== this.state.screen;
-    const passedCheckpoint = wasFlight && isFlight
-      && (state.checkpointProgress ?? 0) > (this.state.checkpointProgress ?? 0);
+    const timingPoint = wasFlight && isFlight && state.challenge !== 'birdman'
+      && ((!this.state.timingStarted && state.timingStarted)
+        || state.timingStarted && state.challengeProgress > this.state.challengeProgress);
     this.state = state;
     if (!isFlight) {
       this.launchPlayed = false;
@@ -92,7 +100,7 @@ export class GameAudio {
     }
     if (screenChanged) this.applyVolumes();
     this.syncTransport();
-    if (passedCheckpoint && this.canPlay()) this.tone(880, 1175, 0.12, 0.035, false);
+    if (timingPoint && this.canPlay()) this.timingPoint();
     if (!this.context || this.disposed) return;
     const speed = isFlight && Number.isFinite(state.speed) ? Math.max(0, Math.min(60, state.speed)) : 0;
     if (Math.abs(speed - this.lastSpeed) >= 0.15 || speed === 0 && this.lastSpeed !== 0) {
@@ -111,11 +119,11 @@ export class GameAudio {
       this.smooth(this.engineNoise!.frequency, 350 + rpm * 2400, 0.12);
       this.smooth(this.engineNoiseGain!.gain, rpm * rpm * 0.2, 0.12);
     }
-    if (!isFlight || !state.launching) this.silenceSteam();
+    if (!this.catapultFlight() || !state.launching) this.silenceSteam();
   }
 
   launch(): void {
-    if (this.launchPlayed || !this.inFlight() || !this.state.launching) return;
+    if (this.launchPlayed || !this.catapultFlight() || !this.state.launching) return;
     this.launchPlayed = true;
     if (this.canPlay()) {
       this.steamActive = true;
@@ -125,7 +133,7 @@ export class GameAudio {
 
   release(): void {
     this.silenceSteam();
-    if (this.releasePlayed || !this.inFlight()) return;
+    if (this.releasePlayed || !this.catapultFlight() || this.state.launching) return;
     this.releasePlayed = true;
     if (!this.canPlay()) return;
     // Original synthesis: latch snap, heavy coupling impact, inharmonic metal ring and steam vent.
@@ -259,6 +267,7 @@ export class GameAudio {
     this.runningWanted = wanted;
     const version = ++this.transportVersion;
     if (!wanted) {
+      this.clearVoices();
       this.music!.pause();
       void context.suspend().catch(() => this.report('音频暂停失败；游戏仍可继续。'));
       return;
@@ -293,6 +302,21 @@ export class GameAudio {
 
   private inFlight(): boolean {
     return this.state.screen === 'flight' && this.state.ready;
+  }
+
+  private catapultFlight(): boolean {
+    return this.inFlight() && this.state.challenge !== 'low-altitude' && this.state.launchKind === 'catapult';
+  }
+
+  private timingPoint(): void {
+    // Two soft layers stay above wind without a piercing bell or a long engine-masking tail.
+    const level = 1 + 0.25 * volume(this.state.speed / 30);
+    this.tone(720, this.state.challengeProgress >= 1 ? 1080 : 900, 0.24, 0.10 * level, false);
+    this.tone(320, 190, 0.14, 0.055 * level, false, 'triangle');
+  }
+
+  private clearVoices(): void {
+    for (const voice of this.voices) this.stopVoice(voice);
   }
 
   private canPlay(): boolean {

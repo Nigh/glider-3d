@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, PILOT_MASS, presets, wing, type Controls } from '../src/model';
 import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY } from '../src/physics';
-import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight } from '../src/challenges';
+import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
 import { engineCatalog } from '../src/engines';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -176,13 +177,32 @@ describe('三轴操纵与高山路径边界', () => {
     expect(completed.telemetry.challengeProgress).toBe(1); expect(completed.result?.score).toBe(completed.time);
   });
 
-  it('山坡、弹射台与谷道边界均按真实接触终止', () => {
+  it('山坡和弹射台按真实接触终止，速降无隐藏横向边界', () => {
     const crash = create(); crash.position.y = challengeTerrainHeight('downhill', crash.position.x, crash.position.z) - 1;
     crash.step(neutral); expect(crash.result?.landing).toBe('terrain');
-    const shortcut = create(); shortcut.position.z += 66; shortcut.position.y = challengeTerrainHeight('downhill', shortcut.position.x, shortcut.position.z) + 30;
-    shortcut.step(neutral); expect(shortcut.result?.landing).toBe('boundary');
+    const shortcut = create(); shortcut.position.z += 80; shortcut.position.y = challengeTerrainHeight('downhill', shortcut.position.x, shortcut.position.z) + 30;
+    shortcut.step(neutral); expect(shortcut.ended).toBe(false);
     const platform = create(), launch = challengeLaunch('downhill')!; platform.position.set(-10, launch.y - 0.1, 0); platform.velocity.set(0, -3, 0);
     platform.step(neutral); expect(platform.result?.landing).toBe('terrain');
+  });
+
+  it('速降所有可见门覆盖山体边缘，80m侧向路线真实通过起点和下一门', () => {
+    const gates = [challengeStartGate('downhill')!, ...challengeCheckpoints('downhill')];
+    for (const gate of gates) {
+      expect(gate.z - gate.halfWidth).toBeLessThan(challengeTerrainGrid.minZ);
+      expect(gate.z + gate.halfWidth).toBeGreaterThan(challengeTerrainGrid.maxZ);
+    }
+    const d = clone(downhillAircraft);
+    d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
+    const s = new FlightSimulation(d, 'downhill', 0);
+    for (const gate of gates.slice(0, 2)) {
+      s.launching = false; s.quaternion.identity(); s.velocity.set(30, 0, 0);
+      s.position.set(gate.x - 0.1, challengeTerrainHeight('downhill', gate.x, gate.z + 80) + 20, gate.z + 80);
+      expect(s.position.y).toBeLessThan(gate.y + gate.maxHeight);
+      s.step(neutral, 0.01); expect(s.ended).toBe(false);
+      expect(s.telemetry.timingStarted).toBe(true);
+    }
+    expect(s.telemetry.challengeProgress).toBe(0.1);
   });
 });
 
@@ -201,33 +221,114 @@ describe('低空地形、滑跑与计分', () => {
     expect(challengeRiverHeight(205)).toBeCloseTo((challengeRiverHeight(200) + challengeRiverHeight(210)) / 2, 12);
   });
 
-  it('地面静止起步，无动力不会获得速度；全油门在跑道内靠真实升力离地', () => {
+  it('2m导轨从静止靠真实推力滑跑，无动力不动，净升力超过保持力才离轨', () => {
     const launch = challengeLaunch('low-altitude')!, d = clone(poweredAircraft); d.engine.count = 0; d.fuelTank.capacity = 0;
     const stationary = new FlightSimulation(d, 'low-altitude', 0);
     for (let i = 0; i < 20; i++) stationary.step({ ...neutral, throttle: 1 }, 0.25);
     expect(stationary.position.x).toBe(launch.startX); expect(stationary.velocity.length()).toBe(0); expect(stationary.launching).toBe(true);
     const s = new FlightSimulation(poweredAircraft, 'low-altitude', 0);
     expect(s.position.x).toBe(launch.startX); expect(s.velocity.length()).toBe(0);
+    const contactPoints = Reflect.get(s, 'contacts') as { y: number }[];
+    const lowest = Math.min(...contactPoints.map(point => s.position.y + point.y - s.cg.y));
+    expect(s.railAttachmentHeight - launch.y).toBe(2);
+    expect(lowest).toBeGreaterThanOrEqual(launch.y + LOW_ALTITUDE_RAIL.height);
     let rollWork = 0;
     for (let i = 0; i < 3600 && s.launching && !s.ended; i++) {
       s.step({ ...neutral, throttle: 1 }); rollWork = Math.max(rollWork, s.telemetry.propulsionWork);
     }
     expect(s.ended).toBe(false); expect(s.launching).toBe(false); expect(s.position.x).toBeLessThan(launch.endX);
     expect(s.position.x).toBeGreaterThan(launch.startX + 20); expect(s.velocity.x).toBeGreaterThan(10);
-    expect(s.telemetry.force.y).toBeGreaterThanOrEqual(s.aircraft.mass * 9.81);
+    expect(s.telemetry.force.y).toBeGreaterThan(s.aircraft.mass * (GRAVITY + LOW_ALTITUDE_RAIL.retentionAcceleration));
     expect(rollWork).toBeGreaterThan(0); expect(s.telemetry.fuelRemaining).toBeLessThan(poweredAircraft.fuelTank.capacity);
-    expect(s.telemetry.propulsionWork).toBe(0); expect(s.telemetry.fuelEnergyRemoved).toBe(0);
+    expect(s.telemetry.propulsionWork).toBeGreaterThan(0); expect(s.telemetry.fuelEnergyRemoved).toBeGreaterThan(0);
     const t = s.telemetry;
     expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork).toBeCloseTo(t.initialEnergy, 8);
     expect(s.time).toBe(0); expect(s.telemetry.score).toBe(0); expect(s.telemetry.timingStarted).toBe(false);
     for (let x = launch.startX; x <= launch.endX; x += 10) expect(challengeTerrainHeight('low-altitude', x, launch.z)).toBe(launch.y);
   });
 
-  it('起飞前地面滑跑与油门录像可逐帧确定重放', () => {
+  it('合法最大展长宽弦翼开场完整碰撞体均在2m导轨顶面以上', () => {
+    const d = clone(poweredAircraft);
+    d.mainWing = wing(24, 6, 6); d.assembly.mainIncidence = 18; d.assembly.mainWingHeight = -0.5;
+    const s = new FlightSimulation(d, 'low-altitude', 0), points = Reflect.get(s, 'contacts') as Vector3[];
+    for (const point of points) {
+      const world = point.clone().sub(s.cg).applyQuaternion(s.quaternion).add(s.position);
+      expect(world.y).toBeGreaterThanOrEqual(s.railAttachmentHeight);
+    }
+    s.step(neutral, 1e-6);
+    expect(s.ended).toBe(false); expect(s.launching).toBe(true); expect(s.velocity.length()).toBe(0);
+  });
+
+  it('保持力按当前质量缩放，升力高于重量但不足保持力仍附轨', () => {
+    for (const materialAmount of [0.5, 2]) {
+      const d = clone(poweredAircraft); d.mainWing.materialAmount = materialAmount;
+      for (const target of [LOW_ALTITUDE_RAIL.retentionAcceleration / 2, LOW_ALTITUDE_RAIL.retentionAcceleration * 1.5]) {
+        let low = 0, high = 50, sample!: FlightSimulation;
+        for (let iteration = 0; iteration < 18; iteration++) {
+          const speed = (low + high) / 2;
+          sample = new FlightSimulation(d, 'low-altitude', 0);
+          sample.velocity.x = speed; sample.step(neutral, 1e-6);
+          if (sample.telemetry.force.y / sample.mass - GRAVITY < target) low = speed; else high = speed;
+        }
+        expect(sample.telemetry.force.y / sample.mass - GRAVITY).toBeCloseTo(target, 3);
+        expect(sample.launching).toBe(target < LOW_ALTITUDE_RAIL.retentionAcceleration);
+        if (sample.launching) expect(sample.velocity.y).toBe(0); else expect(sample.velocity.y).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('轨末端自然释放进入六自由度，无升力也不结算；reset恢复附着', () => {
+    const d = clone(poweredAircraft); d.engine.count = 0; d.fuelTank.capacity = 0;
+    d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
+    const s = new FlightSimulation(d, 'low-altitude', 0), launch = challengeLaunch('low-altitude')!;
+    for (let x = launch.endX; x <= launch.endX + 20; x += challengeTerrainGrid.step) {
+      expect(challengeTerrainHeight('low-altitude', x, launch.z)).toBe(launch.y);
+    }
+    s.position.x = launch.endX - 0.01; s.velocity.x = 2;
+    s.step(neutral, 0.02);
+    expect(s.launching).toBe(false); expect(s.ended).toBe(false);
+    expect(s.position.x).toBeGreaterThan(launch.endX); expect(s.velocity.y).toBeLessThan(0);
+    s.reset(0); expect(s.launching).toBe(true); expect(s.position.x).toBe(launch.startX); expect(s.velocity.length()).toBe(0);
+  });
+
+  it('脱轨后坠回跑道用接触冲量支撑不结算，跑道外地形和河面仍终止', () => {
+    const d = clone(downhillAircraft);
+    d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
+    const s = new FlightSimulation(d, 'low-altitude', 0), launch = challengeLaunch('low-altitude')!;
+    s.launching = false; s.position.set((launch.startX + launch.endX) / 2, launch.y + 2, launch.z);
+    s.velocity.set(1, -8, 0);
+    for (let i = 0; i < 120; i++) s.step(neutral);
+    expect(s.ended).toBe(false); expect(s.launching).toBe(false);
+    const points = Reflect.get(s, 'contacts') as Vector3[];
+    for (const point of points) {
+      const world = point.clone().sub(s.cg).applyQuaternion(s.quaternion).add(s.position);
+      expect(world.y).toBeGreaterThanOrEqual(launch.y - 3e-6);
+    }
+    const t = s.telemetry;
+    expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork).toBeCloseTo(t.initialEnergy, 8);
+    const outside = airborne(new FlightSimulation(d, 'low-altitude', 0), 50, 0);
+    outside.step(neutral); expect(outside.result?.landing).toBe('terrain');
+    const river = airborne(new FlightSimulation(d, 'low-altitude', 0), 200, 10);
+    river.position.set(200, challengeRiverHeight(200) - 0.1, challengeRiverCenter(200));
+    river.step(neutral); expect(river.result?.landing).toBe('water');
+  });
+
+  it('导轨滑跑、真实脱轨和六自由度油门录像可逐帧确定重放', () => {
     const s = new FlightSimulation(poweredAircraft, 'low-altitude', 0), states: number[][] = [];
-    for (let i = 0; i < 40; i++) { s.step({ ...neutral, throttle: i < 10 ? 0.5 : 1 }, 0.1); states.push([...s.position.toArray(), ...s.velocity.toArray(), s.telemetry.fuelRemaining]); }
+    let releasedSteps = 0;
+    for (let i = 0; i < 600 && releasedSteps < 4 && !s.ended; i++) {
+      s.step({ ...neutral, throttle: i < 10 ? 0.5 : 1 }, 0.1);
+      states.push([...s.position.toArray(), ...s.velocity.toArray(), ...s.quaternion.toArray(), ...s.omega.toArray(),
+        s.telemetry.fuelRemaining, Number(s.launching)]);
+      if (!s.launching) releasedSteps++;
+    }
+    expect(releasedSteps).toBe(4);
     const replay = new FlightSimulation(poweredAircraft, 'low-altitude', 0); replay.loadReplay(s.getRecording());
-    for (const state of states) { replay.step(neutral); expect([...replay.position.toArray(), ...replay.velocity.toArray(), replay.telemetry.fuelRemaining]).toEqual(state); }
+    for (const state of states) {
+      replay.step(neutral);
+      expect([...replay.position.toArray(), ...replay.velocity.toArray(), ...replay.quaternion.toArray(), ...replay.omega.toArray(),
+        replay.telemetry.fuelRemaining, Number(replay.launching)]).toEqual(state);
+    }
   });
 
   it('同段首次前进贴地更近、完成更快分更高，反复走同段不重复得距离', () => {

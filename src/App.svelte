@@ -2,15 +2,15 @@
  import { onMount } from 'svelte';
  import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, resizeFuselage, mainWingMountLimits, mainWingSupport, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Controls, type Wing } from './model';
  import { FlightSimulation, derive, fuelCgRange, LAUNCH } from './physics';
- import { challengeDefinitions, LOW_ALTITUDE, type ChallengeMode } from './challenges';
+ import { challengeDefinitions, challengeLaunch, LOW_ALTITUDE, type ChallengeMode } from './challenges';
  import { SceneView } from './scene';
- import { listAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, readBest, writeBest, History, type SavedAircraft } from './storage';
+ import { listAircraft, loadAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, readBest, writeBest, History, type SavedAircraft } from './storage';
  import WingEditor from './WingEditor.svelte'; import Parameter from './Parameter.svelte';
  import { GameAudio } from './audio';
  import AudioSettings from './AudioSettings.svelte';
  let audioError=$state('');
  const audio=new GameAudio(message=>audioError=message);
- function syncAudio(){audio.update({screen,ready:flightReady,paused:screen==='flight'&&paused,hidden:document.hidden,speed:simulation?.telemetry.speed??0,launching:simulation?.launching??false,engineRpm:simulation?.telemetry.engineRpm??0,checkpointProgress:simulation?.telemetry.challengeProgress??0});}
+ function syncAudio(){audio.update({screen,ready:flightReady,paused:screen==='flight'&&paused,hidden:document.hidden,speed:simulation?.telemetry.speed??0,launching:simulation?.launching??false,engineRpm:simulation?.telemetry.engineRpm??0,challenge:simulation?.challenge??lastChallenge,launchKind:challengeLaunch(simulation?.challenge??lastChallenge)?.kind??'catapult',timingStarted:simulation?.telemetry.timingStarted??false,challengeProgress:simulation?.telemetry.challengeProgress??0});}
  $effect(()=>{screen;flightReady;paused;if(sceneReady)syncAudio();});
  type Tab='机身'|'主翼'|'水平尾翼'|'垂直尾翼'|'动力'|'组装';
  let host:HTMLDivElement;let scene:SceneView;let sceneReady=$state(false);let simulation:FlightSimulation|null=null;let history=$state.raw(new History(clone(defaultAircraft)));let historyVersion=$state(0);
@@ -66,23 +66,23 @@
  function commit(){try{aircraft=validateAircraft(aircraft);history.push(clone(aircraft));historyVersion++;}catch(e){notify((e as Error).message);}}
  function change(mutator:(d:AircraftDefinition)=>void){const d=clone(aircraft);mutator(d);try{aircraft=validateAircraft(d);scene?.updateAircraft(aircraft);}catch(e){notify((e as Error).message);}}
  function forChallenge(definition:AircraftDefinition){const d=clone(definition),birdman=challenge==='birdman';if(d.birdman!==birdman){d.birdman=birdman;d.mainWing.controlSurface=birdman?0:0.25;d.horizontalTail.controlSurface=birdman?0:0.35;}if(birdman){d.engine.count=0;d.fuelTank.capacity=0;}return validateAircraft(d);}
- function replace(d:AircraftDefinition){try{aircraft=forChallenge(d);scene?.updateAircraft(aircraft);commit();}catch(e){notify((e as Error).message);}}
+ function replace(d:AircraftDefinition){try{aircraft=forChallenge(d);scene?.updateAircraft(aircraft);commit();return true;}catch(e){notify((e as Error).message);return false;}}
  function undo(){const d=history.undo();if(d){aircraft=forChallenge(d);selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
  function redo(){const d=history.redo();if(d){aircraft=forChallenge(d);selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
  function library(){try{saved=listAircraft();showLibrary=!showLibrary;}catch(e){notify((e as Error).message);}}
  function save(asNew=false){try{const item=saveAircraft(aircraft,asNew?undefined:selectedId||undefined);selectedId=item.id;saved=listAircraft();notify('飞机已保存在此浏览器','success');}catch(e){notify((e as Error).message);}}
- function load(id:string){const item=saved.find(s=>s.id===id);if(item){replace(item.definition);selectedId=id;notify('已加载 '+item.name,'success');}}
+ function load(id:string){try{const item=loadAircraft(id);if(replace(item.definition)){selectedId=id;showLibrary=false;notify('已加载 '+item.name,'success');}}catch(e){notify((e as Error).message);}}
  function renameSaved(id:string,name:string){try{const item=renameAircraft(id,name);saved=listAircraft();if(selectedId===id){change(d=>d.name=item.name);commit();}}catch(e){notify((e as Error).message);}}
  function fileExport(){const url=URL.createObjectURL(new Blob([exportAircraft(aircraft)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=aircraft.name+'.json';a.click();URL.revokeObjectURL(url);}
- async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');replace(importAircraft(await f.text()));selectedId='';notify('导入成功','success');}}catch(e){notify('导入失败：'+(e as Error).message);}input.value='';}
+ async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');if(replace(importAircraft(await f.text()))){selectedId='';notify('导入成功','success');}}}catch(e){notify('导入失败：'+(e as Error).message);}input.value='';}
  function clearControls(){keys.clear();weight=lateral=rudder=elevator=aileron=0;controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
  function start(replay=false){try{const definition=replay?lastDefinition:forChallenge(aircraft),selectedChallenge=replay?lastChallenge:challenge;simulation=new FlightSimulation(definition,selectedChallenge);lastDefinition=definition;lastChallenge=selectedChallenge;if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(debug);flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
- function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;syncAudio();audio.launch();}
+ function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='low-altitude')audio.launch();}
  function togglePause(){if(screen==='flight'&&flightReady)paused=!paused;}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;recordedLength=simulation.recordingLength;screen='result';if(!isReplay){recording=simulation.getRecording();try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
  function design(){screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
  function challengeAircraft(){return challenge==='birdman'?defaultAircraft:presets.find(p=>p.name===(challenge==='downhill'?'高山速降机动型':'低空喷气巡航型'))!;}
- function enterChallenge(next:ChallengeMode){challenge=next;selectedId='';const nextAircraft=clone(challengeAircraft());for(const key of ['mainWing','horizontalTail','verticalTail'] as const)nextAircraft[key].materialId=aircraft[key].materialId;aircraft=forChallenge(nextAircraft);history=new History(clone(aircraft));historyVersion=0;showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
+ function enterChallenge(next:ChallengeMode){challenge=next;selectedId='';const nextAircraft=clone(challengeAircraft());for(const key of ['mainWing','horizontalTail','verticalTail'] as const){nextAircraft[key].materialId=aircraft[key].materialId;nextAircraft[key].materialAmount=aircraft[key].materialAmount;}aircraft=forChallenge(nextAircraft);history=new History(clone(aircraft));historyVersion=0;showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
  function keyboard(e:KeyboardEvent,down:boolean){
  const target=e.target as HTMLElement;
  if(target.closest('input,select,textarea,summary,a,[contenteditable="true"]')||(e.code==='Space'&&target.closest('button')))return;
@@ -124,10 +124,10 @@ const tick=(now:number)=>{
         if(!isReplay)throttle=clamp(throttle+((keys.has('shift')?1:0)-(keys.has('control')?1:0))*fixedDt*0.35,0,1);
         controls.throttle=throttle;
         scene.captureFlightState();
-         const wasLaunching=simulation!.launching,previousProgress=simulation!.telemetry.challengeProgress;
+         const wasLaunching=simulation!.launching;
          simulation!.step(controls,fixedDt);flightElapsed+=fixedDt;sampleFlight();
-         if(simulation!.telemetry.challengeProgress>previousProgress)syncAudio();
-         if(wasLaunching&&!simulation!.launching)audio.release();
+         syncAudio();
+         if(lastChallenge!=='low-altitude'&&wasLaunching&&!simulation!.launching)audio.release();
         accumulator-=fixedDt;steps++;
         if(simulation!.ended){finish();accumulator=0;break;}
       }

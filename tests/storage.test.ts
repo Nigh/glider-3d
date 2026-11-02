@@ -209,10 +209,13 @@ describe('最远纪录', () => {
   it('旧物理版本纪录不混榜，且不删除原始数据', () => {
     storage.setItem('lakewind.best.official-v1.standard', '900');
     storage.setItem('lakewind.best.challenge-v2.birdman', '850');
+    storage.setItem('lakewind.best.aeroelastic-v3.birdman', '950');
+    expect(PHYSICS_VERSION).toBe('flight-update-v4');
     expect(readBest()).toBe(0);
     expect(writeBest(120)).toBe(120);
     expect(storage.getItem('lakewind.best.official-v1.standard')).toBe('900');
     expect(storage.getItem('lakewind.best.challenge-v2.birdman')).toBe('850');
+    expect(storage.getItem('lakewind.best.aeroelastic-v3.birdman')).toBe('950');
   });
 });
 
@@ -277,6 +280,7 @@ describe('结构设计持久化',()=>{
   changed.mainWing.materialId='spruce';changed.mainWing.structure.wallThickness=0.002;
   changed.horizontalTail.materialId='aluminum-6061-t6';changed.horizontalTail.structure.height=0.07;
   changed.verticalTail.structure.width=0.04;
+  changed.mainWing.materialAmount=2;changed.horizontalTail.materialAmount=0.5;changed.verticalTail.materialAmount=1.37;
   const history=new History(original);history.push(changed);
   expect(history.undo()).toEqual(original);expect(history.redo()).toEqual(changed);
   const saved=saveAircraft(changed);
@@ -287,7 +291,7 @@ describe('结构设计持久化',()=>{
  });
  it('旧本地飞机只迁移读取结果，原始JSON保持不变',()=>{
   const saved=saveAircraft(defaultAircraft),legacy:any=clone(saved);
-  for(const key of ['mainWing','horizontalTail','verticalTail']){delete legacy.definition[key].materialId;delete legacy.definition[key].structure;}
+  for(const key of ['mainWing','horizontalTail','verticalTail']){delete legacy.definition[key].materialId;delete legacy.definition[key].materialAmount;delete legacy.definition[key].structure;}
   const key=keyFor(saved.id),raw=JSON.stringify(legacy);storage.setItem(key,raw);
   expect(listAircraft()[0].definition).toEqual(defaultAircraft);
   expect(storage.getItem(key)).toBe(raw);
@@ -299,6 +303,9 @@ describe('结构设计持久化',()=>{
    (d:any)=>d.mainWing.materialId='unknown',
    (d:any)=>d.horizontalTail.structure.height=null,
    (d:any)=>d.verticalTail.structure.wallThickness=0,
+   (d:any)=>d.mainWing.materialAmount=0.49,
+   (d:any)=>d.horizontalTail.materialAmount=2.01,
+   (d:any)=>d.verticalTail.materialAmount=null,
   ]){
    const invalid=clone(defaultAircraft);mutate(invalid);
    expect(()=>importAircraft(JSON.stringify(invalid))).toThrow('飞机数据无效');
