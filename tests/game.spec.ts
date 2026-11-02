@@ -100,6 +100,16 @@ async function dragHandle(page: Page, index: number, dx: number, dy: number) {
 async function waitResult(page: Page) {
   await expect.poll(() => page.evaluate(() => window.glider.state), { timeout: 90_000 }).toBe('result');
   await expect(page.getByRole('heading', { name: '每一米，都来自你的设计。' })).toBeVisible();
+  await expect(page.locator('.results')).toHaveCSS('opacity', '1');
+  const resultSurface = await page.locator('.results').evaluate(node => {
+    const style = getComputedStyle(node), canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = style.backgroundColor;context.fillRect(0, 0, 1, 1);
+    return context.getImageData(0, 0, 1, 1).data[3] / 255;
+  });
+  expect(resultSurface).toBeGreaterThan(0.75);
+  expect(resultSurface).toBeLessThan(1);
   await expect(page.getByRole('region', { name: '距离高度曲线', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: '离台能量守恒', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '能量分配', exact: true })).toHaveCount(0);
@@ -220,6 +230,8 @@ test.describe('桌面完整交互', () => {
     const library = page.getByRole('region', { name: '本地机库' });
     await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名交互测试机', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
     expect(await aircraft(page)).toEqual(saved);
+    await expect(library).toBeHidden();
+    await page.getByRole('button', { name: '机库', exact: true }).click();
     await library.getByRole('textbox', { name: '重命名交互测试机', exact: true }).fill('重命名测试机');
     await library.getByRole('textbox', { name: '重命名交互测试机', exact: true }).press('Tab');
     const original = library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名重命名测试机', exact: true }) });
@@ -227,6 +239,8 @@ test.describe('桌面完整交互', () => {
     await expect(library.locator('.saved-plane')).toHaveCount(2);
     const copy = library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名重命名测试机 副本', exact: true }) });
     await copy.getByRole('button', { name: '加载', exact: true }).click();
+    await expect(library).toBeHidden();
+    await page.getByRole('button', { name: '机库', exact: true }).click();
     const exported = await aircraft(page);
     expect(exported.name).toBe('重命名测试机 副本');
     const downloadPromise = page.waitForEvent('download');
@@ -245,10 +259,12 @@ test.describe('桌面完整交互', () => {
     await library.getByLabel('导入飞机文件', { exact: true }).setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from('{broken') });
     await expect(page.getByRole('status').filter({ has: page.getByRole('button', { name: '关闭提示', exact: true }) })).toContainText('导入失败');
     expect(await aircraft(page)).toEqual(exported);
+    await expect(library).toBeVisible();
     page.once('dialog', dialog => dialog.accept());
     await copy.getByRole('button', { name: '删除', exact: true }).click();
     await expect(library.locator('.saved-plane')).toHaveCount(1);
     await original.getByRole('button', { name: '加载', exact: true }).click();
+    await expect(library).toBeHidden();
     expect((await aircraft(page)).name).toBe('重命名测试机');
     expect((await aircraft(page)).fuselage.length).toBeCloseTo(7.4, 8);
   });
@@ -378,6 +394,8 @@ test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ pa
   await page.getByRole('button', { name: '机库', exact: true }).click();
   const a = page.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名设计 A', exact: true }) });
   await a.getByRole('button', { name: '加载', exact: true }).click();
+  await expect(page.getByRole('region', { name: '本地机库' })).toBeHidden();
+  await page.getByRole('button', { name: '机库', exact: true }).click();
   const rename = page.getByRole('textbox', { name: '重命名设计 A', exact: true });
   await rename.fill('重命名 A');
   await rename.press('Tab');
@@ -1055,7 +1073,10 @@ test('另存为保留多架飞机，刷新后可分别加载且保存不覆盖�
   await expect(library.locator('.saved-plane')).toHaveCount(2);
   await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计甲', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
   expect(await aircraft(page)).toEqual(first);
+  await expect(library).toBeHidden();
+  await page.getByRole('button', { name: '机库', exact: true }).click();
   await library.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名多机设计乙更新', exact: true }) }).getByRole('button', { name: '加载', exact: true }).click();
+  await expect(library).toBeHidden();
   await expect(name).toHaveValue('多机设计乙更新');
 });
 
@@ -1181,7 +1202,7 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
   expect(result.stalled).toBe(0);
 });
 
-test('三翼只选择材料，承力梁使用默认截面且不提供尺寸输入', async ({ page }) => {
+test('三翼调整材料用量并独立撤销，保留预设截面且不提供尺寸输入', async ({ page }) => {
   await enterDesign(page);
   const before = await aircraft(page);
   for (const [tab, key] of [['主翼', 'mainWing'], ['水平尾翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
@@ -1190,11 +1211,23 @@ test('三翼只选择材料，承力梁使用默认截面且不提供尺寸输�
       await expect(page.getByRole('slider', { name, exact: true })).toHaveCount(0);
       await expect(page.getByRole('spinbutton', { name: `${name}精确值`, exact: true })).toHaveCount(0);
     }
+    const amount = page.getByRole('spinbutton', { name: '材料用量精确值', exact: true });
+    await expect(page.getByRole('slider', { name: '材料用量', exact: true })).toHaveAttribute('min', '50');
+    await expect(page.getByRole('slider', { name: '材料用量', exact: true })).toHaveAttribute('max', '200');
+    await amount.fill('137');
+    await amount.press('Tab');
+    expect((await aircraft(page))[key].materialAmount).toBe(1.37);
     await page.getByRole('combobox', { name: '翼面材料', exact: true }).selectOption('spruce');
     expect((await aircraft(page))[key].materialId).toBe('spruce');
     expect((await aircraft(page))[key].structure).toEqual(before[key].structure);
+    expect((await aircraft(page))[key].materialAmount).toBe(1.37);
     await page.getByRole('button', { name: '撤销', exact: true }).click();
     expect((await aircraft(page))[key].materialId).toBe(before[key].materialId);
+    expect((await aircraft(page))[key].materialAmount).toBe(1.37);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    expect((await aircraft(page))[key].materialAmount).toBe(1);
+    await page.getByRole('button', { name: '重做', exact: true }).click();
+    expect((await aircraft(page))[key].materialAmount).toBe(1.37);
     await noOverflow(page);
   }
 });
@@ -1262,4 +1295,69 @@ test('断翼后返回设计和重新试飞恢复完整GPU翼面，不残留已�
   expect(result.flightDifferences).toBe(0);
   expect(result.directRestartDifferences).toBe(0);
   expect(result.graphicsError).toBe(result.noError);
+});
+
+test('机库加载损坏记录失败保留机库和当前设计', async ({ page }) => {
+  await enterDesign(page);
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('button', { name: '机库', exact: true }).click();
+  const before = await aircraft(page);
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find(key => key.startsWith('lakewind.aircraft.'))!;
+    localStorage.setItem(key, '{broken');
+  });
+  const library = page.getByRole('region', { name: '本地机库' });
+  await library.getByRole('button', { name: '加载', exact: true }).click();
+  await expect(library).toBeVisible();
+  expect(await aircraft(page)).toEqual(before);
+  await expect(page.getByRole('status').filter({ has: page.getByRole('button', { name: '关闭提示', exact: true }) })).toContainText('记录已损坏');
+  expect(await page.evaluate(() => Object.values(localStorage).includes('{broken'))).toBe(true);
+});
+
+test('低空2m导轨随真实滑跑移动，升力脱轨后断开连接，再次试飞恢复附着', async ({ page, isMobile }) => {
+  test.skip(isMobile, '导轨三维与物理状态在桌面验证，触屏共用同一实现');
+  const result = await page.evaluate(async () => {
+    // 真实模块须在浏览器由Vite加载；Node静态导入不能跨越page.evaluate上下文。
+    const scenePath = '/src/scene.ts', physicsPath = '/src/physics.ts', modelPath = '/src/model.ts';
+    const { SceneView } = await import(scenePath) as typeof SceneModule;
+    const { FlightSimulation } = await import(physicsPath) as typeof PhysicsModule;
+    const { presets, clone } = await import(modelPath) as typeof ModelModule;
+    const definition = clone(presets.find(plane => plane.name === '低空喷气巡航型')!);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;width:960px;height:600px';
+    document.body.append(host);
+    const view = new SceneView(host), simulation = new FlightSimulation(definition, 'low-altitude', 0);
+    const input = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 1 };
+    try {
+      view.setQuality('Low'); view.updateAircraft(definition); view.setFlight(simulation); view.render(0, 1);
+      const initial = view.getDiagnostics().lowAltitudeRail!;
+      for (let frame = 0; frame < 2400 && simulation.launching && !simulation.ended; frame++) {
+        view.captureFlightState(); simulation.step(input);
+      }
+      view.render(0, 1);
+      const released = view.getDiagnostics().lowAltitudeRail!;
+      const releaseSpeed = simulation.velocity.length(), endedAtRelease = simulation.ended;
+      for (let frame = 0; frame < 12 && !simulation.ended; frame++) {
+        view.captureFlightState(); simulation.step(input);
+      }
+      view.render(0, 1);
+      const carriageAfterRelease = view.getDiagnostics().lowAltitudeRail!.carriage;
+      view.setFlight(new FlightSimulation(definition, 'low-altitude', 0)); view.render(0, 1);
+      const reset = view.getDiagnostics().lowAltitudeRail!;
+      return { initial, released, reset, carriageAfterRelease, releaseSpeed, endedAtRelease };
+    } finally { view.dispose(); host.remove(); }
+  });
+  expect(result.initial.attached).toBe(true);
+  expect(result.initial.couplingVisible).toBe(true);
+  expect(result.initial.carriage.y - result.initial.launch!.y).toBeCloseTo(2, 8);
+  expect(result.initial.steamVisible).toBe(false);
+  expect(result.endedAtRelease).toBe(false);
+  expect(result.releaseSpeed).toBeGreaterThan(0);
+  expect(result.released.attached).toBe(false);
+  expect(result.released.couplingVisible).toBe(false);
+  expect(result.released.carriage.x).toBeGreaterThan(result.initial.carriage.x);
+  expect(result.carriageAfterRelease).toEqual(result.released.carriage);
+  expect(result.reset.attached).toBe(true);
+  expect(result.reset.couplingVisible).toBe(true);
+  expect(result.reset.carriage).toEqual(result.initial.carriage);
 });

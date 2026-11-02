@@ -6,6 +6,28 @@ describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
  it('预设均通过几何校验，包括空气动力学不稳定设计',()=>{for(const d of presets)expect(validateAircraft(d)).toEqual(d);});
+ it('材料用量默认1，迁移旧档并拒绝非有限或越界字段',()=>{
+  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
+   const legacy:any=clone(defaultAircraft);delete legacy[key].materialAmount;
+   expect(validateAircraft(legacy)[key].materialAmount).toBe(1);
+   for(const amount of [0.5,1,1.37,2]){const d=clone(defaultAircraft);d[key].materialAmount=amount;expect(validateAircraft(d)[key].materialAmount).toBe(amount);}
+   for(const amount of [0.49,2.01,NaN,Infinity,-Infinity,null,'1']){const d:any=clone(defaultAircraft);d[key].materialAmount=amount;expect(()=>validateAircraft(d)).toThrow();}
+  }
+ });
+ it('梁用量按面积缩放且截面惯性矩按平方缩放',()=>{
+  const base=beamSection(defaultStructures.mainWing);
+  for(const amount of [0.5,1,2]){
+   const section=beamSection(defaultStructures.mainWing,amount),scale=Math.sqrt(amount);
+   expect(section.area/base.area).toBeCloseTo(amount,12);
+   expect(section.secondMoment/base.secondMoment).toBeCloseTo(amount**2,12);
+   expect(section.lateralSecondMoment/base.lateralSecondMoment).toBeCloseTo(amount**2,12);
+   expect(section.torsionConstant/base.torsionConstant).toBeCloseTo(amount**2,12);
+   expect(section.width/base.width).toBeCloseTo(scale,12);
+   expect(section.height/base.height).toBeCloseTo(scale,12);
+   expect(section.wallThickness/base.wallThickness).toBeCloseTo(scale,12);
+   expect((section.secondMoment/section.height)/(base.secondMoment/base.height)).toBeCloseTo(amount**1.5,12);
+  }
+ });
  it('拒绝非有限数、自交、零面积与越界安装角',()=>{for(const mutate of [(d:any)=>d.fuselage.length=NaN,(d:any)=>d.mainWing.points[1].y=Infinity,(d:any)=>d.mainWing.points[2].x=-2,(d:any)=>d.mainWing.points[1].y=d.mainWing.points[2].y=0,(d:any)=>d.assembly.tailIncidence=50]){const d=clone(defaultAircraft);mutate(d);expect(()=>validateAircraft(d)).toThrow();}});
  it('主翼高度边界允许负安装，拒绝新范围外的数值',()=>{
   for(const height of [-0.5,0,1]){const d=clone(defaultAircraft);d.assembly.mainWingHeight=height;expect(validateAircraft(d).assembly.mainWingHeight).toBe(height);}

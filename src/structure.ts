@@ -67,7 +67,7 @@ export class WingStructure {
     this.sections = surfaces.map((surface, id) => {
       const wingKey: WingKey = surface.kind === 'main' ? 'mainWing' : surface.kind === 'tail' ? 'horizontalTail' : 'verticalTail';
       const wing = definition[wingKey], vertical = wingKey === 'verticalTail', p = planform(wing, !vertical);
-      const material = materialCatalog[wing.materialId], section = beamSection(wing.structure);
+      const material = materialCatalog[wing.materialId], section = beamSection(wing.structure, wing.materialAmount);
       const origin = wingOrigin(definition, wingKey), incidence = surface.incidence;
       const reference = (span: number) => {
         const fraction = span / wing.points[1].y;
@@ -86,13 +86,13 @@ export class WingStructure {
       // 均匀条带质量代理；梁/蒙皮质量真实分段，惯量固定在参考几何，见 update 的准静态说明。
       const inertia = new Matrix3();
       const axes = [chordAxis, normalAxis, beamAxis];
-      const variances = [surface.chord ** 2 / 12, wing.structure.height ** 2 / 12, length ** 2 / 12];
+      const variances = [surface.chord ** 2 / 12, section.height ** 2 / 12, length ** 2 / 12];
       const covariance = new Matrix3().set(0, 0, 0, 0, 0, 0, 0, 0, 0);
       for (let a = 0; a < 3; a++) for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) covariance.elements[col * 3 + row] += mass * variances[a] * axes[a].getComponent(row) * axes[a].getComponent(col);
       const c = covariance.elements, trace = c[0] + c[4] + c[8];
       setInertia(inertia, trace - c[0], trace - c[4], trace - c[8], -c[3], -c[6], -c[7]);
-      const innerWidth = wing.structure.width - wing.structure.wallThickness;
-      const innerHeight = wing.structure.height - wing.structure.wallThickness;
+      const innerWidth = section.width - section.wallThickness;
+      const innerHeight = section.height - section.wallThickness;
       // 等效闭口梁截面独立于翼型外壳；恒高梁不保证能装进所有薄翼尖，非可制造性校验。
       return { id, wingKey, side: surface.side, spanStart: surface.spanStart, spanEnd: surface.spanEnd, bodyId: 0,
         root: { span: surface.spanStart, position: referenceRoot.clone(), quaternion: new Quaternion() },
@@ -108,10 +108,10 @@ export class WingStructure {
         torsionalStiffness: material.shearModulus * section.torsionConstant,
         normalStrength: Math.min(material.ultimateStrength, material.compressiveStrength), shearStrength: material.shearStrength,
         elasticLimit: material.yieldStrength,
-        normalModulus: section.secondMoment / (wing.structure.height / 2),
-        lateralModulus: section.lateralSecondMoment / (wing.structure.width / 2),
+        normalModulus: section.secondMoment / (section.height / 2),
+        lateralModulus: section.lateralSecondMoment / (section.width / 2),
         sectionArea: section.area,
-        torsionModulus: 2 * innerWidth * innerHeight * wing.structure.wallThickness };
+        torsionModulus: 2 * innerWidth * innerHeight * section.wallThickness };
     });
   }
 

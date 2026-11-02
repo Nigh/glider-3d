@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { clone, defaultAircraft, wing, type Controls } from '../src/model';
+import { AIRFRAME_MASS, clone, defaultAircraft, wing, type Controls } from '../src/model';
 import { FlightSimulation, GRAVITY } from '../src/physics';
 import { rotationalEnergy, type StructuralBody } from '../src/structure';
 
@@ -50,6 +50,37 @@ describe('分段等效弹性梁', () => {
     expect(thicker.mass).toBeGreaterThan(carbon.mass);
     expect(thicker.structure.maxDeflection).toBeLessThan(carbon.structure.maxDeflection);
     expect(thicker.structure.maxStressRatio).toBeLessThan(carbon.structure.maxStressRatio);
+  });
+
+  it('50–200%材料用量改变真实质量、惯量、EI/GJ和应力截面，保持合法管壁比例', () => {
+    const simulations = [0.5, 1, 2].map(materialAmount => {
+      const d = clone(defaultAircraft); d.mainWing.materialAmount = materialAmount;
+      return new FlightSimulation(d, 'birdman', 0);
+    });
+    const baseline = simulations[1], base = baseline.structure.sections.find(section => section.wingKey === 'mainWing')!;
+    for (const [index, amount] of [0.5, 1, 2].entries()) {
+      const simulation = simulations[index], section = simulation.structure.sections.find(row => row.wingKey === 'mainWing')!;
+      const skinMass = section.surface.area * AIRFRAME_MASS.mainArea;
+      expect(section.mass - skinMass).toBeCloseTo((base.mass - skinMass) * amount, 12);
+      expect(section.sectionArea).toBeCloseTo(base.sectionArea * amount, 12);
+      expect(section.bendingStiffness).toBeCloseTo(base.bendingStiffness * amount ** 2, 7);
+      expect(section.lateralStiffness).toBeCloseTo(base.lateralStiffness * amount ** 2, 7);
+      expect(section.torsionalStiffness).toBeCloseTo(base.torsionalStiffness * amount ** 2, 7);
+      for (const key of ['normalModulus', 'lateralModulus', 'torsionModulus'] as const) {
+        expect(section[key]).toBeCloseTo(base[key] * amount ** 1.5, 12);
+        expect(section[key]).toBeGreaterThan(0);
+      }
+    }
+    expect(simulations[0].mass).toBeLessThan(baseline.mass); expect(simulations[2].mass).toBeGreaterThan(baseline.mass);
+    expect(simulations[0].cg.distanceTo(simulations[2].cg)).toBeGreaterThan(0);
+    expect(simulations[0].inertiaTensor.elements[0]).toBeLessThan(simulations[2].inertiaTensor.elements[0]);
+    for (const simulation of simulations) {
+      simulation.launching = false; simulation.position.set(200, 150, 0); simulation.quaternion.identity();
+      simulation.velocity.set(5, 0, 0); simulation.step(neutral, 1e-4);
+      expect(simulation.structure.fractureCount).toBe(0);
+    }
+    expect(simulations[2].structure.maxDeflection).toBeLessThan(simulations[0].structure.maxDeflection);
+    expect(simulations[2].structure.maxStressRatio).toBeLessThan(simulations[0].structure.maxStressRatio);
   });
 
   it('根部应力累计全部外段偏心力臂，两个弯曲方向和扭转均实际变形', () => {

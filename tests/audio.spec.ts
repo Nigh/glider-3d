@@ -36,7 +36,8 @@ test('原生音频随速度增强，静音有效，暂停恢复不阻断播放',
    // Browser execution must load Vite's module; Node-side static imports cannot cross page.evaluate.
    const { GameAudio } = await import(path) as typeof AudioModule;
   const audio = new GameAudio();
-  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 5, launching: false };
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 5, launching: false,
+   challenge: 'birdman' as const, launchKind: 'catapult' as const, timingStarted: false, challengeProgress: 0 };
   audio.setPreferences({ muted: false, music: 0, effects: 1 });
   audio.update(state);
   audio.unlock();
@@ -89,7 +90,8 @@ test('喷气引擎随实际转速提高音量与音高，停机后静音', async
   // page.evaluate loads Vite's browser module; a static Node import cannot cross that execution boundary.
   const { GameAudio } = await import(path) as typeof AudioModule;
   const audio = new GameAudio();
-  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false, engineRpm: 0.25 };
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false, engineRpm: 0.25,
+   challenge: 'birdman' as const, launchKind: 'catapult' as const, timingStarted: false, challengeProgress: 0 };
   audio.setPreferences({ muted: false, music: 0, effects: 1 });
   audio.update(state); audio.unlock();
   const { context, meter } = window.audioProbes.at(-1)!;
@@ -124,7 +126,8 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
   // page.evaluate runs in the browser; static Node imports cannot load Vite's audio module there.
   const { GameAudio } = await import(path) as typeof AudioModule;
   const audio = new GameAudio();
-  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false };
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false,
+   challenge: 'birdman' as const, launchKind: 'catapult' as const, timingStarted: false, challengeProgress: 0 };
   audio.setPreferences({ muted: false, music: 0, effects: 1 });
   audio.update(state);
   audio.unlock();
@@ -148,10 +151,13 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
   const recorder = new AudioWorkletNode(context, 'release-recorder');
   meter.connect(recorder);
   recorder.connect(context.destination);
+  // Keep continuous PCM: currentTime may reference a quantum already delivered to the main thread.
   const blocks: { frame: number; samples: Float32Array }[] = [];
+  const recordingReady = Promise.withResolvers<void>();
   let pending: { end: number; resolve: () => void } | null = null;
   recorder.port.onmessage = ({ data }: MessageEvent<{ frame: number; samples: Float32Array }>) => {
    blocks.push(data);
+   recordingReady.resolve();
    if (pending && data.frame + data.samples.length >= pending.end) {
     const { resolve } = pending;
     pending = null;
@@ -164,7 +170,6 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
    return promise;
   };
   const capture = async (duration: number) => {
-   blocks.length = 0;
    const start = Math.round(context.currentTime * context.sampleRate);
    const samples = new Float32Array(Math.ceil(duration * context.sampleRate));
    const end = start + samples.length;
@@ -203,6 +208,7 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
    await wait(350);
   };
   try {
+   await recordingReady.promise;
    await wait(350);
    const full = await capture(0.6);
    const repeated = await capture(0.16);
@@ -267,50 +273,188 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
  expect(result.unmuted).toBeLessThan(0.000001);
 });
 
-test('检查点进度增长只响一次，静音和暂停不补播，下一次飞行可重新触发', async ({ page }) => {
+test('计时起点、检查点、终点清晰短促且每点只响一次，静音暂停后台不补播，新飞行与回放重置', async ({ page }) => {
  await page.goto('/');
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
  const result = await page.evaluate(async () => {
   const path = '/src/audio.ts';
-  // page.evaluate runs in Chromium; static Node imports cannot cross this execution boundary.
+  // Browser evaluation loads Vite's module; Node-side static imports cannot cross that boundary.
   const { GameAudio } = await import(path) as typeof AudioModule;
   const audio = new GameAudio();
-  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false, checkpointProgress: 0 };
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: false,
+   challenge: 'downhill' as const, launchKind: 'catapult' as const, timingStarted: false, challengeProgress: 0 };
+  audio.setPreferences({ muted: false, music: 0, effects: 1 });
+  audio.update(state);
+  audio.update({ ...state, timingStarted: true });
+  audio.unlock();
+  const { context, meter } = window.audioProbes.at(-1)!;
+  await context.resume();
+  const url = URL.createObjectURL(new Blob([`
+   registerProcessor('timing-recorder', class extends AudioWorkletProcessor {
+    process(inputs) {
+     const input = inputs[0]?.[0];
+     if (input) {
+      const samples = input.slice();
+      this.port.postMessage({ frame: currentFrame, samples }, [samples.buffer]);
+     }
+     return true;
+    }
+   });
+  `], { type: 'text/javascript' }));
+  try { await context.audioWorklet.addModule(url); }
+  finally { URL.revokeObjectURL(url); }
+  const recorder = new AudioWorkletNode(context, 'timing-recorder');
+  meter.connect(recorder); recorder.connect(context.destination);
+  // Keep continuous PCM across captures and suspend/resume; never discard an already delivered quantum.
+  const blocks: { frame: number; samples: Float32Array }[] = [];
+  const recordingReady = Promise.withResolvers<void>();
+  let pending: { end: number; resolve: () => void } | null = null;
+  recorder.port.onmessage = ({ data }: MessageEvent<{ frame: number; samples: Float32Array }>) => {
+   blocks.push(data);
+   recordingReady.resolve();
+   if (pending && data.frame + data.samples.length >= pending.end) {
+    const { resolve } = pending; pending = null; resolve();
+   }
+  };
+  const capture = async (event: () => void) => {
+   const start = Math.round(context.currentTime * context.sampleRate);
+   const samples = new Float32Array(Math.ceil(0.4 * context.sampleRate));
+   const { promise, resolve } = Promise.withResolvers<void>();
+   pending = { end: start + samples.length, resolve };
+   event(); await promise;
+   let copied = 0;
+   for (const block of blocks) {
+    const from = Math.max(start, block.frame), to = Math.min(start + samples.length, block.frame + block.samples.length);
+    if (to <= from) continue;
+    samples.set(block.samples.subarray(from - block.frame, to - block.frame), from - start);
+    copied += to - from;
+   }
+   if (copied !== samples.length) throw new Error('Audio recording contains missing frames');
+   const rms = (from: number, to: number) => {
+    let power = 0;
+    for (let i = Math.round(from * context.sampleRate); i < Math.round(to * context.sampleRate); i++) power += samples[i] ** 2;
+    return Math.sqrt(power / Math.round((to - from) * context.sampleRate));
+   };
+   return { onset: rms(0, 0.08), tail: rms(0.30, 0.39), peak: samples.reduce((peak, value) => Math.max(peak, Math.abs(value)), 0) };
+  };
+  let current = { ...state, timingStarted: true };
+  try {
+   await recordingReady.promise;
+   const locked = await capture(() => audio.update(current));
+   audio.update({ ...state, ready: false }); audio.update(state);
+   const start = await capture(() => audio.update(current));
+   const repeated = await capture(() => { for (let i = 0; i < 20; i++) audio.update({ ...current }); });
+   current = { ...current, challengeProgress: 0.1 };
+   const checkpoint = await capture(() => audio.update(current));
+   audio.setPreferences({ muted: true, music: 0, effects: 1 });
+   current = { ...current, challengeProgress: 0.2 }; audio.update(current);
+   audio.setPreferences({ muted: false, music: 0, effects: 1 });
+   const muted = await capture(() => audio.update(current));
+   current = { ...current, challengeProgress: 0.3 };
+   audio.update({ ...current, paused: true }); await context.suspend();
+   audio.update(current); await context.resume();
+   const paused = await capture(() => audio.update(current));
+   current = { ...current, challengeProgress: 0.4 };
+   audio.update({ ...current, hidden: true }); await context.suspend();
+   audio.update(current); await context.resume();
+   const hidden = await capture(() => audio.update(current));
+   audio.setPreferences({ muted: false, music: 0, effects: 0 });
+   current = { ...current, challengeProgress: 0.5 }; audio.update(current);
+   audio.setPreferences({ muted: false, music: 0, effects: 1 });
+   const zeroEffects = await capture(() => audio.update(current));
+   current = { ...current, challengeProgress: 1 };
+   const finish = await capture(() => {
+    audio.update(current);
+    audio.update({ ...current, screen: 'result' });
+   });
+   audio.update({ ...state, ready: false }); audio.update(state);
+   const restarted = await capture(() => audio.update({ ...state, timingStarted: true }));
+   audio.update({ ...state, screen: 'result' });
+   audio.update({ ...state, ready: false }); audio.update(state);
+   const replayed = await capture(() => audio.update({ ...state, challenge: 'low-altitude', launchKind: 'runway', timingStarted: true }));
+   // Cancel an already audible cue before suspending, not just events received while suspended.
+   const { promise, resolve } = Promise.withResolvers<void>();
+   pending = { end: Math.round((context.currentTime + 0.025) * context.sampleRate), resolve };
+   audio.update({ ...state, timingStarted: true, challengeProgress: 0.1 });
+   await promise;
+   audio.update({ ...state, timingStarted: true, challengeProgress: 0.1, hidden: true });
+   await context.suspend();
+   audio.update({ ...state, timingStarted: true, challengeProgress: 0.1 }); await context.resume();
+   const resumedTail = await capture(() => {});
+   return { start, checkpoint, finish, restarted, replayed, repeated, locked, muted, paused, hidden, zeroEffects, resumedTail };
+  } finally {
+   meter.disconnect(recorder); recorder.disconnect(); recorder.port.close(); audio.dispose();
+  }
+ });
+ for (const cue of [result.start, result.checkpoint, result.finish, result.restarted, result.replayed]) {
+  expect(cue.onset).toBeGreaterThan(0.008);
+  expect(cue.peak).toBeLessThan(0.22);
+  expect(cue.tail).toBeLessThan(0.000001);
+ }
+ for (const quiet of [result.repeated, result.locked, result.muted, result.paused, result.hidden, result.zeroEffects, result.resumedTail]) {
+  expect(quiet.peak).toBeLessThan(0.000001);
+ }
+});
+
+test('GameAudio拒绝低空与跑道模式的蒸汽及弹射分离音，其他弹射模式保留机械事件', async ({ page }) => {
+ await page.goto('/');
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ const result = await page.evaluate(async () => {
+  const path = '/src/audio.ts';
+  // Browser evaluation loads Vite's module; Node-side static imports cannot cross that boundary.
+  const { GameAudio } = await import(path) as typeof AudioModule;
+  const audio = new GameAudio();
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: true,
+   challenge: 'low-altitude' as const, launchKind: 'runway' as const, timingStarted: false, challengeProgress: 0 };
   audio.setPreferences({ muted: false, music: 0, effects: 1 });
   audio.update(state); audio.unlock();
-  const { context } = window.audioProbes.at(-1)!;
+  const { context, meter } = window.audioProbes.at(-1)!;
   await context.resume();
-  const create = context.createOscillator.bind(context), tones: OscillatorNode[] = [];
-  context.createOscillator = () => { const node = create(); tones.push(node); return node; };
+  const sources: AudioScheduledSourceNode[] = [];
+  const oscillator = context.createOscillator.bind(context), buffer = context.createBufferSource.bind(context);
+  context.createOscillator = () => { const source = oscillator(); sources.push(source); return source; };
+  context.createBufferSource = () => { const source = buffer(); sources.push(source); return source; };
+  const measureSteam = async () => {
+   const { promise, resolve } = Promise.withResolvers<void>();
+   setTimeout(resolve, 600); await promise;
+   const samples = new Float32Array(meter.fftSize);
+   meter.getFloatTimeDomainData(samples);
+   return Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+  };
   try {
-   audio.update({ ...state, checkpointProgress: 0.1 });
-   const first = tones.length;
-   for (let index = 0; index < 20; index++) audio.update({ ...state, checkpointProgress: 0.1 });
-   const repeated = tones.length;
-   audio.setPreferences({ muted: true, music: 0, effects: 1 });
-   audio.update({ ...state, checkpointProgress: 0.2 });
-   audio.setPreferences({ muted: false, music: 0, effects: 1 });
-   audio.update({ ...state, checkpointProgress: 0.2 });
-   const muted = tones.length;
-   audio.update({ ...state, paused: true, checkpointProgress: 0.3 });
-   await context.suspend();
-   audio.update({ ...state, checkpointProgress: 0.3 });
-   await context.resume();
-   audio.update({ ...state, checkpointProgress: 0.3 });
-   const paused = tones.length;
-   audio.setPreferences({ muted: false, music: 0, effects: 0 });
-   audio.update({ ...state, checkpointProgress: 0.4 });
-   audio.setPreferences({ muted: false, music: 0, effects: 1 });
-   audio.update({ ...state, checkpointProgress: 0.4 });
-   const zeroEffects = tones.length;
-   audio.update({ ...state, checkpointProgress: 0.5 });
-   const next = tones.length;
-   audio.update({ ...state, screen: 'result', checkpointProgress: 0.5 });
-   audio.update({ ...state, ready: false });
-   audio.update(state);
-   audio.update({ ...state, checkpointProgress: 0.1 });
-   return { first, repeated, muted, paused, zeroEffects, next, restarted: tones.length };
+   const rejected: { steam: number; sources: number }[] = [];
+   for (const mode of [
+    { challenge: 'low-altitude' as const, launchKind: 'runway' as const },
+    { challenge: 'low-altitude' as const, launchKind: 'catapult' as const },
+    { challenge: 'downhill' as const, launchKind: 'runway' as const },
+   ]) {
+    audio.update({ ...state, ...mode, ready: false });
+    audio.update({ ...state, ...mode }); audio.launch();
+    const steam = await measureSteam();
+    audio.update({ ...state, ...mode, launching: false }); audio.release(); audio.release();
+    rejected.push({ steam, sources: sources.length });
+   }
+   const accepted: { steam: number; sources: number; repeated: number }[] = [];
+   for (const challenge of ['birdman', 'downhill'] as const) {
+    const catapult = { ...state, challenge, launchKind: 'catapult' as const };
+    audio.update({ ...catapult, ready: false }); audio.update(catapult); audio.launch();
+    const steam = await measureSteam();
+    const before = sources.length;
+    audio.update({ ...catapult, launching: false }); audio.release();
+    const played = sources.length - before;
+    audio.release();
+    accepted.push({ steam, sources: played, repeated: sources.length - before - played });
+   }
+   return { rejected, accepted };
   } finally { audio.dispose(); }
  });
- expect(result).toEqual({ first: 1, repeated: 1, muted: 1, paused: 1, zeroEffects: 1, next: 2, restarted: 3 });
+ for (const rejected of result.rejected) {
+  expect(rejected.steam).toBeLessThan(0.000001);
+  expect(rejected.sources).toBe(0);
+ }
+ for (const accepted of result.accepted) {
+  expect(accepted.steam).toBeGreaterThan(0.001);
+  expect(accepted.sources).toBeGreaterThan(0);
+  expect(accepted.repeated).toBe(0);
+ }
 });

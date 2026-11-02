@@ -1,6 +1,7 @@
 <script lang="ts">
  import { clone, clamp, type Wing } from './model';
  import { materialCatalog, type MaterialId } from './materials';
+ import Parameter from './Parameter.svelte';
  let { value, vertical=false, onchange, oncommit }:{value:Wing;vertical?:boolean;onchange:(v:Wing)=>void;oncommit:()=>void}=$props();
  let error=$state('');
  let material=$derived(materialCatalog[value.materialId]);
@@ -14,6 +15,7 @@
   <label class="material-picker">翼面材料<select aria-label="翼面材料" value={value.materialId} onchange={e=>{const w=clone(value);w.materialId=e.currentTarget.value as MaterialId;onchange(w);oncommit();}}>
    {#each Object.entries(materialCatalog) as [id,spec]}<option value={id}>{spec.name}</option>{/each}
   </select></label>
+  <Parameter label="材料用量" value={Math.round(value.materialAmount*100)} min={50} max={200} step={1} unit="%" onchange={n=>{const w=clone(value);w.materialAmount=n/100;onchange(w);}} {oncommit}/>
   <dl class="material-properties">
    <div><dt>密度</dt><dd>{material.density} kg/m³</dd></div>
    <div><dt>弹性模量 E / G</dt><dd>{(material.youngModulus/1e9).toFixed(2)} / {(material.shearModulus/1e9).toFixed(2)} GPa</dd></div>
@@ -21,7 +23,7 @@
    <div><dt>等效压缩 / 剪切强度</dt><dd>{material.compressiveStrength/1e6} / {material.shearStrength/1e6} MPa</dd></div>
   </dl>
   <p class="help">{material.note}</p>
-  <p class="help">承力梁使用预设的合理默认截面，暂不提供尺寸调整。选择材料会改变质量、弯曲与扭转刚度以及断裂极限；蒙皮沿用固定面密度。</p>
+  <p class="help">材料用量按比例改变承力梁面积，截面各长度按用量平方根缩放；增加用量会增加梁质量、刚度与断裂极限。选择材料不重置用量；蒙皮沿用固定面密度，不提供梁尺寸调整。</p>
   <p class="help">采用分段等效梁与线弹性近似；超过极限沿气动分段断裂。不是复合材料铺层分析，也不模拟真实颤振。</p>
  </section>
 </div>

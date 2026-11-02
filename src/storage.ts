@@ -9,8 +9,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 分段弹性与独立气动断片改变成绩；保留旧物理版本数据，不混榜。
-export const PHYSICS_VERSION = 'aeroelastic-v3';
+// 导轨与计时门边界改变成绩；保留旧物理版本数据，不混榜。
+export const PHYSICS_VERSION = 'flight-update-v4';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function storageCall<T>(operation: (storage: Storage) => T): T {
@@ -52,7 +52,7 @@ function readRecord(id: string, raw: string): SavedAircraft {
   return { id, name: definition.name, definition, updatedAt: saved.updatedAt };
 }
 
-function requireAircraft(id: string): SavedAircraft {
+export function loadAircraft(id: string): SavedAircraft {
   const raw = storageCall(storage => storage.getItem(AIRCRAFT_PREFIX + id));
   if (raw === null) throw new Error('未找到这架飞机，可能已被删除。');
   try {
@@ -86,7 +86,7 @@ export function listAircraft(): SavedAircraft[] {
 
 export function saveAircraft(definition: AircraftDefinition, id?: string): SavedAircraft {
   const checked = checkedDefinition(definition);
-  if (id !== undefined) requireAircraft(id);
+  if (id !== undefined) loadAircraft(id);
   const saved: SavedAircraft = {
     id: id ?? (globalThis.crypto.randomUUID?.() ?? Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('')),
     name: checked.name,
@@ -103,12 +103,12 @@ export function deleteAircraft(id: string): void {
 }
 
 export function renameAircraft(id: string, name: string): SavedAircraft {
-  const saved = requireAircraft(id);
+  const saved = loadAircraft(id);
   return saveAircraft({ ...saved.definition, name }, id);
 }
 
 export function duplicateAircraft(id: string): SavedAircraft {
-  const saved = requireAircraft(id);
+  const saved = loadAircraft(id);
   return saveAircraft({ ...saved.definition, name: `${saved.name.slice(0, 57)} 副本` });
 }
 

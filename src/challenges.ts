@@ -7,6 +7,7 @@ export const challengeDefinitions = {
 } as const;
 
 export const LOW_ALTITUDE = { scoringHeight: 25, scoreScale: 1000, penaltyPerSecond: 4, sustainedPenalty: 2 } as const;
+export const LOW_ALTITUDE_RAIL = { height: 2, retentionAcceleration: 0.8, rollingResistance: 0.02 } as const;
 export const CHALLENGE_RIVER = { width: 24, depth: 3 } as const;
 
 /** 所有地形顶点与碰撞共用10m网格；每格沿(x0,z1)至(x1,z0)对角线分成两三角形。 */
@@ -59,8 +60,8 @@ function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
   const mountain = 0.007 * Math.max(0, riverOffset - 35) ** 2
     + 18 * Math.sin(x / 73) ** 2 * Math.min(1, Math.max(0, riverOffset - 25) / 140);
   const natural = valley + mountain;
-  // 跑道及两侧安全带使用同一平整地形，外围20m平滑接回山谷。
-  const dx = Math.max(lowAltitudeRunway.startX - 20 - x, 0, x - lowAltitudeRunway.endX);
+  // 起终点各留20m平地安全带，保证整架飞机越过轨端后才接回山谷；外围20m平滑过渡。
+  const dx = Math.max(lowAltitudeRunway.startX - 20 - x, 0, x - lowAltitudeRunway.endX - 20);
   const dz = Math.max(0, Math.abs(z - lowAltitudeRunway.z) - lowAltitudeRunway.width / 2 - 10);
   const blend = Math.min(1, Math.max(dx, dz) / 20);
   return lowAltitudeRunway.y + (natural - lowAltitudeRunway.y) * blend;
@@ -108,7 +109,8 @@ export interface ChallengeCheckpoint {
 }
 function gate(challenge: ChallengeMode, x: number): ChallengeCheckpoint {
   const z = challengeCenter(challenge, x);
-  return { x, z, y: challengeTerrainHeight(challenge, x, z), halfWidth: challenge === 'downhill' ? 65 : 100,
+  return { x, z, y: challengeTerrainHeight(challenge, x, z),
+    halfWidth: challenge === 'downhill' ? Math.max(Math.abs(challengeTerrainGrid.minZ - z), Math.abs(challengeTerrainGrid.maxZ - z)) + 10 : 100,
     maxHeight: challenge === 'downhill' ? 125 : 500 };
 }
 const downhillStart = gate('downhill', 130), lowAltitudeStart = gate('low-altitude', 140);

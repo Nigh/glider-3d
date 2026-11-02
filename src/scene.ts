@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
-import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, type ChallengeMode } from './challenges';
+import { challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
@@ -107,6 +107,12 @@ export class SceneView {
   private readonly mountainEnvironment = new THREE.Group();
   private environmentChallenge: ChallengeMode = 'birdman';
   private mountainShuttle: THREE.Mesh | null = null;
+  private lowAltitudeRail: THREE.Group | null = null;
+  private railCarriage: THREE.Group | null = null;
+  private railCoupling: THREE.Mesh | null = null;
+  private readonly railReferenceCG = new THREE.Vector3();
+  private readonly railAttachment = new THREE.Vector3();
+  private railLastAttachedX = 0;
   private readonly catapult = new THREE.Group();
   private readonly shuttle = new THREE.Group();
   private towArm!: THREE.Mesh;
@@ -392,6 +398,19 @@ export class SceneView {
       environmentVisible: this.environment.visible || this.mountainEnvironment.visible,
       challenge: this.environmentChallenge,
       terrainGrid: this.environmentChallenge === 'birdman' ? null : challengeTerrainGrid,
+      lowAltitudeRail: this.lowAltitudeRail && this.railCarriage ? {
+        visible: this.mountainEnvironment.visible && this.lowAltitudeRail.visible,
+        height: LOW_ALTITUDE_RAIL.height, launch: challengeLaunch('low-altitude'),
+        attached: this.simulation?.challenge === 'low-altitude' && this.simulation.launching,
+        couplingVisible: this.railCoupling?.visible ?? false,
+        carriage: position(this.railCarriage.position), attachment: position(this.railAttachment),
+        referenceCG: position(this.railReferenceCG),
+        supportCount: this.lowAltitudeRail.userData.supportCount as number,
+        steamVisible: this.steam.visible && this.environment.visible,
+      } : null,
+      gates: this.mountainEnvironment.children.filter(object => object.userData.gate).map(object => ({
+        name: object.name, position: position(object.position), ...object.userData.gate,
+      })),
       wingTrail: { active: this.wingTrailActive, segments: this.wingTrailGeometry.drawRange.count / 6, opacity: this.wingTrail.material.opacity, style: 'ribbon' },
       structureRendering: this.structureDiagnostics(),
     };
@@ -1374,6 +1393,8 @@ export class SceneView {
     this.renderBlend = 1;
     this.wingAngles.fill(NaN);
     this.setEnvironmentChallenge(sim?.challenge ?? 'birdman');
+    this.railReferenceCG.copy(sim?.telemetry.cg ?? this.designCG);
+    this.railLastAttachedX = challengeLaunch('low-altitude')!.startX;
     this.captureFlightState();
     this.trailCount = this.trailIndex = 0;
     this.trailClock = 0;
@@ -1426,6 +1447,7 @@ export class SceneView {
       this.cameraView('orbit');
     }
     this.updateControlSurfaces();
+    this.updateCatapult();
     this.updateCenters();
     this.metrics.memory = this.geometryMemory();
   }
@@ -1496,6 +1518,10 @@ export class SceneView {
     this.previousQuaternion.copy(sim.quaternion);
     this.previousCG.copy(sim.telemetry.cg);
     this.renderCG.copy(sim.telemetry.cg);
+    if (sim.challenge === 'low-altitude' && sim.launching) {
+      this.vector.subVectors(this.railReferenceCG, sim.telemetry.cg).applyQuaternion(sim.quaternion).add(sim.position);
+      this.railLastAttachedX = this.vector.x;
+    }
     for (const sections of this.wingSections) {
       for (const section of sections) {
         const physical = section.physics;
@@ -1960,6 +1986,8 @@ export class SceneView {
     this.release(this.mountainEnvironment);
     this.mountainEnvironment.clear();
     this.mountainShuttle = null;
+    this.lowAltitudeRail = this.railCarriage = null;
+    this.railCoupling = null;
     this.environmentChallenge = challenge;
     const mountain = challenge !== 'birdman';
     this.environmentFog.color.setHex(challenge === 'downhill' ? 0xc6d9e8 : challenge === 'birdman' ? 0xd4e3e4 : 0xc9ded7);
@@ -2066,11 +2094,13 @@ export class SceneView {
       const group = new THREE.Group();
       group.name = timingStart ? 'challenge-start' : finish ? 'challenge-finish' : `checkpoint-${checkpointIndex}`;
       group.position.set(gate.x, gate.y, gate.z);
+      // 门框仅作导航标记，不注册为地形或物理碰撞体；开口直接使用判门共享参数。
+      group.userData.gate = { halfWidth: gate.halfWidth, maxHeight: gate.maxHeight, collision: false };
       this.mountainEnvironment.add(group);
       const height = downhill ? 20 : gate.maxHeight;
       for (const side of [-1, 1]) {
         const post = this.mesh(frameGeometry, material, group);
-        post.position.set(0, gate.maxHeight - height / 2, side * gate.halfWidth);
+        post.position.set(0, gate.maxHeight - height / 2, side * (gate.halfWidth + frameThickness / 2));
         post.scale.set(frameThickness, height, frameThickness);
         post.castShadow = post.receiveShadow = false;
       }
@@ -2099,7 +2129,7 @@ export class SceneView {
       sign.scale.set(downhill ? 40 : 24, downhill ? 7.5 : 4.5, 1);
       group.add(sign);
     }
-    const start = this.label(downhill ? '20 m 高山弹射台 · 离地至少 50 m · 过蓝门计时' : '地面跑道起飞 · 沿河飞行 · 过蓝门计时', '#213d40', '#eef5f0', 1024, 96);
+    const start = this.label(downhill ? '20 m 高山弹射台 · 离地至少 50 m · 过蓝门计时' : '跑道上方 2 m 导轨 · 升力脱轨 · 过蓝门计时', '#213d40', '#eef5f0', 1024, 96);
     start.position.set(launch?.startX ?? 0, (launch?.y ?? 0) + 14, launch?.z ?? challengeCenter(challenge, 0));
     start.scale.set(40, 5, 1);
     this.mountainEnvironment.add(start);
@@ -2153,6 +2183,7 @@ export class SceneView {
       this.mountainShuttle.position.set(launch.startX, launch.y + 0.32, launch.z);
       this.mountainShuttle.scale.set(1.2, 0.25, 1.5);
     } else {
+      this.buildLowAltitudeRail(unit, steel);
       for (let x = launch.startX + 12; x < launch.endX - 8; x += 24) {
         const stripe = this.mesh(unit, paint, this.mountainEnvironment);
         stripe.position.set(x, launch.y + 0.03, launch.z);
@@ -2165,6 +2196,50 @@ export class SceneView {
       number.scale.set(7, 7, 1);
       this.mountainEnvironment.add(number);
     }
+  }
+
+  private buildLowAltitudeRail(unit: THREE.BoxGeometry, steel: THREE.MeshStandardMaterial): void {
+    const launch = challengeLaunch('low-altitude')!;
+    const rail = this.lowAltitudeRail = new THREE.Group();
+    rail.name = 'low-altitude-rail';
+    this.mountainEnvironment.add(rail);
+    const top = launch.y + LOW_ALTITUDE_RAIL.height;
+    const midpoint = (launch.startX + launch.endX) / 2;
+    for (const side of [-1, 1]) {
+      const beam = this.mesh(unit, steel, rail);
+      beam.position.set(midpoint, top - 0.1, launch.z + side * 0.65);
+      beam.scale.set(launch.length, 0.2, 0.12);
+    }
+    let supportCount = 0;
+    for (let x = launch.startX; x <= launch.endX; x += 20) {
+      for (const side of [-1, 1]) {
+        const support = this.mesh(unit, steel, rail);
+        support.position.set(x, launch.y + (LOW_ALTITUDE_RAIL.height - 0.2) / 2, launch.z + side * 0.65);
+        support.scale.set(0.16, LOW_ALTITUDE_RAIL.height - 0.2, 0.16);
+        supportCount++;
+      }
+      const crossbar = this.mesh(unit, steel, rail);
+      crossbar.position.set(x, top - 0.28, launch.z);
+      crossbar.scale.set(0.16, 0.16, 1.55);
+    }
+    rail.userData.supportCount = supportCount;
+    const carriage = this.railCarriage = new THREE.Group();
+    carriage.name = 'low-altitude-rail-carriage';
+    carriage.position.set(launch.startX, top, launch.z);
+    rail.add(carriage);
+    const bracket = new THREE.MeshStandardMaterial({ color: 0xd99b47, metalness: 0.65, roughness: 0.4 });
+    const crossbar = this.mesh(unit, bracket, carriage);
+    crossbar.scale.set(0.7, 0.12, 1.5);
+    crossbar.position.y = -0.3;
+    const rollerGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.18, 12);
+    for (const x of [-0.25, 0.25]) for (const side of [-1, 1]) {
+      const roller = this.mesh(rollerGeometry, bracket, carriage);
+      roller.rotation.x = Math.PI / 2;
+      roller.position.set(x, 0.14, side * 0.65);
+    }
+    // 独立几何归山谷环境所有，切换挑战时不释放飞机共用的strutGeometry。
+    this.railCoupling = this.mesh(new THREE.CylinderGeometry(1, 1, 1, 8), bracket, carriage);
+    this.railCoupling.name = 'low-altitude-rail-coupling';
   }
 
   private buildChallengeRiver(): void {
@@ -2422,6 +2497,22 @@ export class SceneView {
   private updateCatapult(): void {
     if (this.environmentChallenge !== 'birdman') {
       const launch = challengeLaunch(this.environmentChallenge);
+      if (this.railCarriage && this.railCoupling && launch) {
+        const attached = this.simulation?.challenge === 'low-altitude' && this.simulation.launching;
+        this.aircraft.updateWorldMatrix(true, false);
+        this.vector.copy(this.railReferenceCG).sub(this.renderCG);
+        this.aircraft.localToWorld(this.vector);
+        this.railCarriage.position.x = clamp(attached ? this.vector.x : this.railLastAttachedX, launch.startX, launch.endX);
+        this.railAttachment.set(this.definition.fuselage.center, 0, 0).sub(this.renderCG);
+        this.aircraft.localToWorld(this.railAttachment);
+        this.railCoupling.visible = attached;
+        if (attached) {
+          // 与飞机使用相同插值变换；物理脱轨即隐藏连接，不按显示时间猜测释放。
+          this.vector.copy(this.railAttachment).sub(this.railCarriage.position);
+          this.vector2.set(0, -0.3, 0);
+          this.placeStrut(this.railCoupling, this.vector2, this.vector, 0.065);
+        }
+      }
       if (this.mountainShuttle && launch) this.mountainShuttle.position.x = this.simulation?.launching ? clamp(this.aircraft.position.x, launch.startX, launch.endX) : launch.endX;
       return;
     }

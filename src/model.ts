@@ -4,7 +4,7 @@ import { defaultStructures, materialCatalog, type BeamStructure, type MaterialId
 export type Point = { x: number; y: number };
 // Body coordinates: +X forward, +Y up, +Z right. Distances metres, angles degrees.
 // Planform points: root leading, tip leading, tip trailing, root trailing; x aft, y outboard.
-export interface Wing { points: [Point, Point, Point, Point]; dihedral: number; controlSurface: number; materialId: MaterialId; structure: BeamStructure }
+export interface Wing { points: [Point, Point, Point, Point]; dihedral: number; controlSurface: number; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
 export interface AircraftDefinition {
  name: string;
  birdman: boolean;
@@ -146,7 +146,7 @@ export function resizeFuselage(d: AircraftDefinition, end: 'nose' | 'tail', posi
  d.fuselage.length = nose - tail;
  d.fuselage.center = (nose + tail) / 2;
 }
-export const wing = (span:number,root:number,tip:number,sweep=0):Wing => ({points:[{x:0,y:0},{x:sweep,y:span/2},{x:sweep+tip,y:span/2},{x:root,y:0}],dihedral:0,controlSurface:0,materialId:'carbon-epoxy',structure:{...defaultStructures.horizontalTail}});
+export const wing = (span:number,root:number,tip:number,sweep=0):Wing => ({points:[{x:0,y:0},{x:sweep,y:span/2},{x:sweep+tip,y:span/2},{x:root,y:0}],dihedral:0,controlSurface:0,materialId:'carbon-epoxy',materialAmount:1,structure:{...defaultStructures.horizontalTail}});
 export const defaultAircraft:AircraftDefinition = {name:'湖风 01',birdman:true,fuselage:{length:6.5,center:0},cockpit:{position:1.2},mainWing:{...wing(14,1.5,0.8,0.25),dihedral:5,structure:{...defaultStructures.mainWing}},horizontalTail:wing(3.5,0.9,0.55,0.15),verticalTail:{...wing(3,0.9,0.4,0.3),controlSurface:1},assembly:{mainWing:0.9,mainWingHeight:0.8,horizontalTail:-2.8,verticalTail:-2.9,mainIncidence:4,tailIncidence:0},pilot:{mass:PILOT_MASS},controls:{travel:0.45,lateralTravel:0.1},engine:{type:'jet-01',count:0,x:-0.5,y:0.5},fuelTank:{x:0,capacity:0}};
 export function planform(w:Wing,symmetric=true) {
  const p=w.points; let twice=0; for(let i=0;i<4;i++){const a=p[i],b=p[(i+1)%4];twice+=a.x*b.y-b.x*a.y;}
@@ -191,13 +191,15 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  finite(w.controlSurface,0,1);
  if(w.materialId===undefined)w.materialId='carbon-epoxy';
  if(typeof w.materialId!=='string'||!Object.hasOwn(materialCatalog,w.materialId))throw Error('未知翼面材料');
+ if(w.materialAmount===undefined)w.materialAmount=1;
+ finite(w.materialAmount,0.5,2);
  if(w.structure===undefined)w.structure=clone(defaultStructures[key]);
  if(!w.structure||typeof w.structure!=='object')throw Error('梁截面必须是闭口矩形管参数');
  finite(w.structure.width,0.005,0.5);finite(w.structure.height,0.005,0.5);finite(w.structure.wallThickness,0.0002,0.05);
  if(2*w.structure.wallThickness>=Math.min(w.structure.width,w.structure.height))throw Error('梁管壁厚的两倍必须小于宽度和高度');
  w.structure={width:w.structure.width,height:w.structure.height,wallThickness:w.structure.wallThickness};
  // Design snapshots contain geometry and material only; runtime deformation never persists.
- d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],dihedral:w.dihedral,controlSurface:w.controlSurface,materialId:w.materialId,structure:w.structure};
+ d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],dihedral:w.dihedral,controlSurface:w.controlSurface,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
  if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和平尾不能安装控制面');
  const p=w.points;if(p[0].y!==0||p[3].y!==0||Math.abs(p[1].y-p[2].y)>0.001||p[1].y<0.25||p[3].x-p[0].x<0.15||p[2].x-p[1].x<0.15)throw Error('翼面不得自交，根弦与梢弦至少 0.15 m');
  }
