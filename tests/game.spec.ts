@@ -4,7 +4,7 @@ import type { AircraftDefinition } from '../src/model';
 import type * as SceneModule from '../src/scene';
 import type * as PhysicsModule from '../src/physics';
 import type * as ModelModule from '../src/model';
-import type { BufferGeometry, Camera } from 'three';
+import type { BufferGeometry, Camera, WebGLRenderer } from 'three';
 
 type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string };
 declare global {
@@ -1179,4 +1179,87 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
   expect(result.peak).toBeGreaterThan(0.8);
   expect(result.last).toBeCloseTo(0, 6);
   expect(result.stalled).toBe(0);
+});
+
+test('三翼只选择材料，承力梁使用默认截面且不提供尺寸输入', async ({ page }) => {
+  await enterDesign(page);
+  const before = await aircraft(page);
+  for (const [tab, key] of [['主翼', 'mainWing'], ['水平尾翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    for (const name of ['梁截面弦向宽度', '梁截面法向高度', '梁管壁厚']) {
+      await expect(page.getByRole('slider', { name, exact: true })).toHaveCount(0);
+      await expect(page.getByRole('spinbutton', { name: `${name}精确值`, exact: true })).toHaveCount(0);
+    }
+    await page.getByRole('combobox', { name: '翼面材料', exact: true }).selectOption('spruce');
+    expect((await aircraft(page))[key].materialId).toBe('spruce');
+    expect((await aircraft(page))[key].structure).toEqual(before[key].structure);
+    await page.getByRole('button', { name: '撤销', exact: true }).click();
+    expect((await aircraft(page))[key].materialId).toBe(before[key].materialId);
+    await noOverflow(page);
+  }
+});
+
+test('断翼后返回设计和重新试飞恢复完整GPU翼面，不残留已释放断片的弯曲图形', async ({ page, isMobile }) => {
+  test.skip(isMobile, '共享WebGL缓冲生命周期在桌面验证，移动端使用同一渲染路径');
+  const result = await page.evaluate(async () => {
+    // 模块须在浏览器上下文由Vite加载；静态导入只能进入Node测试进程。
+    const scenePath = '/src/scene.ts', physicsPath = '/src/physics.ts', modelPath = '/src/model.ts';
+    const { SceneView } = await import(scenePath) as typeof SceneModule;
+    const { FlightSimulation } = await import(physicsPath) as typeof PhysicsModule;
+    const { defaultAircraft, clone } = await import(modelPath) as typeof ModelModule;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;width:640px;height:480px';
+    document.body.appendChild(host);
+    const view = new SceneView(host), definition = clone(defaultAircraft);
+    view.setQuality('Low');
+    view.updateAircraft(definition);
+    view.setEditor('mainWing', () => {}, () => {});
+    view.setFlight(null);
+    const { renderer } = view as unknown as { renderer: WebGLRenderer };
+    const gl = renderer.getContext();
+    const pixels = () => {
+      view.render(0, 1);
+      const image = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+      gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      return image;
+    };
+    const differences = (a: Uint8Array, b: Uint8Array) => a.reduce((count, value, index) => count + Number(value !== b[index]), 0);
+    const fracture = (sim: InstanceType<typeof FlightSimulation>) => {
+      sim.launching = false; sim.position.set(200, 150, 0); sim.quaternion.identity();
+      sim.velocity.set(100, -30, 25); sim.omega.set(0.4, 0.2, -0.3);
+      view.captureFlightState();
+      sim.step({ weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 }, 1e-4);
+      view.render(0, 1);
+      return sim.fragments.length;
+    };
+    try {
+      const designBefore = pixels();
+      const sim = new FlightSimulation(definition, 'birdman', 0);
+      view.setFlight(sim); view.cameraView('top');
+      const flightBefore = pixels(), detached = fracture(sim);
+      view.setFlight(null); view.updateAircraft(definition);
+      const designAfter = pixels(), restored = view.getDiagnostics().structureRendering;
+      const next = new FlightSimulation(definition, 'birdman', 0);
+      view.setFlight(next); view.cameraView('top');
+      const flightAfter = pixels(), detachedAgain = fracture(next), brokenPixels = pixels();
+      view.setFlight(new FlightSimulation(definition, 'birdman', 0)); view.cameraView('top');
+      const directRestart = pixels();
+      return {
+        detached, detachedAgain, remainingFragments: restored.fragments.length,
+        designDifferences: differences(designBefore, designAfter),
+        flightDifferences: differences(flightBefore, flightAfter),
+        directRestartDifferences: differences(flightBefore, directRestart),
+        brokenDifferences: differences(flightBefore, brokenPixels),
+        graphicsError: gl.getError(), noError: gl.NO_ERROR,
+      };
+    } finally { view.dispose(); host.remove(); }
+  });
+  expect(result.detached).toBeGreaterThan(0);
+  expect(result.detachedAgain).toBeGreaterThan(0);
+  expect(result.brokenDifferences).toBeGreaterThan(0);
+  expect(result.remainingFragments).toBe(0);
+  expect(result.designDifferences).toBe(0);
+  expect(result.flightDifferences).toBe(0);
+  expect(result.directRestartDifferences).toBe(0);
+  expect(result.graphicsError).toBe(result.noError);
 });

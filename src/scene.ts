@@ -1735,12 +1735,17 @@ export class SceneView {
     geometry.index!.needsUpdate = hinge.index!.needsUpdate = true;
   }
 
-  private clearFragments(): void {
-    for (const fragment of this.fragments) {
-      this.scene.remove(fragment.mesh, fragment.hinge);
-      fragment.mesh.geometry.dispose();
-      fragment.hinge.geometry.dispose();
+  private removeFragment(fragment: FragmentRender): void {
+    for (const object of [fragment.mesh, fragment.hinge]) {
+      this.scene.remove(object);
+      // 顶点属性由主翼拥有；片体只释放自己的索引与VAO，不能销毁仍被主翼引用的GPU缓冲。
+      for (const name in object.geometry.attributes) object.geometry.deleteAttribute(name);
+      object.geometry.dispose();
     }
+  }
+
+  private clearFragments(): void {
+    for (const fragment of this.fragments) this.removeFragment(fragment);
     this.fragments.length = 0;
   }
 
@@ -1770,9 +1775,7 @@ export class SceneView {
       let present = false;
       for (const body of sim.fragments) if (body.id === fragment.id) { present = true; break; }
       if (present) continue;
-      this.scene.remove(fragment.mesh, fragment.hinge);
-      fragment.mesh.geometry.dispose();
-      fragment.hinge.geometry.dispose();
+      this.removeFragment(fragment);
       this.fragments.splice(index, 1);
       changed = true;
     }
