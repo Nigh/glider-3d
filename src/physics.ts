@@ -1,11 +1,17 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing } from './model';
-import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { engineCatalog, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type StructuralBody, type WingFragment } from './structure';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.225;
+/** 静水工程近似；薄翼排水量不代表密封浮筒，机身仅保留部分有效排水体积。 */
+export const WATER = {
+  density: 1000, stopSpeed: 1.5, wingDragCoefficient: 0.8, wingEdgeDrag: 0.02,
+  wingThicknessRatio: 0.105, wingVolumeRatio: 0.012,
+  bodyDragCoefficient: 0.65, bodyBuoyancyFraction: 0.2, bodySamples: 5,
+} as const;
 /** 官方跑道几何；10 m/s 离台速度与两秒匀加速是游戏假设，不是官方速度。 */
 export const LAUNCH = { length: 10, slope: 3.5 * DEG, startX: -10 * Math.cos(3.5 * DEG), endX: 0, height: 10, speed: 10, acceleration: 5 } as const;
 export function runwayHeight(x: number) { return LAUNCH.height - x * Math.tan(LAUNCH.slope); }
@@ -169,6 +175,7 @@ export interface FlightTelemetry {
   alpha: number; pitch: number; roll: number; sink: number; glide: number;
   stall: boolean; physicsMs: number; cg: Vector3; mass: number;
   force: Vector3; drag: Vector3; torque: Vector3;
+  /** 空气和水阻的总耗散功率（非正）；不包含浮力功。 */
   aeroPower: number; energy: number; staticMargin: number;
   energyPerDistance: number | null;
   potentialEnergy: number; kineticEnergy: number; dissipatedEnergy: number; initialEnergy: number;
@@ -181,6 +188,11 @@ export interface FlightTelemetry {
   propulsionWork: number;
   /** 燃油排出带走的机械能；不含燃料化学能。 */
   fuelEnergyRemoved: number;
+  waterContact: boolean;
+  /** 主体仍连接的几何接触点，世界坐标；未触水时归零，不使用CG替代。 */
+  waterContactPoint: Vector3;
+  /** 累计浮力功，可正可负；列于能量预算输入侧。 */
+  waterWork: number;
 }
 export interface InputRecording { frames: Float64Array; length: number; launchRoll: number }
 
@@ -688,6 +700,12 @@ export class FlightSimulation {
   /** 发射架固定设计坐标参考，不随驾驶员移动或断翼后重心跳动重新定位机体。 */
   private readonly launchCg = new Vector3();
   private readonly bodyVelocity = new Vector3();
+  private readonly waterPoint = new Vector3();
+  private readonly waterAxis = new Vector3();
+  private readonly buoyancy = new Vector3();
+  private waterPower = 0;
+  private readonly waterBody: { point: Vector3; radius: number; area: number; volume: number }[];
+  private readonly nosePoint = new Vector3();
   private readonly contacts: ContactPoint[];
   private readonly platformFaces: Int8Array;
   private readonly platformGaps: Float64Array;
@@ -751,6 +769,18 @@ export class FlightSimulation {
     this.structure = new WingStructure(this.definition, this.surfaces);
     this.aerodynamics = new AerodynamicSummary(this.surfaces);
     this.contacts = makeContacts(this.definition, this.structure);
+    const shell = BODY_GEOMETRY.shell;
+    this.waterBody = Array.from({ length: WATER.bodySamples }, (_, index) => {
+      const fraction = (index + 0.5) / WATER.bodySamples * 2 - 1;
+      const section = Math.sqrt(1 - fraction * fraction);
+      return {
+        point: new Vector3(this.definition.cockpit.position + shell.x + shell.xRadius * fraction, shell.y, 0),
+        radius: shell.yRadius * section,
+        area: Math.PI * shell.yRadius * shell.zRadius / WATER.bodySamples,
+        volume: 4 / 3 * Math.PI * shell.xRadius * shell.yRadius * shell.zRadius
+          * WATER.bodyBuoyancyFraction / WATER.bodySamples,
+      };
+    });
     const contactCount = this.contacts.length * PLATFORM_BOXES.length;
     this.platformFaces = new Int8Array(contactCount);
     this.platformGaps = new Float64Array(contactCount);
@@ -765,7 +795,8 @@ export class FlightSimulation {
       aeroPower: 0, energy: 0, staticMargin: 0, energyPerDistance: null, potentialEnergy: 0, kineticEnergy: 0,
       dissipatedEnergy: 0, initialEnergy: 0, liftDragRatio: 0, aerodynamics: this.aerodynamics,
       challengeProgress: 0, groundClearance: 0, score: 0, completed: false, timingStarted: false, controlWork: 0,
-      throttle: 0, engineRpm: 0, fuelRemaining: 0, thrust: 0, aboveHeightTime: 0, propulsionWork: 0, fuelEnergyRemoved: 0 };
+      throttle: 0, engineRpm: 0, fuelRemaining: 0, thrust: 0, aboveHeightTime: 0, propulsionWork: 0, fuelEnergyRemoved: 0,
+      waterContact: false, waterContactPoint: new Vector3(), waterWork: 0 };
     this.reset();
   }
 
@@ -813,6 +844,8 @@ export class FlightSimulation {
     this.telemetry.physicsMs = 0; this.telemetry.aeroPower = 0;
     this.telemetry.dissipatedEnergy = 0; this.telemetry.initialEnergy = 0; this.telemetry.liftDragRatio = 0; this.telemetry.controlWork = 0;
     this.telemetry.propulsionWork = 0; this.telemetry.fuelEnergyRemoved = 0;
+    this.telemetry.waterWork = 0; this.telemetry.waterContact = false; this.telemetry.waterContactPoint.set(0, 0, 0);
+    this.waterPower = 0;
     // 待发射也由发射架承重；先求真实自重下垂，不能等首个运动步才建立梁载荷。
     // 此处只恢复静载形状，断裂仍在接受物理步时提交。
     this.supportForce.set(0, this.mass * GRAVITY, 0);
@@ -1020,6 +1053,67 @@ export class FlightSimulation {
     this.telemetry.controlWork = 0;
     this.telemetry.propulsionWork = 0;
     this.telemetry.fuelEnergyRemoved = 0;
+    this.telemetry.waterWork = 0;
+  }
+
+  private waterHeight(x: number, z: number) {
+    if (this.challenge === 'birdman') return 0;
+    if (this.challenge !== 'low-altitude' || this.onRunway(x, z)
+      || Math.abs(z - challengeRiverCenter(x)) > CHALLENGE_RIVER.width / 2) return -Infinity;
+    const height = challengeRiverHeight(x);
+    return challengeTerrainHeight(this.challenge, x, z) < height ? height : -Infinity;
+  }
+
+  /** 每个已有翼段只求一次水载；投影包围高度使擦水连续，不把整翼空气密度切到水密度。 */
+  private surfaceWater(surface: AerodynamicSurface, orientation: Quaternion, position: Vector3) {
+    this.waterPoint.copy(this.arm).applyQuaternion(orientation).add(position);
+    const height = this.waterHeight(this.waterPoint.x, this.waterPoint.z);
+    if (height === -Infinity) return 0;
+    this.waterAxis.copy(surface.spanDirection).applyQuaternion(orientation);
+    let halfDepth = Math.abs(this.waterAxis.y) * (surface.spanEnd - surface.spanStart) / 2;
+    this.waterAxis.copy(surface.chordDirection).applyQuaternion(orientation);
+    halfDepth += Math.abs(this.waterAxis.y) * surface.chord / 2;
+    this.waterAxis.copy(surface.normal).applyQuaternion(orientation);
+    halfDepth = Math.max(1e-4, halfDepth + Math.abs(this.waterAxis.y) * surface.chord * WATER.wingThicknessRatio / 2);
+    const wet = clamp((height - this.waterPoint.y + halfDepth) / (2 * halfDepth), 0, 1);
+    if (wet === 0) return 0;
+    surface.force.multiplyScalar(1 - wet); surface.drag.multiplyScalar(1 - wet);
+    surface.inducedDrag *= 1 - wet;
+    const speed = this.localVelocity.length();
+    const projected = speed > 1e-9 ? Math.abs(this.localVelocity.dot(surface.normal)) / speed : 0;
+    const area = surface.area * (WATER.wingEdgeDrag + (1 - WATER.wingEdgeDrag) * projected);
+    this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * WATER.density * WATER.wingDragCoefficient * area * wet * speed);
+    surface.drag.add(this.localDrag); surface.force.add(this.localDrag);
+    this.buoyancy.set(0, WATER.density * GRAVITY * surface.area * surface.chord * WATER.wingVolumeRatio * wet, 0)
+      .applyQuaternion(this.inverse);
+    this.waterPower += this.buoyancy.dot(this.localVelocity);
+    surface.force.add(this.buoyancy);
+    return wet;
+  }
+
+  private bodyWater(omega: Vector3, orientation: Quaternion, position: Vector3) {
+    for (const sample of this.waterBody) {
+      this.arm.copy(sample.point).sub(this.aircraft.cg);
+      this.waterPoint.copy(this.arm).applyQuaternion(orientation).add(position);
+      const height = this.waterHeight(this.waterPoint.x, this.waterPoint.z);
+      this.waterAxis.set(0, 1, 0).applyQuaternion(this.inverse);
+      const shell = BODY_GEOMETRY.shell;
+      // ponytail: 五个机身截面用投影包围高度；需精确水线时再细分椭球切片。
+      const halfDepth = Math.max(1e-4, sample.radius * Math.hypot(this.waterAxis.y, this.waterAxis.z * shell.zRadius / shell.yRadius)
+        + Math.abs(this.waterAxis.x) * shell.xRadius / WATER.bodySamples);
+      const wet = clamp((height - this.waterPoint.y + halfDepth) / (2 * halfDepth), 0, 1);
+      if (wet === 0) continue;
+      this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
+      this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * WATER.density * WATER.bodyDragCoefficient
+        * sample.area * wet * this.localVelocity.length());
+      this.telemetry.aeroPower += this.localDrag.dot(this.localVelocity);
+      this.buoyancy.set(0, WATER.density * GRAVITY * sample.volume * wet, 0).applyQuaternion(this.inverse);
+      this.waterPower += this.buoyancy.dot(this.localVelocity);
+      this.cross.copy(this.localDrag).add(this.buoyancy);
+      this.torque.add(this.waterAxis.crossVectors(this.arm, this.cross));
+      this.cross.applyQuaternion(orientation); this.localDrag.applyQuaternion(orientation);
+      this.telemetry.force.add(this.cross); this.telemetry.drag.add(this.localDrag);
+    }
   }
 
   private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3) {
@@ -1029,6 +1123,7 @@ export class FlightSimulation {
     this.torque.set(0, 0, 0);
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0);
     let mainDownwash = 0, power = 0;
+    this.waterPower = 0;
     for (const surface of this.surfaces) {
       if (surface.bodyId !== 0) continue;
       this.arm.copy(surface.point).sub(this.aircraft.cg);
@@ -1043,8 +1138,9 @@ export class FlightSimulation {
       }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
       const cl = evaluateSurface(surface, this.applied, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
-      if (surface.kind === 'main' && this.aircraft.wingArea > 0) mainDownwash += cl * surface.groundEffect * surface.area / this.aircraft.wingArea;
-      // 升力与作用点局部来流正交；仅真实阻力贡献耗散功率。
+      const wet = this.surfaceWater(surface, orientation, position);
+      if (surface.kind === 'main' && this.aircraft.wingArea > 0) mainDownwash += cl * (1 - wet) * surface.groundEffect * surface.area / this.aircraft.wingArea;
+      // 升力与局部来流正交；空气/水阻计耗散，浮力功单独累计。
       power += surface.drag.dot(this.localVelocity);
       this.cross.crossVectors(this.arm, surface.force); this.torque.add(this.cross);
       surface.force.applyQuaternion(orientation);
@@ -1072,6 +1168,7 @@ export class FlightSimulation {
       -damping * this.chord ** 2 * 0.15 * omega.z);
     power += this.cross.dot(omega); this.torque.add(this.cross);
     this.telemetry.aeroPower = power;
+    this.bodyWater(omega, orientation, position);
     // 推进力不属于气动升阻比。
     const drag = speed > 1e-9 ? -this.telemetry.force.dot(velocity) / speed : 0;
     this.telemetry.liftDragRatio = drag > 1e-9
@@ -1156,7 +1253,9 @@ export class FlightSimulation {
       this.cross.copy(this.midpointOmega).normalize(); this.rotation.setFromAxisAngle(this.cross, angle);
       this.candidateQuaternion.multiply(this.rotation).normalize();
     }
-    const landing = this.landingAt(this.candidatePosition, this.candidateQuaternion);
+    this.candidateVelocity.copy(this.midpointVelocity).multiplyScalar(2).sub(this.previousVelocity);
+    const landing = this.landingAt(this.candidatePosition, this.candidateQuaternion, this.candidateVelocity.lengthSq());
+    const noseHit = this.sweepsNose();
     const platformHit = this.challenge !== 'downhill' && this.sweepsPlatform();
     const terrainHit = this.challenge !== 'birdman' && this.sweepsTerrain();
     const finalGate = challengeCheckpoints(this.challenge)[this.checkpointIndex];
@@ -1164,7 +1263,8 @@ export class FlightSimulation {
       && this.position.x < finalGate.x && this.candidatePosition.x >= finalGate.x;
     const railEnd = this.launching && this.challenge === 'low-altitude'
       && this.candidatePosition.x - (this.aircraft.cg.x - this.launchCg.x) > LOW_RUNWAY.endX;
-    if ((railEnd && dt > 1e-7) || (platformHit && dt > 1e-8) || (terrainHit && dt > 1e-7) || (finishCrossing && dt > 1e-7) || angle > 0.1) {
+    if ((railEnd && dt > 1e-7) || (platformHit && dt > 1e-8) || (terrainHit && dt > 1e-7)
+      || (noseHit && dt > 1e-7) || (finishCrossing && dt > 1e-7) || angle > 0.1) {
       // 先推进到首次接触附近；静止支撑用中点约束，不靠微小反弹消耗整帧。
       this.integrateFlight(input, dt / 2);
       this.integrateFlight(input, dt / 2);
@@ -1185,6 +1285,7 @@ export class FlightSimulation {
     this.quaternion.copy(this.candidateQuaternion);
     this.telemetry.dissipatedEnergy -= this.telemetry.aeroPower * dt;
     this.telemetry.propulsionWork += this.propulsionPower * dt;
+    this.telemetry.waterWork += this.waterPower * dt;
     for (let i = 0; i < this.platformCount; i++) {
       const index = this.platformActive[i], normal = this.contactNormals[this.platformFaces[index] % 6];
       const contactSpeed = normal.dot(this.midpointVelocity) + this.platformAxes[index].dot(this.midpointOmega);
@@ -1647,8 +1748,9 @@ export class FlightSimulation {
       this.platformStart.copy(point).sub(this.aircraft.cg).applyQuaternion(this.quaternion).add(this.position);
       this.platformEnd.copy(point).sub(this.aircraft.cg).applyQuaternion(this.candidateQuaternion).add(this.candidatePosition);
       const a = this.platformStart, b = this.platformEnd;
-      if ((this.challenge !== 'low-altitude' && this.sweepsLaunchBox(a, b)) || this.sweepsRiver(a, b)) return true;
-      if (!this.onRunway(b.x, b.z) && b.y <= challengeCollisionHeight(this.challenge, b.x, b.z)) return true;
+      // 河面是流体，不进入硬地递归；仍扫掠原三角河床、岸坡与有限起飞台。
+      if (this.challenge !== 'low-altitude' && this.sweepsLaunchBox(a, b)) return true;
+      if (!this.onRunway(b.x, b.z) && b.y <= challengeTerrainHeight(this.challenge, b.x, b.z)) return true;
       for (let axis = 0; axis < 3; axis++) {
         const start = axis === 0 ? a.x : axis === 1 ? a.z : a.x + a.z;
         const end = axis === 0 ? b.x : axis === 1 ? b.z : b.x + b.z;
@@ -1660,7 +1762,7 @@ export class FlightSimulation {
           const fraction = (line * step - start) / delta;
           const x = a.x + (b.x - a.x) * fraction, z = a.z + (b.z - a.z) * fraction;
           const y = a.y + (b.y - a.y) * fraction;
-          if (!this.onRunway(x, z) && y <= challengeCollisionHeight(this.challenge, x, z)) return true;
+          if (!this.onRunway(x, z) && y <= challengeTerrainHeight(this.challenge, x, z)) return true;
         }
       }
     }
@@ -1716,6 +1818,7 @@ export class FlightSimulation {
   private updateTelemetry() {
     const t = this.telemetry;
     t.speed = this.velocity.length(); t.altitude = this.position.y;
+    this.waterContactAt(this.position, this.quaternion, true);
     t.distance = this.challenge === 'birdman' ? (this.launching ? 0 : this.tailDistance()) : this.raceStarted ? this.travelled : 0;
     t.groundClearance = this.position.y - challengeCollisionHeight(this.challenge, this.position.x, this.position.z);
     t.challengeProgress = this.challenge !== 'birdman' ? this.checkpointIndex / challengeCheckpoints(this.challenge).length : 0;
@@ -1748,18 +1851,66 @@ export class FlightSimulation {
     t.energy = t.potentialEnergy + t.kineticEnergy;
   }
 
-  private landingAt(position: Vector3, orientation: Quaternion): FlightResult['landing'] | null {
+  /** 椭球世界最低点：安装位置与scene共用，不以CG或旧机头碰撞代理决定入水。 */
+  private lowestBodyPoint(shape: typeof BODY_GEOMETRY['nose' | 'shell' | 'canopy'], centerX: number, position: Vector3, orientation: Quaternion, out: Vector3) {
+    this.inverse.copy(orientation).invert();
+    this.waterAxis.set(0, 1, 0).applyQuaternion(this.inverse);
+    const x = shape.xRadius ** 2 * this.waterAxis.x;
+    const y = shape === BODY_GEOMETRY.canopy && this.waterAxis.y > 0 ? 0 : shape.yRadius ** 2 * this.waterAxis.y;
+    const z = shape.zRadius ** 2 * this.waterAxis.z;
+    const radius = Math.sqrt(x * this.waterAxis.x + y * this.waterAxis.y + z * this.waterAxis.z);
+    out.set(centerX - (radius > 0 ? x / radius : 0), shape.y - (radius > 0 ? y / radius : 0), radius > 0 ? -z / radius : 0)
+      .sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+  }
+
+  private noseAt(position: Vector3, orientation: Quaternion, out: Vector3) {
+    const shape = BODY_GEOMETRY.nose;
+    this.lowestBodyPoint(shape, this.definition.fuselage.center + this.definition.fuselage.length / 2 + shape.x, position, orientation, out);
+  }
+
+  private waterContactAt(position: Vector3, orientation: Quaternion, publish = false) {
+    let deepest = -Infinity;
+    if (publish) { this.telemetry.waterContact = false; this.telemetry.waterContactPoint.set(0, 0, 0); }
+    for (let index = -3; index < this.contacts.length; index++) {
+      if (index === -3) this.noseAt(position, orientation, this.waterPoint);
+      else if (index < 0) {
+        const shape = index === -2 ? BODY_GEOMETRY.shell : BODY_GEOMETRY.canopy;
+        this.lowestBodyPoint(shape, this.definition.cockpit.position + shape.x, position, orientation, this.waterPoint);
+      } else {
+        // 旧机头代理不在椭球表面；驾驶舱下方两个点仅表示鸟人间乘员。
+        if (index < 3 || (index < 5 && !this.definition.birdman)) continue;
+        const point = this.contacts[index];
+        if (!this.mainContact(point)) continue;
+        this.waterPoint.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+      }
+      const depth = this.waterHeight(this.waterPoint.x, this.waterPoint.z) - this.waterPoint.y;
+      if (depth < 0 || depth <= deepest) continue;
+      deepest = depth;
+      if (publish) { this.telemetry.waterContact = true; this.telemetry.waterContactPoint.copy(this.waterPoint); }
+      else return true;
+    }
+    return deepest >= 0;
+  }
+
+  private sweepsNose() {
+    this.noseAt(this.position, this.quaternion, this.platformStart);
+    this.noseAt(this.candidatePosition, this.candidateQuaternion, this.platformEnd);
+    if (this.challenge === 'birdman') return Math.min(this.platformStart.y, this.platformEnd.y) <= 0;
+    return this.sweepsRiver(this.platformStart, this.platformEnd);
+  }
+
+  private landingAt(position: Vector3, orientation: Quaternion, speedSquared = this.velocity.lengthSq()): FlightResult['landing'] | null {
+    // 硬河床/岸坡优先；鸟人间的Y=0不是固体地面。
     for (const point of this.contacts) {
       if (!this.mainContact(point)) continue;
       this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
       if (this.onRunway(this.cross.x, this.cross.z)) continue;
-      const height = challengeCollisionHeight(this.challenge, this.cross.x, this.cross.z);
-      if (this.cross.y <= height) {
-        return this.challenge === 'birdman' || (this.challenge === 'low-altitude' && height === challengeRiverHeight(this.cross.x)) ? 'water' : 'terrain';
-      }
+      if (this.challenge !== 'birdman' && this.cross.y <= challengeTerrainHeight(this.challenge, this.cross.x, this.cross.z)) return 'terrain';
       if (this.sweepsLaunchBox(this.cross, this.cross)) return 'terrain';
     }
-    return null;
+    this.noseAt(position, orientation, this.nosePoint);
+    if (this.nosePoint.y <= this.waterHeight(this.nosePoint.x, this.nosePoint.z)) return 'water';
+    return speedSquared < WATER.stopSpeed ** 2 && this.waterContactAt(position, orientation) ? 'water' : null;
   }
 
   private tailDistance() {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Vector3 } from 'three';
-import { clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, PILOT_MASS, presets, wing, type Controls } from '../src/model';
+import { Vector3 } from 'three';
+import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, wing, type Controls } from '../src/model';
 import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY } from '../src/physics';
 import { CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
 import { engineCatalog } from '../src/engines';
@@ -91,7 +91,7 @@ describe('三轴操纵与高山路径边界', () => {
     for (let i = 0; i < 20; i++) { flying.step({ ...neutral, lateral: 1 }); centered.step(neutral); }
     expect(flying.omega.x).toBeGreaterThan(centered.omega.x);
     const t = flying.telemetry;
-    expect(Math.abs(t.energy + t.dissipatedEnergy - t.initialEnergy - t.controlWork) / t.initialEnergy).toBeLessThan(1e-8);
+    expect(Math.abs(t.energy + t.dissipatedEnergy - t.initialEnergy - t.controlWork - t.waterWork) / t.initialEnergy).toBeLessThan(1e-8);
   });
 
   it('山顶20m弹射到20m/s，整台离当地地面至少100m，背后有山，离台后仍不计时', () => {
@@ -242,7 +242,7 @@ describe('低空地形、滑跑与计分', () => {
     expect(rollWork).toBeGreaterThan(0); expect(s.telemetry.fuelRemaining).toBeLessThan(poweredAircraft.fuelTank.capacity);
     expect(s.telemetry.propulsionWork).toBeGreaterThan(0); expect(s.telemetry.fuelEnergyRemoved).toBeGreaterThan(0);
     const t = s.telemetry;
-    expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork).toBeCloseTo(t.initialEnergy, 8);
+    expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork - t.waterWork).toBeCloseTo(t.initialEnergy, 8);
     expect(s.time).toBe(0); expect(s.telemetry.score).toBe(0); expect(s.telemetry.timingStarted).toBe(false);
     for (let x = launch.startX; x <= launch.endX; x += 10) expect(challengeTerrainHeight('low-altitude', x, launch.z)).toBe(launch.y);
   });
@@ -291,7 +291,7 @@ describe('低空地形、滑跑与计分', () => {
     s.reset(0); expect(s.launching).toBe(true); expect(s.position.x).toBe(launch.startX); expect(s.velocity.length()).toBe(0);
   });
 
-  it('脱轨后坠回跑道用接触冲量支撑不结算，跑道外地形和河面仍终止', () => {
+  it('脱轨后坠回跑道用接触冲量支撑不结算，跑道外地形和机头入河仍终止', () => {
     const d = clone(downhillAircraft);
     d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
     const s = new FlightSimulation(d, 'low-altitude', 0), launch = challengeLaunch('low-altitude')!;
@@ -305,11 +305,13 @@ describe('低空地形、滑跑与计分', () => {
       expect(world.y).toBeGreaterThanOrEqual(launch.y - 3e-6);
     }
     const t = s.telemetry;
-    expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork).toBeCloseTo(t.initialEnergy, 8);
+    expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork - t.waterWork).toBeCloseTo(t.initialEnergy, 8);
     const outside = airborne(new FlightSimulation(d, 'low-altitude', 0), 50, 0);
     outside.step(neutral); expect(outside.result?.landing).toBe('terrain');
     const river = airborne(new FlightSimulation(d, 'low-altitude', 0), 200, 10);
-    river.position.set(200, challengeRiverHeight(200) - 0.1, challengeRiverCenter(200));
+    const nose = BODY_GEOMETRY.nose;
+    const noseBottom = new Vector3(fuselageEnds(d).nose + nose.x, nose.y - nose.yRadius, 0).sub(river.cg);
+    river.position.set(200, challengeRiverHeight(200) - 0.01, challengeRiverCenter(200)).sub(noseBottom);
     river.step(neutral); expect(river.result?.landing).toBe('water');
   });
 
@@ -357,11 +359,14 @@ describe('低空地形、滑跑与计分', () => {
     river.step(neutral); expect(river.result?.landing).toBe('water'); expect(river.result?.completed).toBe(false);
   });
 
-  it('高速落河定位首次可见河面接触，不穿到河床', () => {
+  it('高速机头落河仍在河面附近结算，不穿到河床', () => {
     const s = crossStart(lowAltitude()), x = 180, water = challengeRiverHeight(x);
-    s.position.set(x, water + 5, challengeRiverCenter(x)); s.velocity.set(0, -500, 0); s.quaternion.identity();
+    s.position.set(x, water + 5, challengeRiverCenter(x)); s.velocity.set(0, -500, 0);
+    s.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), -20 * DEG);
     s.step(neutral, 0.25);
-    expect(s.result?.landing).toBe('water'); expect(s.position.y).toBeGreaterThan(water - 0.001);
+    expect(s.result?.landing).toBe('water'); expect(s.telemetry.waterContact).toBe(true);
+    const point = s.telemetry.waterContactPoint;
+    expect(point.y).toBeGreaterThan(challengeTerrainHeight('low-altitude', point.x, point.z));
   });
 });
 
@@ -448,7 +453,7 @@ describe('物理smoke：低展弦比三角翼质量、发射和高速受力', ()
       const drag = -s.telemetry.drag.dot(s.velocity) / s.velocity.length();
       expect(drag).toBeGreaterThan(0);
       const t = s.telemetry;
-      expect(Math.abs(t.energy + t.dissipatedEnergy - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
+      expect(Math.abs(t.energy + t.dissipatedEnergy - t.waterWork - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
       rows.push({
         speed, alpha, mass: t.mass, liftY: t.force.y, drag,
         bodyDrag: t.aerodynamics.bodyDrag.length(),

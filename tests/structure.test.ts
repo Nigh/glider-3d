@@ -181,7 +181,7 @@ describe('真实超载、独立断片和完整能量账本', () => {
     expectedMomentum.y -= mass * GRAVITY * 1e-4;
     expect(finalMomentum.distanceTo(expectedMomentum)).toBeLessThan(1e-7);
     const t = simulation.telemetry;
-    expect(Math.abs(t.energy + t.dissipatedEnergy - t.controlWork - initial) / initial).toBeLessThan(1e-8);
+    expect(Math.abs(t.energy + t.dissipatedEnergy - t.controlWork - t.waterWork - initial) / initial).toBeLessThan(1e-8);
     expect(t.energy).toBeCloseTo(energy(simulation) + simulation.fragments.reduce((sum, fragment) => sum + energy(fragment), 0), 7);
     for (const fragment of simulation.fragments) expect(fragment.inertiaTensor.determinant()).toBeGreaterThan(0);
     expect(simulation.aircraft.wingArea).toBeLessThan(area);

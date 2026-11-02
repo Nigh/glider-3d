@@ -30,7 +30,7 @@ function budget(s: FlightSimulation) {
   const t = s.telemetry;
   expect(t.initialEnergy).toBeGreaterThan(0);
   expect(t.dissipatedEnergy).toBeGreaterThanOrEqual(0);
-  expect(Math.abs(t.energy + t.dissipatedEnergy - t.controlWork - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
+  expect(Math.abs(t.energy + t.dissipatedEnergy - t.controlWork - t.waterWork - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
   expect(t.energy).toBeCloseTo(t.potentialEnergy + t.kineticEnergy, 8);
 }
 function world(s: FlightSimulation, point: Vector3) { return point.clone().sub(s.aircraft.cg).applyQuaternion(s.quaternion).add(s.position); }
@@ -237,13 +237,13 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
     expect(edge.telemetry.distance).toBe(0);
   });
 
-  it('接水时定位首次接触，终点不明显穿水；不存在旧岸地box的幽灵终止', () => {
-    const s = new FlightSimulation(defaultAircraft, 'birdman', 0); s.launching = false; s.quaternion.identity();
-    s.position.set(40, 2, 0); s.velocity.set(0, -20, 0);
-    while (!s.ended) s.step(neutral, 0.25);
+  it('机头入水按真实几何结束；不存在旧岸地box的幽灵终止', () => {
+    const s = new FlightSimulation(defaultAircraft, 'birdman', 0); s.launching = false;
+    s.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), -20 * DEG);
+    s.position.set(40, 4, 0); s.velocity.set(0, -20, 0);
+    for (let i = 0; i < 120 && !s.ended; i++) s.step(neutral, 1 / 60);
     expect(s.result?.landing).toBe('water');
-    const minY = Math.min(...keelPoints(defaultAircraft).map(point => world(s, point).y));
-    expect(minY).toBeGreaterThan(-0.001); expect(minY).toBeLessThan(0.15); budget(s);
+    expect(s.telemetry.waterContact).toBe(true); budget(s);
     const shore = probe(undefined, s => { s.position.set(-40, 7.8, 0); });
     expect(shore.ended).toBe(false); expect(shore.result).toBeNull();
   });
@@ -453,13 +453,13 @@ describe('气动、质量、能量与消费者边界', () => {
   });
 
   it('全程保持机械能与真实耗散功平衡，抖动操纵不造能', () => {
-    const s = release(new FlightSimulation(defaultAircraft, 'birdman', 0)); let previous = s.telemetry.energy - s.telemetry.controlWork;
+    const s = release(new FlightSimulation(defaultAircraft, 'birdman', 0)); let previous = s.telemetry.energy - s.telemetry.controlWork - s.telemetry.waterWork;
     for (let i = 0; i < 1800 && !s.ended; i++) {
       const sign = i % 2 ? 1 : -1;
       s.step({ weight: sign, rudder: sign * 0.2, elevator: sign * 0.2, aileron: sign * 0.2 });
       budget(s); expect(s.telemetry.aeroPower).toBeLessThanOrEqual(0);
-      expect(s.telemetry.energy - s.telemetry.controlWork).toBeLessThanOrEqual(previous + 1e-6);
-      expect(s.quaternion.length()).toBeCloseTo(1, 10); previous = s.telemetry.energy - s.telemetry.controlWork;
+      expect(s.telemetry.energy - s.telemetry.controlWork - s.telemetry.waterWork).toBeLessThanOrEqual(previous + 1e-6);
+      expect(s.quaternion.length()).toBeCloseTo(1, 10); previous = s.telemetry.energy - s.telemetry.controlWork - s.telemetry.waterWork;
     }
     expect(s.ended).toBe(true);
   });

@@ -1628,8 +1628,8 @@ export class SceneView {
       this.recordTrail(seconds);
       this.recordWingTrail();
       this.updateDebug();
-      const inWater = sim.result?.landing === 'water';
-      if (inWater && !this.wasInWater) this.beginSplash(sim.position);
+      const inWater = sim.telemetry.waterContact || sim.result?.landing === 'water';
+      if (inWater && !this.wasInWater) this.beginSplash(sim.telemetry.waterContact ? sim.telemetry.waterContactPoint : sim.position);
       this.wasInWater = inWater;
     }
     this.updateExhaust();
