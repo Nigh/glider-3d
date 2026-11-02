@@ -11,8 +11,10 @@ for(const mode of ['高山速降','低空飞行'])test(`${mode}结算仅显示�
   const step=FlightSimulation.prototype.step;
   FlightSimulation.prototype.step=function(...args:any[]){step.apply(this,args);if(this.recordingLength>6&&!this.ended){if(this.challenge==='low-altitude'){this.checkpointScores.push(...Array(30).fill(1500));this.telemetry.score=45000;}this.finish('boundary');}};
  });
+ await page.getByRole('combobox',{name:'飞行相机'}).selectOption('驾驶员');
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  const result=page.getByRole('region',{name:'飞行结算',exact:true});await expect(result).toBeVisible();
+ await expect.poll(()=>page.evaluate(()=>(window as any).glider.scene.view)).toBe('orbit');
  await expect(result.locator('.chart-energy-line,.chart-cost-line')).toHaveCount(0);
  await expect(result.locator('.chart-speed-line')).toHaveCount(1);
  await expect(result.locator('.chart-scoring-line')).toHaveCount(mode==='低空飞行'?1:0);

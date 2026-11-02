@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, Mesh, MeshBasicMaterial, BoxGeometry, OrthographicCamera, Spherical, Vector3 } from 'three';
+import { Box3, Group, Mesh, MeshBasicMaterial, BoxGeometry, OrthographicCamera, PerspectiveCamera, Quaternion, Spherical, Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
 
@@ -137,4 +137,26 @@ it('气动图层在透明背景之后绘制，禁用深度读写和雾化',()=>{
  expect(marker.renderOrder).toBe(100);expect(marker.material.transparent).toBe(true);
  expect(marker.material.depthTest).toBe(false);expect(marker.material.depthWrite).toBe(false);expect(marker.material.fog).toBe(false);
  marker.geometry.dispose();marker.material.dispose();
+});
+
+it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回正不受世界极角限制',()=>{
+ for(const pitch of [0,Math.PI/2,-Math.PI/2,Math.PI*0.44])for(const roll of [0,Math.PI/2,Math.PI]){
+  const aircraft=new Group();aircraft.position.set(100,500,30);
+  aircraft.quaternion.setFromAxisAngle(new Vector3(0,0,1),pitch).multiply(new Quaternion().setFromAxisAngle(new Vector3(1,0,0),roll));
+  const camera=new PerspectiveCamera();
+  const view=Object.assign(Object.create(SceneView.prototype),{
+   aircraft,camera,definition:defaultAircraft,simulation:{ended:false},controls:{enabled:false},view:'chase',
+   desiredPosition:new Vector3(),desiredTarget:new Vector3(),target:new Vector3(),vector:new Vector3(),vector2:new Vector3(),
+   width:1440,height:900,followInitialized:false,editorPointerId:-1,elapsed:10,cameraReleasedAt:-Infinity,cameraDragging:false,
+   followPosition:new Vector3(),followTarget:new Vector3(),cameraYaw:0,cameraPitch:0,resultOrbit:false,
+  });
+  view.followCamera(1/60,true);
+  const local=camera.position.clone().sub(aircraft.position).applyQuaternion(aircraft.quaternion.clone().invert());
+  expect(local.x).toBeLessThan(-20);expect(local.y).toBeCloseTo(-local.x*0.3,8);expect(local.z).toBeCloseTo(0,8);
+  const position=camera.position.clone(),orientation=camera.quaternion.clone();
+  view.updateCameraInteraction(1/60);
+  expect(camera.position.distanceTo(position)).toBeLessThan(1e-10);
+  expect(camera.quaternion.angleTo(orientation)).toBeLessThan(1e-7);
+  expect(camera.getWorldDirection(new Vector3()).dot(new Vector3(1,0,0).applyQuaternion(aircraft.quaternion))).toBeGreaterThan(0.95);
+ }
 });
