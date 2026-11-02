@@ -1,5 +1,12 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
 export const messages: Record<string, readonly [string, string]> = {
+ "航迹滑翔比": ["Flight path glide ratio", "飛行経路滑空比"],
+ "本次飞行翼面峰值": ["Wing load peaks this flight", "今回の飛行の翼面最大負荷"],
+ "50% 中立 · 鼠标吸附中点 · 快捷键每格 10%": ["50% neutral · Mouse snaps to center · Keys step 10%", "50%で中立 · マウスは中央に吸着 · キーは10%刻み"],
+ "副翼配平": ["Roll trim", "ロールトリム"],
+ "升降舵配平": ["Pitch trim", "ピッチトリム"],
+ "配平控制": ["Trim controls", "トリム操作"],
+ "配平": ["Trim", "トリム"],
  "横轴为试飞时间，各曲线使用独立纵轴。": ["The horizontal axis is flight time; each curve has its own vertical scale.", "横軸は飛行時間、各曲線は独立した縦軸を使用。"],
  "飞行数据曲线": ["Flight data curves", "飛行データ曲線"],
  "侧滑角": ["Sideslip", "横滑り角"],

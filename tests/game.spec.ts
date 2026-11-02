@@ -1211,6 +1211,7 @@ for (const [mode, labels] of [
     expect(samples.at(-1)!.speed).toBeCloseTo(telemetry.speed, 10);
     expect(samples.at(-1)!.height).toBeCloseTo(telemetry.altitude, 10);
     for (let index = 1; index < samples.length; index++) expect(samples[index].time).toBeGreaterThanOrEqual(samples[index - 1].time);
+    await expect(page.getByRole('region',{name:'本次飞行翼面峰值'}).locator('[data-wing]')).toHaveCount(3);
     const speedChart = page.getByRole('region', { name: '距离高度曲线', exact: true });
     await speedChart.scrollIntoViewIfNeeded();
     const speedPoints = (await speedChart.locator('.chart-speed-line').getAttribute('points'))!.trim().split(/\s+/).map(point => point.split(',').map(Number));
@@ -1492,13 +1493,15 @@ test('地面X分两笔同步发声，计时门外侧随接近变红',async({page
    sim.position.x=gate.position.x;view.render(0);const near=warning.material.uniforms.opacity.value;
    let sounds=0;view.markCrash(()=>sounds++);
    for(let i=0;i<7;i++)view.render(0.1);
-   const first=internals.crashMark.children.map((c:any)=>c.geometry.drawRange.count),oneSound=sounds;
+   const first=internals.crashMark.children.map((c:any)=>c.geometry.instanceCount),oneSound=sounds;
    for(let i=0;i<6;i++)view.render(0.1);
-   const second=internals.crashMark.children.map((c:any)=>c.geometry.drawRange.count);
-   return {far,near,first,second,oneSound,sounds};
+   const second=internals.crashMark.children.map((c:any)=>c.geometry.instanceCount);
+   const strokes=internals.crashMark.children.map((c:any)=>({width:c.material.linewidth,worldUnits:c.material.worldUnits,start:Array.from(c.geometry.getAttribute('instanceStart').array).slice(0,3)}));
+   return {far,near,first,second,oneSound,sounds,strokes};
   }finally{view.dispose();host.remove();}
  });
  expect(result.far).toBe(0);expect(result.near).toBe(1);
  expect(result.first[0]).toBeGreaterThan(0);expect(result.first[1]).toBe(0);expect(result.oneSound).toBe(1);
- expect(result.second).toEqual([384,384]);expect(result.sounds).toBe(2);
+ expect(result.second).toEqual([64,64]);expect(result.sounds).toBe(2);
+ for(const stroke of result.strokes){expect(stroke.width).toBe(12);expect(stroke.worldUnits).toBe(false);expect(stroke.start[0]).toBe(-3);}
 });
