@@ -684,7 +684,7 @@ export class FlightSimulation {
   private readonly neutral: number;
   private readonly chord: number;
   private readonly aerodynamics: AerodynamicSummary;
-  private readonly launchAltitude: number;
+  private launchAltitude = 0;
   /** 发射架固定设计坐标参考，不随驾驶员移动或断翼后重心跳动重新定位机体。 */
   private readonly launchCg = new Vector3();
   private readonly bodyVelocity = new Vector3();
@@ -760,10 +760,6 @@ export class FlightSimulation {
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     this.launchCg.copy(this.aircraft.cg);
     evaluateReference(this.aircraft);
-    const launch = challengeLaunch(this.challenge);
-    this.launchAltitude = launch ? launch.y + (this.challenge === 'low-altitude' ? LOW_ALTITUDE_RAIL.height : 0)
-      + contactLaunchOffset(this.contacts, this.aircraft.cg) * Math.cos(LAUNCH.slope)
-      : runwayHeight(LAUNCH.startX) + contactLaunchOffset(this.contacts, this.aircraft.cg);
     this.telemetry = { speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
       stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(),
       aeroPower: 0, energy: 0, staticMargin: 0, energyPerDistance: null, potentialEnergy: 0, kineticEnergy: 0,
@@ -790,7 +786,6 @@ export class FlightSimulation {
     }
     this.recordingLength = 0; this.replayIndex = 0; this.replayFinished = false; this.replay = null;
     this.maxSpeed = this.minSpeed = this.challenge === 'birdman' ? LAUNCH.speed : this.velocity.length();
-    this.maxHeight = this.position.y;
     this.travelled = 0; this.weight = 0; this.lateral = 0; this.checkpointIndex = 0; this.completed = false;
     this.engineRpm = 0; this.thrust = 0; this.propulsionPower = 0;
     this.fuelRemaining = this.definition.fuelTank.capacity;
@@ -798,7 +793,6 @@ export class FlightSimulation {
     this.pilotOffset.x = 0; this.pilotOffset.z = 0;
     this.structure.reset(); this.fragments.length = 0; this.nextFragmentId = 1;
     this.updateSurfaceExtents();
-    this.syncContacts();
     if (this.fuelPart) {
       this.fuelPart.mass = this.fuelRemaining * FUEL_DENSITY;
       this.fuelPart.ix = this.fuelPart.mass * this.fuelLocalInertia.x;
@@ -819,6 +813,19 @@ export class FlightSimulation {
     this.telemetry.physicsMs = 0; this.telemetry.aeroPower = 0;
     this.telemetry.dissipatedEnergy = 0; this.telemetry.initialEnergy = 0; this.telemetry.liftDragRatio = 0; this.telemetry.controlWork = 0;
     this.telemetry.propulsionWork = 0; this.telemetry.fuelEnergyRemoved = 0;
+    // 待发射也由发射架承重；先求真实自重下垂，不能等首个运动步才建立梁载荷。
+    // 此处只恢复静载形状，断裂仍在接受物理步时提交。
+    this.supportForce.set(0, this.mass * GRAVITY, 0);
+    this.supportTorque.set(0, 0, 0);
+    this.structure.update(this, this.supportForce, this.supportTorque);
+    this.structure.summarize();
+    this.syncContacts();
+    // 发射净空取静载后的完整碰撞体，长翼下垂不能穿过导轨或平台。
+    this.launchAltitude = launch ? launch.y + (this.challenge === 'low-altitude' ? LOW_ALTITUDE_RAIL.height : 0)
+      + contactLaunchOffset(this.contacts, this.aircraft.cg) * Math.cos(LAUNCH.slope)
+      : runwayHeight(LAUNCH.startX) + contactLaunchOffset(this.contacts, this.aircraft.cg);
+    this.position.y = this.launchAltitude;
+    this.maxHeight = this.position.y;
     this.aerodynamics.update(this.aircraft.cg, this.quaternion, this.velocity);
     this.updateTelemetry();
     if (!this.launching) this.beginFlight();
