@@ -152,11 +152,17 @@ it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回�
   });
   view.followCamera(1/60,true);
   const local=camera.position.clone().sub(aircraft.position).applyQuaternion(aircraft.quaternion.clone().invert());
-  expect(local.x).toBeLessThan(-20);expect(local.y).toBeCloseTo(-local.x*0.3,8);expect(local.z).toBeCloseTo(0,8);
+  expect(local.x).toBeLessThan(-20);expect(local.y).toBeCloseTo(-local.x*0.065,8);expect(local.z).toBeCloseTo(0,8);
   const position=camera.position.clone(),orientation=camera.quaternion.clone();
   view.updateCameraInteraction(1/60);
   expect(camera.position.distanceTo(position)).toBeLessThan(1e-10);
   expect(camera.quaternion.angleTo(orientation)).toBeLessThan(1e-7);
   expect(camera.getWorldDirection(new Vector3()).dot(new Vector3(1,0,0).applyQuaternion(aircraft.quaternion))).toBeGreaterThan(0.95);
+  aircraft.position.x+=12;
+  view.followCamera(1/60,false);
+  expect(camera.position.x-position.x).toBeGreaterThan(0);
+  expect(camera.position.x-position.x).toBeLessThan(12);
+  for(let frame=0;frame<240;frame++){view.updateCameraInteraction(1/60);view.followCamera(1/60,false);}
+  expect(camera.position.distanceTo(view.desiredPosition)).toBeLessThan(0.001);
  }
 });

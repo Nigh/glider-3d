@@ -217,7 +217,7 @@ describe('最远纪录', () => {
   });
 
   it('废墟赛道不与原三倍赛道混榜，原数据保留',()=>{
-    const key=`lakewind.best.${PHYSICS_VERSION}.downhill.course-v2`;storage.setItem(key,'100');
+    const key=`lakewind.best.${PHYSICS_VERSION}.downhill.ruins-v3`;storage.setItem(key,'100');
     expect(readBest('downhill')).toBe(0);expect(writeBest(250,'downhill')).toBe(250);expect(storage.getItem(key)).toBe('100');
   });
 
