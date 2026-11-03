@@ -5,7 +5,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
-import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateCeiling, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { engineCatalog } from './engines';
 import { language, t } from './i18n';
 
@@ -14,6 +14,9 @@ const UP = new THREE.Vector3(0, 1, 0);
 const WING_TRAIL_CAPACITY = 192;
 const TRAIL_CAPACITY = 8192;
 const PARTICLES = 64;
+const STEAM_CAPACITY = 384;
+const STEAM_PAIRS_PER_SECOND = 120;
+const STEAM_LIFETIME = 1.6;
 type EditorTarget = 'mainWing' | 'horizontalTail' | 'verticalTail' | 'assembly' | 'propulsion' | null;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -127,10 +130,13 @@ export class SceneView {
   private readonly towJaws: THREE.Mesh[] = [];
   private readonly steam = new THREE.InstancedMesh(
     new THREE.SphereGeometry(1, 7, 5),
-    new THREE.MeshBasicMaterial({ color: 0xf2f6f4, transparent: true, opacity: 0.22, depthWrite: false }),
-    24,
+    new THREE.MeshBasicMaterial({ color: 0xf2f6f4, transparent: true, opacity: 0.38, depthWrite: false }),
+    STEAM_CAPACITY,
   );
   private readonly steamParticle = new THREE.Object3D();
+  private readonly steamOpacity = new THREE.InstancedBufferAttribute(new Float32Array(STEAM_CAPACITY), 1).setUsage(THREE.DynamicDrawUsage);
+  private steamTime = 0;
+  private steamEmitting = false;
   private readonly environmentFog = new THREE.FogExp2(0xd4e3e4, 0.00165);
   private readonly light = new THREE.DirectionalLight(0xffedcf, 3.3);
   private readonly cg = this.centerMarker('cg');
@@ -464,12 +470,14 @@ export class SceneView {
         carriage: position(this.railCarriage.position), attachment: position(this.railAttachment),
         referenceCG: position(this.railReferenceCG),
         supportCount: this.lowAltitudeRail.userData.supportCount as number,
-        steamVisible: this.steam.visible && this.environment.visible,
+        steamVisible: this.steam.visible,
       } : null,
       gates: this.mountainEnvironment.children.filter(object => object.userData.gate).map(object => ({
         name: object.name, position: position(object.position), ...object.userData.gate,
+        profile: object.userData.gate.profile.map((point: { z: number; bottom: number; top: number }) => ({ ...point })),
       })),
       wingTrail: { active: this.wingTrailActive, segments: this.wingTrailGeometry.drawRange.count / 6, opacity: this.wingTrail.material.opacity, style: 'ribbon' },
+      catapultSteam: this.steamDiagnostics(),
       structureRendering: this.structureDiagnostics(),
     };
   }
@@ -2235,13 +2243,14 @@ export class SceneView {
     const startMaterial = new THREE.MeshBasicMaterial({ color: 0x69caff });
     for (let index = 0; index < gates.length; index++) {
       const gate = gates[index], finish = index === gates.length - 1, timingStart = gate === startGate;
+      const profile = this.gateProfile(challenge, gate);
       const material = timingStart ? startMaterial : finish ? finishMaterial : checkpointMaterial;
       const checkpointIndex = index + (startGate ? 0 : 1);
       const group = new THREE.Group();
       group.name = timingStart ? 'challenge-start' : finish ? 'challenge-finish' : `checkpoint-${checkpointIndex}`;
       group.position.set(gate.x, gate.y, gate.z);
       // 门框仅作导航标记，不注册为地形或物理碰撞体；开口直接使用判门共享参数。
-      group.userData.gate = { halfWidth: gate.halfWidth, maxHeight: gate.maxHeight, collision: false };
+      group.userData.gate = { halfWidth: gate.halfWidth, maxHeight: gate.maxHeight, collision: false, profile };
       this.mountainEnvironment.add(group);
       const stripeMaterial = new THREE.ShaderMaterial({transparent:true,depthWrite:false,side:THREE.DoubleSide,
         uniforms:{opacity:{value:0},finish:{value:0}},
@@ -2251,24 +2260,51 @@ export class SceneView {
       if (!downhill) regions.pop();
       if(finish) regions.push([-gate.halfWidth,gate.halfWidth,0,gate.maxHeight]);
       for(const [regionIndex,[left,right,bottom,top]] of regions.entries()){
-        const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute([0,bottom,left,0,top,left,0,bottom,right,0,top,right],3));geometry.setIndex([0,1,2,2,1,3]);
+        const vertices: number[] = [];
+        const samples = downhill && regionIndex >= 2 ? profile : [
+          { z: left, bottom: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].bottom : 0, top: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].top : gate.maxHeight },
+          { z: right, bottom: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].bottom : 0, top: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].top : gate.maxHeight },
+        ];
+        for (let sample = 1; sample < samples.length; sample++) {
+          const a = samples[sample - 1], b = samples[sample];
+          const aBottom = !downhill ? bottom : regionIndex === 2 ? a.top : regionIndex === 4 ? a.bottom : a.bottom - 80;
+          const bBottom = !downhill ? bottom : regionIndex === 2 ? b.top : regionIndex === 4 ? b.bottom : b.bottom - 80;
+          const aTop = !downhill ? top : regionIndex === 3 ? a.bottom : regionIndex === 4 ? a.top : a.top + 80;
+          const bTop = !downhill ? top : regionIndex === 3 ? b.bottom : regionIndex === 4 ? b.top : b.top + 80;
+          vertices.push(0,aBottom,a.z,0,aTop,a.z,0,bBottom,b.z,0,bBottom,b.z,0,aTop,a.z,0,bTop,b.z);
+        }
+        const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));
         const regionMaterial=finish&&regionIndex===(downhill?4:3)?stripeMaterial.clone():stripeMaterial;
         if(finish&&regionIndex===(downhill?4:3))regionMaterial.uniforms.finish.value=1;
-        const stripes=new THREE.Mesh(geometry,regionMaterial);stripes.userData.warning=true;group.add(stripes);
+        const stripes=new THREE.Mesh(geometry,regionMaterial);stripes.userData.warning=true;
+        stripes.name = ['gate-left-boundary', 'gate-right-boundary', 'gate-ceiling-boundary', 'gate-ground-boundary', 'gate-finish-zone'][!downhill && regionIndex === 3 ? 4 : regionIndex];
+        group.add(stripes);
       }
       const height = downhill ? 20 : gate.maxHeight;
       for (const side of [-1, 1]) {
         const post = this.mesh(frameGeometry, material, group);
-        post.position.set(0, gate.maxHeight - height / 2, side * (gate.halfWidth + frameThickness / 2));
+        post.position.set(0, profile[side === -1 ? 0 : profile.length - 1].top - height / 2, side * (gate.halfWidth + frameThickness / 2));
         post.scale.set(frameThickness, height, frameThickness);
         post.castShadow = post.receiveShadow = false;
       }
-      for (const y of [gate.maxHeight]) {
-        const bar = this.mesh(frameGeometry, material, group);
-        bar.position.y = y;
-        bar.scale.set(frameThickness, frameThickness, gate.halfWidth * 2);
-        bar.castShadow = bar.receiveShadow = false;
+      const barVertices: number[] = [], barIndices: number[] = [];
+      for (let sample = 0; sample < profile.length; sample++) {
+        const point = profile[sample], half = frameThickness / 2;
+        barVertices.push(-half,point.top-half,point.z,half,point.top-half,point.z,half,point.top+half,point.z,-half,point.top+half,point.z);
+        if (sample === 0) continue;
+        const a = (sample - 1) * 4, b = sample * 4;
+        for (let side = 0; side < 4; side++) {
+          const next = (side + 1) % 4;
+          barIndices.push(a+side,a+next,b+side,a+next,b+next,b+side);
+        }
       }
+      const end = (profile.length - 1) * 4;
+      barIndices.push(0,2,1,0,3,2,end,end+1,end+2,end,end+2,end+3);
+      const barGeometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(barVertices, 3));
+      barGeometry.setIndex(barIndices);
+      const bar = this.mesh(barGeometry, material, group);
+      bar.name = 'gate-ceiling-frame';
+      bar.castShadow = bar.receiveShadow = false;
       if (!downhill) {
         if (!timingStart) {
           const goldVertices: number[] = [];
@@ -2305,6 +2341,25 @@ export class SceneView {
     start.position.set(launch?.startX ?? 0, (launch?.y ?? 0) + 14, launch?.z ?? challengeCenter(challenge, 0));
     start.scale.set(40, 5, 1);
     this.mountainEnvironment.add(start);
+  }
+
+  private gateProfile(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>) {
+    const points = [-gate.halfWidth, gate.halfWidth];
+    if (challenge === 'downhill') {
+      const step = challengeTerrainGrid.step;
+      const diagonal = step - (gate.x - Math.floor(gate.x / step) * step);
+      // 包含网格边和三角形对角线；横向折线与碰撞地形逐段一致。
+      for (let z = Math.floor((gate.z - gate.halfWidth) / step) * step; z < gate.z + gate.halfWidth; z += step) {
+        for (const worldZ of [z, z + diagonal]) {
+          const localZ = worldZ - gate.z;
+          if (localZ > -gate.halfWidth && localZ < gate.halfWidth) points.push(localZ);
+        }
+      }
+    }
+    return [...new Set(points)].sort((a, b) => a - b).map(z => ({
+      z, bottom: challenge === 'downhill' ? challengeCollisionHeight(challenge, gate.x, gate.z + z) - gate.y : 0,
+      top: challengeGateCeiling(challenge, gate, gate.z + z) - gate.y,
+    }));
   }
 
   private buildChallengeLaunch(challenge: ChallengeMode): void {
@@ -2561,7 +2616,17 @@ export class SceneView {
     this.catapult.name = 'steam-catapult';
     this.steam.name = 'catapult-steam';
     this.steam.frustumCulled = false;
-    this.catapult.add(this.steam);
+    this.steam.visible = false;
+    this.steam.count = 0;
+    this.steam.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.steam.geometry.setAttribute('steamOpacity', this.steamOpacity);
+    this.steam.material.onBeforeCompile = shader => {
+      shader.vertexShader = `attribute float steamOpacity;\nvarying float vSteamOpacity;\n${shader.vertexShader}`
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSteamOpacity = steamOpacity;');
+      shader.fragmentShader = `varying float vSteamOpacity;\n${shader.fragmentShader}`
+        .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vSteamOpacity;');
+    };
+    this.scene.add(this.steam);
     const platformGeometry = new THREE.BoxGeometry(LAUNCH.length, PLATFORM.thickness, (PLATFORM.width - PLATFORM.slotWidth) / 2);
     const positions = platformGeometry.getAttribute('position');
     const normals = platformGeometry.getAttribute('normal');
@@ -2692,6 +2757,7 @@ export class SceneView {
   }
 
   private updateCatapult(): void {
+    this.updateSteam();
     if (this.environmentChallenge !== 'birdman') {
       const launch = challengeLaunch(this.environmentChallenge);
       if (this.railCarriage && this.railCoupling && launch) {
@@ -2731,24 +2797,72 @@ export class SceneView {
       jaw.position.z += jaw.userData.side * (attached ? 0.11 : 0.26);
       jaw.rotation.x = attached ? 0 : jaw.userData.side * 0.65;
     }
-    const time = this.simulation?.time ?? 0;
-    const releaseAge = time - LAUNCH.speed / LAUNCH.acceleration;
-    this.steam.visible = time > 0 && releaseAge < 0.8 && !this.simulation?.ended;
-    if (this.steam.visible) {
-      for (let i = 0; i < this.steam.count; i++) {
-        const age = (time * 1.8 + i / this.steam.count) % 1;
-        const fade = releaseAge > 0 ? Math.max(0, 1 - releaseAge / 0.8) : 1;
-        this.steamParticle.position.set(
-          clamp(this.shuttle.position.x - age * 2.5, -LAUNCH.length, 0),
-          0.05 + age * 0.85,
-          Math.sin(i * 2.4) * age * 0.5,
-        );
-        this.steamParticle.scale.setScalar((0.12 + age * 0.7) * (1 - age * 0.5) * fade);
+  }
+
+  private updateSteam(): void {
+    const sim = this.simulation;
+    const launch = challengeLaunch(this.environmentChallenge);
+    const birdman = this.environmentChallenge === 'birdman';
+    const acceleration = launch?.acceleration ?? LAUNCH.acceleration;
+    const duration = (launch?.speed ?? LAUNCH.speed) / acceleration;
+    this.steamTime = sim?.elapsedTime ?? 0;
+    this.steamEmitting = !!sim && !sim.ended && !sim.replayFinished && sim.launching && (birdman || launch?.kind === 'catapult');
+    this.steam.count = 0;
+    this.steam.visible = false;
+    if (!sim || sim.ended || sim.replayFinished || (!birdman && launch?.kind !== 'catapult')) return;
+    const time = this.steamTime;
+    const last = Math.min(Math.floor(time * STEAM_PAIRS_PER_SECOND + 1e-9), Math.round(duration * STEAM_PAIRS_PER_SECOND));
+    const first = Math.max(1, Math.floor((time - STEAM_LIFETIME) * STEAM_PAIRS_PER_SECOND) + 1);
+    if (last < first) return;
+    const startX = launch?.startX ?? LAUNCH.startX, endX = launch?.endX ?? LAUNCH.endX;
+    const slope = launch?.slope ?? LAUNCH.slope, endY = launch?.y ?? LAUNCH.height, z = launch?.z ?? 0;
+    let count = 0;
+    // 固定发射序列直接从物理时间求值；回放、跳帧和重飞不依赖显示帧历史。
+    for (let emission = first; emission <= last && count < STEAM_CAPACITY; emission++) {
+      const emittedAt = emission / STEAM_PAIRS_PER_SECOND;
+      const age = time - emittedAt, life = age / STEAM_LIFETIME;
+      const noise = Math.sin(emission * 2.399963), swirl = Math.cos(emission * 1.618034);
+      const x = Math.min(endX, startX + 0.5 * acceleration * emittedAt ** 2 * Math.cos(slope));
+      const y = endY + (endX - x) * Math.tan(slope) + 0.12;
+      const spread = 0.38 + (5.2 + noise * 1.2) * age / (1 + age * 0.45);
+      const size = 0.22 + age * (0.9 + noise * 0.15);
+      for (let side = -1; side <= 1; side += 2) {
+        this.steamParticle.position.set(x + swirl * age * 0.65 - age * 0.4, y + age * 0.8 + age * age * 0.45, z + side * spread);
+        this.steamParticle.scale.set(size * 1.15, size * 0.8, size * 1.45);
         this.steamParticle.updateMatrix();
-        this.steam.setMatrixAt(i, this.steamParticle.matrix);
+        this.steam.setMatrixAt(count, this.steamParticle.matrix);
+        this.steamOpacity.setX(count, (1 - life) ** 2);
+        count++;
       }
-      this.steam.instanceMatrix.needsUpdate = true;
     }
+    this.steam.count = count;
+    this.steam.visible = count > 0;
+    this.steam.instanceMatrix.needsUpdate = true;
+    this.steamOpacity.needsUpdate = true;
+  }
+
+  /** 按需复制实例状态，诊断不暴露可写粒子池。 */
+  private steamDiagnostics() {
+    const matrix = new THREE.Matrix4(), point = new THREE.Vector3(), size = new THREE.Vector3(), rotation = new THREE.Quaternion();
+    const particles = [];
+    const time = this.steamTime;
+    const first = Math.max(1, Math.floor((time - STEAM_LIFETIME) * STEAM_PAIRS_PER_SECOND) + 1);
+    for (let index = 0; index < this.steam.count; index++) {
+      this.steam.getMatrixAt(index, matrix);
+      matrix.decompose(point, rotation, size);
+      const emittedAt = (first + Math.floor(index / 2)) / STEAM_PAIRS_PER_SECOND;
+      particles.push({
+        side: index % 2 === 0 ? 'left' : 'right', age: time - emittedAt,
+        position: { x: point.x, y: point.y, z: point.z },
+        radius: size.y, opacity: this.steamOpacity.getX(index) * this.steam.material.opacity,
+      });
+    }
+    return {
+      visible: this.steam.visible, emitting: this.steamEmitting, time,
+      count: this.steam.count, capacity: STEAM_CAPACITY, lifetime: STEAM_LIFETIME,
+      leftCount: this.steam.count / 2, rightCount: this.steam.count / 2,
+      pairsPerSecond: STEAM_PAIRS_PER_SECOND, particles,
+    };
   }
 
   private label(text: string, color: string, background: string, width: number, height: number, flat = false, params?: Record<string, string | number>): THREE.Sprite | THREE.Mesh {
