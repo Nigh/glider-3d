@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, Mesh, MeshBasicMaterial, BoxGeometry, OrthographicCamera, PerspectiveCamera, Quaternion, Spherical, Vector3 } from 'three';
+import { Box3, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
+import { FlightSimulation, LAUNCH } from '../src/physics';
+import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 function svgElement() {
@@ -165,4 +167,130 @@ it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回�
   for(let frame=0;frame<240;frame++){view.updateCameraInteraction(1/60);view.followCamera(1/60,false);}
   expect(camera.position.distanceTo(view.desiredPosition)).toBeLessThan(0.001);
  }
+});
+
+function steamView(challenge: ChallengeMode) {
+  const geometry = new SphereGeometry(1, 7, 5);
+  const opacity = new InstancedBufferAttribute(new Float32Array(384), 1);
+  geometry.setAttribute('steamOpacity', opacity);
+  return Object.assign(Object.create(SceneView.prototype), {
+    environmentChallenge: challenge, simulation: null,
+    steam: new InstancedMesh(geometry, new MeshBasicMaterial({ opacity: 0.38 }), 384),
+    steamParticle: new Object3D(), steamOpacity: opacity, steamTime: 0, steamEmitting: false,
+  });
+}
+
+describe('弹射蒸汽与门框边界', () => {
+  it('鸟人和高山沿轨迹持续双侧喷发，释放后扩散淡出，结束和重飞清空同一实例池', () => {
+    for (const challenge of ['birdman', 'downhill'] as const) {
+      const view = steamView(challenge);
+      const simulation = { elapsedTime: 0, launching: true, ended: false, replayFinished: false };
+      view.simulation = simulation;
+      const matrices = view.steam.instanceMatrix.array, opacity = view.steamOpacity.array;
+      view.updateSteam();
+      expect(view.steamDiagnostics().count).toBe(0);
+      simulation.elapsedTime = 1;
+      view.updateSteam();
+      const early = view.steamDiagnostics();
+      expect(early.emitting).toBe(true);
+      expect(early.count).toBe(240);
+      expect(early.leftCount).toBe(120);
+      expect(early.rightCount).toBe(120);
+      for (let index = 0; index < early.particles.length; index += 2) {
+        const left = early.particles[index], right = early.particles[index + 1];
+        expect(left.side).toBe('left'); expect(right.side).toBe('right');
+        expect(left.position.z).toBeLessThan(-0.37);
+        expect(right.position.z).toBeGreaterThan(0.37);
+        expect(left.position.x).toBe(right.position.x);
+        expect(left.position.y).toBe(right.position.y);
+      }
+      const launch = challengeLaunch(challenge), speed = launch?.speed ?? LAUNCH.speed;
+      const acceleration = launch?.acceleration ?? LAUNCH.acceleration, startX = launch?.startX ?? LAUNCH.startX;
+      const newest = early.particles[early.count - 2];
+      expect(newest.position.x).toBeCloseTo(startX + 0.5 * acceleration * Math.cos(launch?.slope ?? LAUNCH.slope), 5);
+      simulation.elapsedTime = speed / acceleration;
+      simulation.launching = false;
+      view.updateSteam();
+      const released = view.steamDiagnostics();
+      expect(released.count).toBe(384);
+      expect(released.emitting).toBe(false);
+      simulation.elapsedTime += 0.8;
+      view.updateSteam();
+      const dissipating = view.steamDiagnostics();
+      expect(dissipating.count).toBeGreaterThan(0);
+      expect(dissipating.count).toBeLessThan(released.count);
+      expect(dissipating.particles.at(-1).radius).toBeGreaterThan(released.particles.at(-1).radius);
+      expect(dissipating.particles.at(-1).opacity).toBeLessThan(released.particles.at(-1).opacity);
+      const snapshot = view.steamDiagnostics();
+      snapshot.particles[0].position.x = 1e6;
+      expect(view.steamDiagnostics().particles[0].position.x).not.toBe(1e6);
+      simulation.elapsedTime += 1;
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toMatchObject({ visible: false, count: 0 });
+      simulation.elapsedTime = 0.6; simulation.launching = true;
+      view.updateSteam();
+      expect(view.steam.count).toBeGreaterThan(0);
+      simulation.ended = true;
+      view.updateSteam();
+      expect(view.steam.count).toBe(0);
+      simulation.ended = false; simulation.elapsedTime = 0;
+      view.updateSteam();
+      expect(view.steam.count).toBe(0);
+      expect(view.steam.instanceMatrix.array).toBe(matrices);
+      expect(view.steamOpacity.array).toBe(opacity);
+      view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
+    }
+  });
+
+  it('低空导轨不喷蒸汽，鸟人和高山回放在相同物理时刻生成相同实例', () => {
+    const low = steamView('low-altitude');
+    low.simulation = { elapsedTime: 1, launching: true, ended: false, replayFinished: false };
+    low.updateSteam();
+    expect(low.steamDiagnostics()).toMatchObject({ visible: false, emitting: false, count: 0 });
+    low.steam.geometry.dispose(); low.steam.material.dispose(); low.steam.dispose();
+    const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+    for (const challenge of ['birdman', 'downhill'] as const) {
+      const definition = clone(defaultAircraft);
+      definition.birdman = challenge === 'birdman';
+      const simulation = new FlightSimulation(definition, challenge, 0), view = steamView(challenge);
+      view.simulation = simulation;
+      for (let step = 0; step < 48; step++) simulation.step(neutral);
+      view.updateSteam();
+      const live = view.steamDiagnostics(), matrix = new Matrix4();
+      view.steam.getMatrixAt(0, matrix);
+      const liveMatrix = matrix.clone();
+      for (let step = 0; step < 48; step++) simulation.step(neutral);
+      const replay = new FlightSimulation(definition, challenge, 0);
+      replay.loadReplay(simulation.getRecording());
+      view.simulation = replay;
+      // 只更新回放末帧的场景，证明发射序列不依赖渲染频率。
+      for (let step = 0; step < 48; step++) replay.step(neutral);
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toEqual(live);
+      view.steam.getMatrixAt(0, matrix);
+      expect(matrix.elements).toEqual(liveMatrix.elements);
+      while (!replay.replayFinished) replay.step(neutral);
+      view.updateSteam();
+      expect(view.steam.count).toBe(0);
+      view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
+    }
+  });
+
+  it('速降门顶与警戒带共享横向地形轮廓，三角形内任意位置等于物理门顶', () => {
+    const view = Object.create(SceneView.prototype);
+    for (const challenge of ['downhill', 'low-altitude'] as const) {
+      for (const gate of [challengeStartGate(challenge)!, ...challengeCheckpoints(challenge)]) {
+        const profile = view.gateProfile(challenge, gate);
+        expect(profile[0].z).toBe(-gate.halfWidth);
+        expect(profile.at(-1).z).toBe(gate.halfWidth);
+        for (let index = 1; index < profile.length; index++) {
+          const a = profile[index - 1], b = profile[index], z = (a.z + b.z) / 2;
+          expect(gate.y + (a.top + b.top) / 2).toBeCloseTo(challengeGateCeiling(challenge, gate, gate.z + z), 8);
+          if (challenge === 'downhill') {
+            expect(gate.y + (a.bottom + b.bottom) / 2).toBeCloseTo(challengeCollisionHeight(challenge, gate.x, gate.z + z), 8);
+          }
+        }
+      }
+    }
+  });
 });

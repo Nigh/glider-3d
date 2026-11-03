@@ -1,7 +1,7 @@
 <script lang="ts">
  import { onMount } from 'svelte';
- import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, resizeFuselage, mainWingMountLimits, mainWingSupport, engineMounts, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Controls, type Wing } from './model';
- import { FlightSimulation, derive, fuelCgRange, LAUNCH } from './physics';
+ import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, resizeFuselage, mainWingMountLimits, mainWingSupport, engineMounts, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Wing } from './model';
+ import { FlightSimulation, derive, fuelCgRange, LAUNCH, type FlightControls } from './physics';
  import { challengeDefinitions, challengeLaunch, LOW_ALTITUDE, type ChallengeMode } from './challenges';
  import { SceneView } from './scene';
  import { listAircraft, loadAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, readBest, writeBest, History, type SavedAircraft } from './storage';
@@ -31,11 +31,14 @@
  let fuelCenters=$derived(aircraft.engine.count>0&&aircraft.fuelTank.capacity>0?fuelCgRange(aircraft):null);
  let thrustCenter=$derived.by(()=>{const mounts=engineMounts(aircraft);if(!mounts.length)return null;return mounts.reduce((center,mount)=>({x:center.x+mount.x/mounts.length,y:center.y+mount.y/mounts.length,z:center.z+mount.z/mounts.length}),{x:0,y:0,z:0});});
  let recording:ReturnType<FlightSimulation['getRecording']>|null=null;let recordedLength=$state(0);let isReplay=$state(false);let lastDefinition=$state.raw(clone(defaultAircraft));
- let weight=$state(0),lateral=$state(0),rudder=$state(0),elevator=$state(0),aileron=$state(0);const keys=new Set<string>();const controls:Controls={weight:0,lateral:0,rudder:0,elevator:0,aileron:0};
+ const keys=new Set<string>();const controls:FlightControls={weight:0,lateral:0,rudder:0,elevator:0,aileron:0};
  const structureWings=summarizeWingStructure([]);
- let trimPitch=$state(0),trimRoll=$state(0),trimVisible=$state(false);
- let trimTimeout:ReturnType<typeof setTimeout>;
- let aeroPanel=$state<HTMLElement>();
+ let trimPitch=$state(0),trimRoll=$state(0),autoTrim=$state(false),adaptiveControls=$state(false);
+ let stickPointer:number|null=null,yawPointer:number|null=null,yawInput=0;
+ let displayedPitch=$derived(isReplay?hud.trimPitch??0:trimPitch),displayedRoll=$derived(isReplay?hud.trimRoll??0:trimRoll);
+ let actualPitch=$derived(lastDefinition.birdman?hud.controlInputs?.weight??0:hud.controlInputs?.elevator??0);
+ let actualRoll=$derived(lastDefinition.birdman?hud.controlInputs?.lateral??0:hud.controlInputs?.aileron??0);
+ let flightInputDisabled=$derived(!flightReady||isReplay||paused);
  let throttle=$state(0.6);
  const flightViews=['追尾','侧追尾','侧面','驾驶员','自由'];
  let flightCamera=$state('追尾');
@@ -85,22 +88,30 @@
  function renameSaved(id:string,name:string){try{const item=renameAircraft(id,name);saved=listAircraft();if(selectedId===id){change(d=>d.name=item.name);commit();}}catch(e){notify((e as Error).message);}}
  function fileExport(id:string){try{const definition=loadAircraft(id).definition,url=URL.createObjectURL(new Blob([exportAircraft(definition)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=definition.name+'.json';a.click();URL.revokeObjectURL(url);}catch(e){notify((e as Error).message);}}
  async function fileImport(e:Event){const input=e.target as HTMLInputElement;try{const f=input.files?.[0];if(f){if(f.size>100000)throw Error('文件超过 100 KB');if(replace(importAircraft(await f.text()))){selectedId='';notify('导入成功','success');}}}catch(e){notify(t('导入失败：{error}',{error:t((e as Error).message)}));}input.value='';}
- function clearControls(){stick=false;stickX=stickY=0;keys.clear();weight=lateral=rudder=elevator=aileron=0;controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
- function start(replay=false){trimPitch=trimRoll=0;trimVisible=false;clearTimeout(trimTimeout);try{const definition=replay?lastDefinition:forChallenge(aircraft),selectedChallenge=replay?lastChallenge:challenge;simulation=new FlightSimulation(definition,selectedChallenge);lastDefinition=definition;lastChallenge=selectedChallenge;if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(aero);flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
+ function clearControls(){stick=false;stickPointer=yawPointer=null;stickX=stickY=yawInput=0;keys.clear();controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
+ function start(replay=false){trimPitch=trimRoll=0;autoTrim=adaptiveControls=false;throttle=0.6;try{const definition=replay?lastDefinition:forChallenge(aircraft),selectedChallenge=replay?lastChallenge:challenge;simulation=new FlightSimulation(definition,selectedChallenge);lastDefinition=definition;lastChallenge=selectedChallenge;if(replay&&recording)simulation.loadReplay(recording);samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);scene.setDebug(aero);flightCamera='追尾';scene.cameraView(flightCamera);}catch(e){notify((e as Error).message);}}
  function beginFlight(){if(screen!=='flight'||!simulation||flightReady)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='low-altitude')audio.launch();}
  function togglePause(){if(screen==='flight'&&flightReady){paused=!paused;clearControls();}}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;if(result?.landing==='terrain'){audio.crash();scene.markCrash(()=>audio.stroke());}clearControls();recordedLength=simulation.recordingLength;screen='result';flightCamera='追尾';scene.cameraView('轨道');if(!isReplay){recording=simulation.getRecording();try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
- function design(){if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';trimVisible=false;clearTimeout(trimTimeout);simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
+ function design(){if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
  function challengeAircraft(){return challenge==='birdman'?defaultAircraft:presets.find(p=>p.name===(challenge==='downhill'?'高山速降机动型':'低空喷气巡航型'))!;}
  function enterChallenge(next:ChallengeMode){challenge=next;selectedId='';const nextAircraft=clone(challengeAircraft());for(const key of ['mainWing','horizontalTail','verticalTail'] as const){nextAircraft[key].materialId=aircraft[key].materialId;nextAircraft[key].materialAmount=aircraft[key].materialAmount;}aircraft=forChallenge(nextAircraft);history=new History(clone(aircraft));historyVersion=0;showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
- function flashTrim(){trimVisible=true;clearTimeout(trimTimeout);trimTimeout=setTimeout(()=>trimVisible=false,2000);requestAnimationFrame(()=>aeroPanel?.scrollIntoView({block:'nearest'}));}
+ function toggleAutoTrim(){if(screen!=='flight'||!flightReady||isReplay||lastDefinition.birdman)return;autoTrim=!autoTrim;}
+ function toggleAdaptiveControls(){if(screen==='flight'&&flightReady&&!isReplay)adaptiveControls=!adaptiveControls;}
+ function setPitchTrim(value:number){trimPitch=value;autoTrim=false;}
+ function moveStick(e:PointerEvent){const bounds=e.currentTarget instanceof HTMLElement?e.currentTarget.getBoundingClientRect():null;if(!bounds)return;const radius=Math.min(bounds.width,bounds.height)/2,x=(e.clientX-bounds.left-bounds.width/2)/radius,y=(bounds.top+bounds.height/2-e.clientY)/radius,length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;}
+ function beginStick(e:PointerEvent){if(flightInputDisabled)return;e.preventDefault();stickPointer=e.pointerId;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);moveStick(e);}
+ function releaseStick(e:PointerEvent){if(stickPointer!==e.pointerId)return;stickPointer=null;stickX=stickY=0;}
+ function beginYaw(e:PointerEvent,value:number){if(flightInputDisabled)return;e.preventDefault();yawPointer=e.pointerId;yawInput=value;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);}
+ function releaseYaw(e:PointerEvent){if(yawPointer===e.pointerId){yawPointer=null;yawInput=0;}}
  function keyboard(e:KeyboardEvent,down:boolean){
- if(!down&&e.code==='KeyX'){stick=false;stickX=stickY=0;}
+ if(!down&&e.code==='KeyX'&&stickPointer===null){stick=false;stickX=stickY=0;}
  if(e.code==='Escape'&&down&&!e.repeat){e.preventDefault();if(screen==='flight'||screen==='result')design();else if(screen==='design'){screen='menu';showLibrary=false;}return;}
  const target=e.target as HTMLElement;
  if((e.ctrlKey||e.metaKey)&&e.code==='KeyA'&&!target.closest('input:not([type=range]),textarea,[contenteditable="true"]'))e.preventDefault();
  if((target.closest('input:not([type=range]):not([type=checkbox]):not([type=file]),textarea,[contenteditable="true"]')&&!(target.closest('.trim-controls')&&['KeyH','KeyJ','KeyK','KeyL'].includes(e.code))))return;
- if(screen==='flight'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.code==='Space'||e.code==='KeyC')){
+ if(target.matches('input[type=range]')&&['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+ if(screen==='flight'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.code==='Space'||e.code==='KeyC')&&!(e.code==='Space'&&target.closest('button,select,summary,a'))){
  e.preventDefault();
  if(down&&!e.repeat){
  if(e.code==='Space'){if(flightReady)togglePause();else beginFlight();}
@@ -109,12 +120,13 @@
  return;
  }
  if(!e.ctrlKey&&!e.metaKey&&!e.altKey){
- if(down&&screen==='flight'&&flightReady&&!isReplay&&['KeyH','KeyJ','KeyK','KeyL'].includes(e.code)){e.preventDefault();if(e.code==='KeyH'||e.code==='KeyL')trimRoll=trimStep(trimRoll,e.code==='KeyL'?1:-1);else trimPitch=trimStep(trimPitch,e.code==='KeyK'?1:-1);flashTrim();return;}
+ if(down&&screen==='flight'&&flightReady&&!isReplay&&['KeyH','KeyJ','KeyK','KeyL'].includes(e.code)){e.preventDefault();if(e.code==='KeyH'||e.code==='KeyL')trimRoll=trimStep(trimRoll,e.code==='KeyL'?1:-1);else setPitchTrim(trimStep(displayedPitch,e.code==='KeyK'?1:-1));return;}
+ if(down&&!e.repeat&&screen==='flight'&&['KeyT','KeyY'].includes(e.code)){e.preventDefault();if(e.code==='KeyT')toggleAutoTrim();else toggleAdaptiveControls();return;}
  if(e.code==='KeyR'&&down&&!e.repeat&&(screen==='flight'||screen==='result')){e.preventDefault();start();return;}
- if(e.code==='KeyX'){if(screen==='flight'&&flightReady&&!isReplay){stick=down;if(!down)stickX=stickY=0;}return;}
+ if(e.code==='KeyX'){if(screen==='flight'&&!flightInputDisabled){stick=down;if(!down&&stickPointer===null)stickX=stickY=0;}return;}
  }
  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
- if(down&&screen==='flight'&&flightReady)keys.add(e.key.toLowerCase());else keys.delete(e.key.toLowerCase());
+ if(down&&screen==='flight'&&!flightInputDisabled)keys.add(e.key.toLowerCase());else keys.delete(e.key.toLowerCase());
  if(down&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
  }
 onMount(()=>{
@@ -135,16 +147,18 @@ const tick=(now:number)=>{
       while(accumulator>=fixedDt&&steps<5){
         const pitchInput=stickY+(keys.has('arrowup')||keys.has('w')?1:0)-(keys.has('arrowdown')||keys.has('s')?1:0);
         const rollInput=stickX+(keys.has('arrowright')||keys.has('d')?1:0)-(keys.has('arrowleft')||keys.has('a')?1:0);
-        controls.weight=lastDefinition.birdman?clamp(weight+trimPitch+pitchInput,-1,1):0;
-        controls.lateral=lastDefinition.birdman?clamp(lateral+trimRoll+rollInput,-1,1):0;
-        controls.rudder=clamp(rudder+(keys.has('e')?1:0)-(keys.has('q')?1:0),-1,1);
-        controls.elevator=lastDefinition.birdman?0:clamp(elevator+trimPitch+pitchInput,-1,1);
-        controls.aileron=lastDefinition.birdman?0:clamp(aileron+trimRoll+rollInput,-1,1);
+        controls.weight=lastDefinition.birdman?clamp(trimPitch+pitchInput,-1,1):0;
+        controls.lateral=lastDefinition.birdman?clamp(trimRoll+rollInput,-1,1):0;
+        controls.rudder=clamp(yawInput+(keys.has('e')?1:0)-(keys.has('q')?1:0),-1,1);
+        controls.elevator=lastDefinition.birdman?0:clamp(pitchInput,-1,1);
+        controls.aileron=lastDefinition.birdman?0:clamp(rollInput,-1,1);
         if(!isReplay)throttle=clamp(throttle+((keys.has('shift')?1:0)-(keys.has('control')?1:0))*fixedDt*0.35,0,1);
-        controls.throttle=throttle;
+        controls.throttle=throttle;controls.trimPitch=trimPitch;controls.trimRoll=trimRoll;
+        controls.autoTrim=autoTrim&&!lastDefinition.birdman;controls.adaptiveControls=adaptiveControls;
         scene.captureFlightState();
          const wasLaunching=simulation!.launching;
          simulation!.step(controls,fixedDt);flightElapsed+=fixedDt;sampleFlight();
+         if(autoTrim&&!isReplay)trimPitch=simulation!.telemetry.trimPitch;
          syncAudio();
          if(lastChallenge!=='low-altitude'&&wasLaunching&&!simulation!.launching)audio.release();
         accumulator-=fixedDt;steps++;
@@ -163,15 +177,13 @@ const tick=(now:number)=>{
   request=requestAnimationFrame(tick);
 };
 request=requestAnimationFrame(tick);
-const mouse=(e:PointerEvent)=>{if(!stick)return;const radius=innerHeight*0.3;let x=(e.clientX-innerWidth/2)/radius,y=(innerHeight/2-e.clientY)/radius;const length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;};
+const mouse=(e:PointerEvent)=>{if(!stick||stickPointer!==null)return;const radius=innerHeight*0.3;let x=(e.clientX-innerWidth/2)/radius,y=(innerHeight/2-e.clientY)/radius;const length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;};
 window.addEventListener('pointermove',mouse);
-const releaseFocus=(e:Event)=>{const target=e.target;if(target instanceof HTMLElement&&target.matches('button,select,summary,a,input[type=range],input[type=checkbox],input[type=file]'))target.blur();};
- document.addEventListener('focusin',releaseFocus);
 const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,false),blur=clearControls;window.addEventListener('keydown',down);window.addEventListener('keyup',up);window.addEventListener('blur',blur);document.addEventListener('visibilitychange',visibility);
  try{saved=listAircraft();best=readBest(challenge);}catch(e){notify((e as Error).message);}
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
- Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get result(){return result}}});
- return()=>{document.removeEventListener('focusin',releaseFocus);clearTimeout(trimTimeout);window.removeEventListener('pointermove',mouse);clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
+ Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get flightControls(){return {trimPitch:displayedPitch,trimRoll:displayedRoll,autoTrim:isReplay?hud.autoTrim:autoTrim,adaptiveControls:isReplay?hud.adaptiveControls:adaptiveControls,controlLimit:hud.controlLimit??1,inputs:simulation?.telemetry.controlInputs}},get result(){return result}}});
+ return()=>{window.removeEventListener('pointermove',mouse);clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
 
 </script>
 <svelte:head><title>{t('翼构方程')} · {t('设计与驾驶')}</title></svelte:head>
@@ -213,17 +225,15 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
 
 {#snippet trimControls()}
  <div class="trim-controls" aria-label={t("配平控制")}>
- <label class="pitch-trim">{t("升降舵配平")} · J/K <output>{((trimPitch+1)*50).toFixed(0)}%</output><span class="trim-track vertical"><input aria-label={t("升降舵配平")} disabled={!flightReady||isReplay} type="range" min="0" max="100" step="1" value={(trimPitch+1)*50} oninput={e=>{trimPitch=trimFromPointer(e.currentTarget.valueAsNumber);e.currentTarget.value=String((trimPitch+1)*50);flashTrim();}}/><i aria-hidden="true"></i></span></label>
- <label class="roll-trim">{t("副翼配平")} · H/L <output>{((trimRoll+1)*50).toFixed(0)}%</output><span class="trim-track"><input aria-label={t("副翼配平")} disabled={!flightReady||isReplay} type="range" min="0" max="100" step="1" value={(trimRoll+1)*50} oninput={e=>{trimRoll=trimFromPointer(e.currentTarget.valueAsNumber);e.currentTarget.value=String((trimRoll+1)*50);flashTrim();}}/><i aria-hidden="true"></i></span></label>
- <small>{t("50% 中立 · 鼠标吸附中点 · 快捷键每格 10%")}</small>
+ <label class="pitch-trim"><span>{t("升降舵配平")} <kbd>J/K</kbd> <output>{((displayedPitch+1)*50).toFixed(0)}%</output></span><span class="trim-track"><input aria-label={t("升降舵配平")} disabled={!flightReady||isReplay} type="range" min="0" max="100" step="1" value={(displayedPitch+1)*50} oninput={e=>{setPitchTrim(trimFromPointer(e.currentTarget.valueAsNumber));e.currentTarget.value=String((trimPitch+1)*50);}}/><i aria-hidden="true"></i></span></label>
+ <label class="roll-trim"><span>{t("副翼配平")} <kbd>H/L</kbd> <output>{((displayedRoll+1)*50).toFixed(0)}%</output></span><span class="trim-track"><input aria-label={t("副翼配平")} disabled={!flightReady||isReplay} type="range" min="0" max="100" step="1" value={(displayedRoll+1)*50} oninput={e=>{trimRoll=trimFromPointer(e.currentTarget.valueAsNumber);e.currentTarget.value=String((trimRoll+1)*50);}}/><i aria-hidden="true"></i></span></label>
+ <small>{t("50% 中立 · 鼠标吸附中点 · 快捷键每格 5%")}</small>
  </div>
 {/snippet}
 {#snippet aeroWindow()}
-{#if (aero||trimVisible)&&hud.aerodynamics}<aside bind:this={aeroPanel} class="aero-live" aria-label={t("实时气动数据")}><h2>{aero?t("实时气动数据"):t("配平")}</h2>
-{@render trimControls()}
-{#if aero}<dl>
+{#if aero&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
 {#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"],["阻力",hud.aerodynamics.drag.length(),"N"],["侧向力",hud.aerodynamics.force.z,"N"],["攻角",hud.alpha,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""],["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
-</dl>{/if}</aside>{/if}
+</dl></aside>{/if}
 
 {/snippet}
 <div class="app" class:flying={screen==='flight'} class:designing={screen==='design'} class:powered-flight={screen==='flight'&&lastDefinition.engine.count>0} class:low-flying={screen==='flight'&&lastChallenge==='low-altitude'} class:awaiting-flight={screen==='flight'&&!flightReady}>
@@ -298,7 +308,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  </section>
  </section>
  {:else if screen==='flight'}
- {#if !flightReady}<button class="primary flight-start" onclick={beginFlight}>{t("开始试飞")}</button>{/if}
+ {#if !flightReady}<div class="launch-action"><button class="primary launch-start flight-start" onclick={beginFlight}>{t("开始试飞")}<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg></button><p>{t("空格开始 / 暂停 / 继续")}</p></div>{/if}
  {#if flightCamera==='驾驶员'}
  <svg class="pilot-hud" viewBox="0 0 600 400" aria-label="HUD" role="img">
  <title>{t("飞行数据")}</title>
@@ -337,7 +347,20 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}
  <details class="advanced-hud"><summary>{t("姿态与结构 ·")} {(hud.fractureCount??0)>0?t("已断裂 {p0} 次",{p0:hud.fractureCount}):t("结构完整")} {t("· 极限")} {((hud.maxStressRatio??0)*100).toFixed(0)}%</summary><div class="structure-status" aria-label={t("结构载荷与断裂状态")}><p>{t("结构极限利用率")} <output aria-label={t("结构极限利用率")}>{((hud.maxStressRatio??0)*100).toFixed(1)}%</output> {t("· 弹性限利用率")} {((hud.maxYieldRatio??0)*100).toFixed(1)}%</p>{#each hud.wings??[] as wing}<p class="wing-structure" data-wing={wing.key}><strong>{t(wing.name)}</strong> · {t('结构极限')} <output aria-label={t('{name}结构极限利用率',{name:t(wing.name)})}>{(wing.stress*100).toFixed(1)}%</output> · {t('弹性限')} {(wing.yieldRatio*100).toFixed(1)}% · {t('连接 {attached} 段 / 脱离 {detached} 段',{attached:wing.attached,detached:wing.detached})}</p>{/each}<p>{t("最大形变")} <output aria-label={t("最大结构形变")}>{((hud.maxDeflection??0)*1000).toFixed(1)}</output> {t("mm · 独立断片")} <output aria-label={t("独立断片数量")}>{hud.fragmentCount??0}</output> {t("片")}</p>{#if (hud.fractureCount??0)>0}<p role="status"><strong>{t("承力梁已断裂")} {hud.fractureCount} {t("次。")}</strong>{t("主体继续飞行；断片独立运动，断片落地不结束主体。")}</p>{:else if (hud.maxStressRatio??0)>=0.8}<p role="status"><strong>{t("接近结构极限，减小载荷。")}</strong></p>{/if}{#if (hud.maxYieldRatio??0)>1}<p>{t("超过等效弹性限。当前仍为线弹性近似，不模拟塑性或真实颤振。")}</p>{/if}</div></details>
  </div>
- <p class="flight-keyboard-hints">{t("W / S 俯仰 · A / D 滚转 · Q / E 偏航 · X 鼠标操纵 · C 镜头 · Space 开始/暂停")}</p>
+ <section class="stick-panel" class:controls-disabled={!flightReady} aria-label={t("杆量与配平")}>
+ <div class="stick-heading"><strong>{t("杆量与配平")}</strong>{#if isReplay}<span>{t("飞行重放")}</span>{:else}<span>W/S · A/D · X</span>{/if}</div>
+ <div class="stick-main">
+ <div class="stick-input">
+ <button class="stick-pad" aria-label={t("操纵杆")} title={t("拖动控制俯仰与滚转")} disabled={flightInputDisabled} onpointerdown={beginStick} onpointermove={e=>{if(stickPointer===e.pointerId)moveStick(e);}} onpointerup={releaseStick} onpointercancel={releaseStick} onlostpointercapture={releaseStick}>
+ <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="stick-rim" cx="60" cy="60" r="56"/><path class="stick-cross" d="M 60 8 V 112 M 8 60 H 112"/><circle class="stick-limit" cx="60" cy="60" r={50*(lastDefinition.birdman?1:hud.controlLimit??1)}/><path class="stick-trim-marker" d={`M ${60+displayedRoll*35-4} ${60-displayedPitch*35} h 8 M ${60+displayedRoll*35} ${60-displayedPitch*35-4} v 8`}/><circle class="stick-position" cx={60+actualRoll*35} cy={60-actualPitch*35} r="6" data-pitch={actualPitch} data-roll={actualRoll}/></svg>
+ </button>
+ <div class="yaw-controls"><button aria-label={t("左偏航")} disabled={flightInputDisabled} onpointerdown={e=>beginYaw(e,-1)} onpointerup={releaseYaw} onpointercancel={releaseYaw} onlostpointercapture={releaseYaw} onkeydown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();yawInput=-1;}}} onkeyup={()=>yawInput=0} onblur={()=>yawInput=0}>Q</button><span>{t("偏航")}</span><button aria-label={t("右偏航")} disabled={flightInputDisabled} onpointerdown={e=>beginYaw(e,1)} onpointerup={releaseYaw} onpointercancel={releaseYaw} onlostpointercapture={releaseYaw} onkeydown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();yawInput=1;}}} onkeyup={()=>yawInput=0} onblur={()=>yawInput=0}>E</button></div>
+ </div>
+ {@render trimControls()}
+ </div>
+ <div class="flight-assists"><button class="toggle-switch" role="switch" aria-label={t("自动升降舵配平（T）")} aria-checked={isReplay?hud.autoTrim??false:autoTrim} disabled={lastDefinition.birdman||!flightReady||isReplay} onclick={toggleAutoTrim}><span>{t("自动升降舵配平")}</span><kbd>T</kbd></button><button class="toggle-switch" role="switch" aria-label={t("自适应杆量（Y）")} aria-checked={isReplay?hud.adaptiveControls??false:adaptiveControls} disabled={!flightReady||isReplay} onclick={toggleAdaptiveControls}><span>{t("自适应杆量")}</span><kbd>Y</kbd></button></div>
+ </section>
+ {#if flightReady}<p class="flight-keyboard-hints">{t("W / S 俯仰 · A / D 滚转 · Q / E 偏航 · X 鼠标操纵 · C 镜头 · Space 开始/暂停")}</p>{/if}
 
  {:else if screen==='result'&&result}
  <section class="results" class:race-results={lastChallenge!=='birdman'} aria-label={t("飞行结算")}>

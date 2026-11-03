@@ -115,6 +115,10 @@ export interface ChallengeCheckpoint {
   x: number; y: number; z: number;
   halfWidth: number; maxHeight: number;
 }
+/** 速降门顶沿实际三角地形保持相同离地高度；低空门保留固定参考高度。 */
+export function challengeGateCeiling(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>, z: number): number {
+  return (challenge === 'downhill' ? challengeCollisionHeight(challenge, gate.x, z) : gate.y) + gate.maxHeight;
+}
 function gate(challenge: ChallengeMode, x: number): ChallengeCheckpoint {
   const z = challengeCenter(challenge, x);
   return { x, z, y: challengeTerrainHeight(challenge, x, z),

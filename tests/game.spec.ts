@@ -982,15 +982,11 @@ test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机�
   }
 });
 
-test('右上角按钮启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
+test('启动飞行，实时能耗及结算机械能曲线使用真实飞行数据', async ({ page }) => {
   await enterDesign(page);
   await page.getByRole('button', { name: '前往挑战' }).click();
   await expectWaiting(page);
   const start = page.getByRole('button', { name: '开始试飞', exact: true });
-  const box = await start.boundingBox(), viewport = page.viewportSize()!;
-  if (!box) throw new Error('开始按钮不可见');
-  expect(box.x + box.width / 2).toBeGreaterThan(viewport.width / 2);
-  expect(box.y).toBeLessThan(viewport.height / 2);
   const cost = page.getByLabel('实时能耗', { exact: true });
   await expect(cost).toHaveText('—');
   await start.focus();

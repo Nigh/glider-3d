@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, validateAircraft, wing, type Controls } from '../src/model';
-import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY } from '../src/physics';
-import { DOWNHILL_PLAIN_START, downhillHeightLimit, downhillRuinPassages, downhillRuins, downhillRouteCenter, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
-import { engineCatalog } from '../src/engines';
+import { adaptiveControlLimit, AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
+import { challengeGateCeiling, DOWNHILL_PLAIN_START, downhillHeightLimit, downhillRuinPassages, downhillRuins, downhillRouteCenter, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
+import { engineCatalog, engineDensityRatio, engineThrustFactor } from '../src/engines';
 import jetCruise50m from './fixtures/jet-cruise-50m.json';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -76,6 +76,68 @@ describe('三轴操纵与高山路径边界', () => {
     }
     const replay = new FlightSimulation(downhillAircraft, 'downhill', 0); replay.loadReplay(source.getRecording());
     for (const state of states) { replay.step(neutral); expect([...replay.position.toArray(), ...replay.quaternion.toArray(), ...Object.values(replay.controlDeflections)]).toEqual(state); }
+  });
+
+  it('自适应杆量按空速动压缩小，配平和三轴目标遵循同一上限', () => {
+    expect(adaptiveControlLimit(0)).toBe(1); expect(adaptiveControlLimit(25)).toBe(1);
+    expect(adaptiveControlLimit(50)).toBe(0.25); expect(adaptiveControlLimit(100)).toBe(0.0625);
+    for (const speed of [20, 50, 100]) {
+      const s = create(); s.velocity.set(speed, 0, 0);
+      const integrate = Reflect.get(s, 'integrate') as (input: FlightControls, dt: number) => void;
+      const command = { ...neutral, throttle: 0, elevator: 1, aileron: -1, rudder: 1, trimPitch: 0.8, trimRoll: -0.8, adaptiveControls: true };
+      Reflect.set(s, 'trimPitch', command.trimPitch);
+      integrate.call(s, command, 0.25);
+      const limit = adaptiveControlLimit(speed);
+      expect(Math.abs(s.telemetry.controlInputs.elevator)).toBeLessThanOrEqual(limit);
+      expect(Math.abs(s.telemetry.controlInputs.aileron)).toBeLessThanOrEqual(limit);
+      expect(Math.abs(s.telemetry.controlInputs.rudder)).toBeLessThanOrEqual(limit);
+    }
+  });
+
+  it('自动升降舵配平顺俯仰角速度缓调，主动杆量优先，鸟人强制禁用', () => {
+    for (const direction of [-1, 1]) {
+      const s = create(); s.omega.z = direction * 0.5;
+      s.step({ ...neutral, autoTrim: true }, 0.01);
+      expect(s.telemetry.autoTrim).toBe(true);
+      expect(s.telemetry.trimPitch).toBeCloseTo(direction * 0.002, 12);
+      const trim = s.telemetry.trimPitch;
+      s.step({ ...neutral, elevator: 0.5, autoTrim: true }, 0.01);
+      expect(s.telemetry.trimPitch).toBe(trim);
+      s.step({ ...neutral, autoTrim: false, trimPitch: trim }, 0.01);
+      expect(s.telemetry.autoTrim).toBe(false); expect(s.telemetry.trimPitch).toBe(trim);
+    }
+    const slow = create(); slow.velocity.set(4, 0, 0); slow.omega.z = 1;
+    slow.step({ ...neutral, autoTrim: true, trimPitch: 0.3 }, 0.01);
+    expect(slow.telemetry.trimPitch).toBe(0.3);
+    const saturated = create(); saturated.velocity.set(50, 0, 0); saturated.omega.z = 1;
+    saturated.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: 1 }, 0.01);
+    expect(saturated.telemetry.trimPitch).toBe(0.25);
+    const edited = create(); edited.step({ ...neutral, autoTrim: true, trimPitch: 0.1 }, 0.01);
+    edited.step({ ...neutral, autoTrim: true, trimPitch: 0.6, elevator: 0.5 }, 0.01);
+    expect(edited.telemetry.trimPitch).toBe(0.6);
+    const birdman = new FlightSimulation(defaultAircraft, 'birdman', 0);
+    birdman.step({ ...neutral, autoTrim: true, trimPitch: 1, trimRoll: 1 });
+    expect(birdman.telemetry.autoTrim).toBe(false); expect(birdman.telemetry.trimPitch).toBe(1); expect(birdman.telemetry.trimRoll).toBe(1);
+    expect(birdman.controlDeflections.elevator).toBeCloseTo(0, 12); expect(birdman.controlDeflections.aileron).toBeCloseTo(0, 12);
+  });
+
+  it('开关、手动配平、自动配平和实际杆量随混合步长逐帧重放，累计时间重置', () => {
+    const source = new FlightSimulation(downhillAircraft, 'downhill', 0), states: unknown[] = [];
+    const state = (s: FlightSimulation) => ({
+      position: s.position.toArray(), velocity: s.velocity.toArray(), omega: s.omega.toArray(),
+      inputs: { ...s.telemetry.controlInputs }, trim: s.telemetry.trimPitch, roll: s.telemetry.trimRoll,
+      auto: s.telemetry.autoTrim, adaptive: s.telemetry.adaptiveControls, elapsed: s.elapsedTime,
+    });
+    for (let i = 0; i < 150 && !source.ended; i++) {
+      source.step({ ...neutral, autoTrim: i >= 110 && i < 140, adaptiveControls: i >= 20 && i < 145,
+        trimPitch: i < 140 ? 0.15 : -0.1, trimRoll: -0.2, elevator: i % 7 ? 0 : 0.3 }, i % 2 ? 1 / 60 : 1 / 30);
+      states.push(state(source));
+    }
+    const replay = new FlightSimulation(downhillAircraft, 'downhill', 0); replay.loadReplay(source.getRecording());
+    for (const expected of states) { replay.step(neutral, 0.25); expect(state(replay)).toEqual(expected); }
+    expect(replay.replayFinished).toBe(true); expect(source.elapsedTime).toBeGreaterThan(2);
+    source.reset(); expect(source.elapsedTime).toBe(0); expect(source.telemetry.trimPitch).toBe(0);
+    expect(() => source.step({ ...neutral, trimPitch: NaN })).toThrow();
   });
 
   it('侧移改变CG、惯量及真实滚转，录像保留侧向输入', () => {
@@ -205,6 +267,48 @@ describe('三轴操纵与高山路径边界', () => {
       expect(s.telemetry.timingStarted).toBe(true);
     }
     expect(s.telemetry.challengeProgress).toBe(1 / challengeCheckpoints(s.challenge).length);
+  });
+
+  it('速降全宽门顶沿局部地形，起点、峡谷和平原门都按门面插值判高度与横向位置', () => {
+    const gates = [challengeStartGate('downhill')!, ...challengeCheckpoints('downhill')];
+    const s = new FlightSimulation(downhillAircraft, 'downhill', 0);
+    const previous = Reflect.get(s, 'previousPosition') as Vector3;
+    const advance = Reflect.get(s, 'advanceChallenge') as (dt: number, timed: number) => number;
+    for (const [index, gate] of gates.entries()) {
+      for (const z of [challengeTerrainGrid.minZ, gate.z - 300, gate.z, gate.z + 300, challengeTerrainGrid.maxZ]) {
+        const ceiling = challengeGateCeiling('downhill', gate, z);
+        expect(ceiling).toBe(challengeCollisionHeight('downhill', gate.x, z) + gate.maxHeight);
+        for (const above of [false, true]) {
+          Reflect.set(s, 'raceStarted', index > 0); Reflect.set(s, 'checkpointIndex', Math.max(0, index - 1));
+          previous.set(gate.x - 1, ceiling + (above ? 0.01 : 0) + 8, z - 20);
+          s.position.set(gate.x + 1, ceiling + (above ? 0.01 : 0) - 8, z + 20);
+          advance.call(s, 0.02, index > 0 ? 0.02 : 0);
+          if (index === 0) expect(Reflect.get(s, 'raceStarted')).toBe(!above);
+          else expect(Reflect.get(s, 'checkpointIndex')).toBe(index - (above ? 1 : 0));
+        }
+      }
+    }
+    const low = challengeStartGate('low-altitude')!;
+    expect(challengeGateCeiling('low-altitude', low, low.z + 90)).toBe(low.y + low.maxHeight);
+  });
+
+  it('废墟平原两侧真实穿门超过中心绝对门顶仍算进度，明显过高继续淘汰', () => {
+    const index = challengeCheckpoints('downhill').findIndex(g => g.x > 5150), gate = challengeCheckpoints('downhill')[index];
+    const d = clone(downhillAircraft);
+    d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
+    for (const side of [-1, 1]) for (const clearance of [20, gate.maxHeight + 5]) {
+      const s = crossStart(new FlightSimulation(d, 'downhill', 0), 20), z = gate.z + side * 350;
+      Reflect.set(s, 'checkpointIndex', index);
+      s.position.set(gate.x - 0.1, challengeTerrainHeight('downhill', gate.x, z) + clearance, z);
+      s.velocity.set(30, 0, 0); s.quaternion.identity();
+      expect(s.position.y).toBeGreaterThan(gate.y + gate.maxHeight);
+      s.step(neutral, 0.01);
+      if (clearance < gate.maxHeight) {
+        expect(s.ended).toBe(false); expect(s.telemetry.challengeProgress).toBe((index + 1) / 30);
+      } else {
+        expect(s.result?.landing).toBe('boundary'); expect(s.telemetry.challengeProgress).toBe(index / 30);
+      }
+    }
   });
 });
 
@@ -469,19 +573,70 @@ describe('动力与燃油边界', () => {
     expect(derive(twin).inertia.y).toBeGreaterThan(derive(one).inertia.y);
     const a = new FlightSimulation(one, 'low-altitude', 0), b = new FlightSimulation(twin, 'low-altitude', 0);
     a.step({ ...neutral, throttle: 1 }, 0.25); b.step({ ...neutral, throttle: 1 }, 0.25);
-    expect(b.telemetry.thrust).toBeCloseTo(a.telemetry.thrust * 2, 10);
-    expect(one.fuelTank.capacity - b.telemetry.fuelRemaining).toBeCloseTo((one.fuelTank.capacity - a.telemetry.fuelRemaining) * 2, 10);
+    expect(b.telemetry.thrust / a.telemetry.thrust).toBeGreaterThan(1.99);
+    expect(b.telemetry.thrust / a.telemetry.thrust).toBeLessThan(2.01);
+    const fuelRatio = (one.fuelTank.capacity - b.telemetry.fuelRemaining) / (one.fuelTank.capacity - a.telemetry.fuelRemaining);
+    expect(fuelRatio).toBeGreaterThan(1.99); expect(fuelRatio).toBeLessThan(2.01);
     one.engine.x = -2; one.engine.y = -0.5;
     const crash = airborne(new FlightSimulation(one, 'low-altitude', 0)); crash.position.y = challengeTerrainHeight('low-altitude', crash.position.x, crash.position.z) + 0.4;
     crash.step(neutral); expect(crash.result?.landing).toBe('terrain');
   });
 
-  it('每台引擎额定360N，转速响应与耗油率不变', () => {
+  it('每台引擎海平面静推力360N，转速平方积分保留1.8s响应', () => {
     const s = new FlightSimulation(poweredAircraft, 'low-altitude', 0), dt = 1 / 60, tau = 1.8;
     expect(engineCatalog[poweredAircraft.engine.type].maxThrust).toBe(360); expect(engineCatalog[poweredAircraft.engine.type].fuelFlow).toBe(0.012);
     s.step({ ...neutral, throttle: 1 }, dt);
     const integral = dt - 2 * tau * (1 - Math.exp(-dt / tau)) + tau / 2 * (1 - Math.exp(-2 * dt / tau));
-    expect(s.telemetry.thrust).toBeCloseTo(360 * integral / dt, 9);
+    expect(Reflect.get(s, 'availableThrust')).toBeCloseTo(360 * integral / dt, 9);
+    expect(s.telemetry.thrust).toBeLessThan(360 * integral / dt);
+  });
+
+  it('标准日海拔降低流量，净推力含轴向进气动量而不拿横向空速冒充冲压阻力', () => {
+    const exhaust = engineCatalog['jet-01'].exhaustVelocity;
+    expect(engineDensityRatio(0)).toBe(1); expect(engineDensityRatio(-100)).toBe(1);
+    expect(engineDensityRatio(2000)).toBeCloseTo(0.82, 2);
+    expect(engineDensityRatio(11_000 + 0.001)).toBeCloseTo(engineDensityRatio(11_000), 6);
+    expect(engineDensityRatio(20_000)).toBeLessThan(engineDensityRatio(11_000));
+    expect(engineThrustFactor(0, 50, exhaust)).toBe(0.9);
+    expect(engineThrustFactor(0, -50, exhaust)).toBe(1);
+    expect(engineThrustFactor(0, exhaust, exhaust)).toBe(0);
+    const sample = (altitude: number, velocity: Vector3) => {
+      const s = airborne(new FlightSimulation(poweredAircraft, 'downhill', 0));
+      s.position.y = altitude; s.velocity.copy(velocity); Reflect.set(s, 'engineRpm', 1);
+      s.step({ ...neutral, throttle: 1 }, 1e-4);
+      return s;
+    };
+    const slow = sample(1800, new Vector3(20, 0, 0)), fast = sample(1800, new Vector3(80, 0, 0));
+    const high = sample(2800, new Vector3(20, 0, 0)), sideslip = sample(1800, new Vector3(20, 0, 60));
+    expect(fast.telemetry.thrust).toBeLessThan(slow.telemetry.thrust * 0.9);
+    expect(high.telemetry.thrust).toBeLessThan(slow.telemetry.thrust);
+    expect(high.telemetry.fuelRemaining).toBeGreaterThan(slow.telemetry.fuelRemaining);
+    expect(fast.telemetry.fuelRemaining).toBe(slow.telemetry.fuelRemaining);
+    expect(sideslip.telemetry.thrust).toBeCloseTo(slow.telemetry.thrust, 1);
+    for (const s of [slow, fast, high, sideslip]) {
+      const t = s.telemetry;
+      expect(Math.abs(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork - t.waterWork - t.initialEnergy) / t.initialEnergy).toBeLessThan(1e-8);
+    }
+  });
+
+  it('发动机安装点角速度改变实际进气速度与推力矩，耗尽燃油仍同比限制可用推力', () => {
+    const stationary = airborne(new FlightSimulation(poweredAircraft, 'downhill', 0));
+    const rotating = airborne(new FlightSimulation(poweredAircraft, 'downhill', 0));
+    for (const s of [stationary, rotating]) {
+      s.position.y = 1800; s.velocity.set(40, 0, 0); Reflect.set(s, 'availableThrust', 360);
+    }
+    rotating.omega.z = 1;
+    const evaluate = Reflect.get(stationary, 'evaluateForces') as (input: Controls, velocity: Vector3, omega: Vector3, orientation: typeof stationary.quaternion, position: Vector3) => void;
+    for (const s of [stationary, rotating]) evaluate.call(s, neutral, s.velocity, s.omega, s.quaternion, s.position);
+    const armY = engineMounts(rotating.definition)[0].y - rotating.cg.y;
+    const thrustDifference = Reflect.get(rotating, 'thrust') - Reflect.get(stationary, 'thrust');
+    expect(thrustDifference * armY).toBeGreaterThan(0);
+    const d = clone(poweredAircraft); d.fuelTank.capacity = 0.000001;
+    const limited = airborne(new FlightSimulation(d, 'downhill', 0)); limited.position.y = 1800;
+    Reflect.set(limited, 'engineRpm', 1); limited.step({ ...neutral, throttle: 1 }, 0.01);
+    expect(limited.telemetry.fuelRemaining).toBe(0);
+    expect(Reflect.get(limited, 'availableThrust')).toBeLessThan(360);
+    expect(limited.telemetry.propulsionWork).toBeGreaterThan(0);
   });
 });
 
