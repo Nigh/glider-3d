@@ -3,7 +3,7 @@ import { Box3, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, Me
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
 import { FlightSimulation, LAUNCH } from '../src/physics';
-import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
+import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, downhillCourseCeiling, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 function svgElement() {
@@ -276,11 +276,11 @@ describe('弹射蒸汽与门框边界', () => {
     }
   });
 
-  it('速降门顶与警戒带共享横向地形轮廓，三角形内任意位置等于物理门顶', () => {
-    const view = Object.create(SceneView.prototype);
+  it('山谷横门和平原地形门共享警戒轮廓，三角形内任意位置等于物理门顶', () => {
     for (const challenge of ['downhill', 'low-altitude'] as const) {
       for (const gate of [challengeStartGate(challenge)!, ...challengeCheckpoints(challenge)]) {
-        const profile = view.gateProfile(challenge, gate);
+        const profile = challengeGateProfile(challenge, gate);
+        if (challenge === 'downhill' && gate.x < DOWNHILL_PLAIN_START) expect(new Set(profile.map(point => point.top)).size).toBe(1);
         expect(profile[0].z).toBe(-gate.halfWidth);
         expect(profile.at(-1).z).toBe(gate.halfWidth);
         for (let index = 1; index < profile.length; index++) {
@@ -292,5 +292,51 @@ describe('弹射蒸汽与门框边界', () => {
         }
       }
     }
+  });
+
+  it('门外高空、地底和两侧完整覆盖红纹，不留下80m红带之外的透明拒绝区域', () => {
+    const view = Object.create(SceneView.prototype);
+    for (const gate of [challengeStartGate('downhill')!, ...challengeCheckpoints('downhill')]) {
+      const regions = view.gateWarningRegions('downhill', gate, false) as { name: string; vertices: number[] }[];
+      const covered = (y: number, z: number) => regions.some(region => {
+        const vertices = region.vertices;
+        for (let index = 0; index < vertices.length; index += 9) {
+          const ay = vertices[index + 1], az = vertices[index + 2], by = vertices[index + 4], bz = vertices[index + 5], cy = vertices[index + 7], cz = vertices[index + 8];
+          const denominator = (bz - cz) * (ay - cy) + (cy - by) * (az - cz);
+          if (denominator === 0) continue;
+          const a = ((bz - cz) * (y - cy) + (cy - by) * (z - cz)) / denominator;
+          const b = ((cz - az) * (y - cy) + (ay - cy) * (z - cz)) / denominator;
+          if (a >= -1e-10 && b >= -1e-10 && a + b <= 1 + 1e-10) return true;
+        }
+        return false;
+      });
+      for (const point of challengeGateProfile('downhill', gate)) {
+        expect(covered(point.top + 1000, point.z)).toBe(true);
+        expect(covered(point.bottom - 1000, point.z)).toBe(true);
+        if (point.top - point.bottom > 4 && Math.abs(point.z) < gate.halfWidth) {
+          expect(covered((point.top + point.bottom) / 2, point.z)).toBe(false);
+        }
+      }
+      expect(covered(0, -gate.halfWidth - 1000)).toBe(true);
+      expect(covered(0, gate.halfWidth + 1000)).toBe(true);
+    }
+  });
+
+  it('连续红顶面使用物理上限的同一三角形，双面可见且不注册碰撞', () => {
+    const view = Object.create(SceneView.prototype);
+    view.mountainEnvironment = new Group();
+    view.buildDownhillCeiling();
+    const ceiling = view.mountainEnvironment.getObjectByName('downhill-course-ceiling-boundary') as Mesh;
+    expect(ceiling).toBeDefined();
+    expect(ceiling.userData.collision).not.toBe(true);
+    expect((ceiling.material as MeshBasicMaterial).side).toBe(2);
+    const vertices = ceiling.geometry.getAttribute('position');
+    for (let index = 0; index < vertices.count; index += 3) {
+      const x = (vertices.getX(index) + vertices.getX(index + 1) + vertices.getX(index + 2)) / 3;
+      const y = (vertices.getY(index) + vertices.getY(index + 1) + vertices.getY(index + 2)) / 3;
+      const z = (vertices.getZ(index) + vertices.getZ(index + 1) + vertices.getZ(index + 2)) / 3;
+      if (Math.abs(z) < 600) expect(y).toBeCloseTo(downhillCourseCeiling(x, z), 2);
+    }
+    ceiling.geometry.dispose(); (ceiling.material as MeshBasicMaterial).dispose();
   });
 });

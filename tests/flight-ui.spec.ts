@@ -52,3 +52,24 @@ test('T与Y切换飞行辅助，重飞复位，鸟人禁用自动配平',async({
  await expect(auto).toBeDisabled();await page.keyboard.press('t');
  await expect(auto).toHaveAttribute('aria-checked','false');
 });
+
+test('满油门待开始可调，1增2减且Shift和Ctrl不再控制油门',async({page})=>{
+ await enterFlight(page,'低空飞行');
+ const throttle=page.getByRole('slider',{name:'油门',exact:true});
+ await expect(throttle).toBeEnabled();await expect(throttle).toHaveValue('1');
+ await throttle.fill('0.5');
+ await page.keyboard.down('2');
+ try{await expect.poll(async()=>Number(await throttle.inputValue())).toBeLessThan(0.4);}finally{await page.keyboard.up('2');}
+ await page.keyboard.down('1');
+ try{await expect.poll(async()=>Number(await throttle.inputValue())).toBeGreaterThan(0.5);}finally{await page.keyboard.up('1');}
+ const selected=await throttle.inputValue();
+ await page.keyboard.down('Shift');await page.keyboard.down('Control');
+ try{
+  await page.evaluate(()=>{const {promise,resolve}=Promise.withResolvers<void>();let frames=0;const tick=()=>{if(++frames===8)resolve();else requestAnimationFrame(tick);};requestAnimationFrame(tick);return promise;});
+  await expect(throttle).toHaveValue(selected);
+ }finally{await page.keyboard.up('Control');await page.keyboard.up('Shift');}
+ await expect(page.getByRole('button',{name:'开始试飞',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'开始试飞',exact:true}).click();
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
+ await expect(throttle).toHaveValue(selected);
+});

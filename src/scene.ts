@@ -5,7 +5,8 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
-import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateCeiling, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
+import { downhillCourseCeiling, downhillCeilingSpans, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
+import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
 import { language, t } from './i18n';
 
@@ -124,6 +125,8 @@ export class SceneView {
   private readonly railReferenceCG = new THREE.Vector3();
   private readonly railAttachment = new THREE.Vector3();
   private railLastAttachedX = 0;
+  private railReferenceHeight = 0;
+  private readonly railSample: LowAltitudeRailSample = { x: 0, y: 0, pitch: 0, slope: 0, pitchDerivative: 0 };
   private readonly catapult = new THREE.Group();
   private readonly shuttle = new THREE.Group();
   private towArm!: THREE.Mesh;
@@ -468,6 +471,8 @@ export class SceneView {
         attached: this.simulation?.challenge === 'low-altitude' && this.simulation.launching,
         couplingVisible: this.railCoupling?.visible ?? false,
         carriage: position(this.railCarriage.position), attachment: position(this.railAttachment),
+        pitch: this.railCarriage.rotation.z,
+        exitPitch: LOW_ALTITUDE_RAIL.exitPitch,
         referenceCG: position(this.railReferenceCG),
         supportCount: this.lowAltitudeRail.userData.supportCount as number,
         steamVisible: this.steam.visible,
@@ -1519,6 +1524,7 @@ export class SceneView {
     this.wingAngles.fill(NaN);
     this.setEnvironmentChallenge(sim?.challenge ?? 'birdman');
     this.railReferenceCG.copy(sim?.telemetry.cg ?? this.designCG);
+    this.railReferenceHeight = sim?.challenge === 'low-altitude' ? sim.position.y - sim.railAttachmentHeight : 0;
     this.railLastAttachedX = challengeLaunch('low-altitude')!.startX;
     this.captureFlightState();
     this.trailCount = this.trailIndex = 0;
@@ -1656,8 +1662,7 @@ export class SceneView {
     this.previousCG.copy(sim.telemetry.cg);
     this.renderCG.copy(sim.telemetry.cg);
     if (sim.challenge === 'low-altitude' && sim.launching) {
-      this.vector.subVectors(this.railReferenceCG, sim.telemetry.cg).applyQuaternion(sim.quaternion).add(sim.position);
-      this.railLastAttachedX = this.vector.x;
+      this.railLastAttachedX = sim.railPositionX;
     }
     for (const sections of this.wingSections) {
       for (const section of sections) {
@@ -2223,7 +2228,8 @@ export class SceneView {
     const route: number[] = [], routeIndices: number[] = [];
     for (let x = 0, sample = 0; x <= course.length; x += step, sample++) {
       const z = downhill ? downhillRouteCenter(x) : challengeCenter(challenge, x);
-      const routeY = challengeCollisionHeight(challenge, x, z) + (downhill ? downhillHeightLimit(x) / 2 : LOW_ALTITUDE.scoringHeight / 2);
+      const floor = challengeCollisionHeight(challenge, x, z);
+      const routeY = downhill ? (floor + downhillCourseCeiling(x, z)) / 2 : floor + LOW_ALTITUDE.scoringHeight / 2;
       const y = THREE.MathUtils.lerp(launch?.y ?? 0, routeY, clamp(x / 180, 0, 1));
       route.push(x, y, z - 1.5, x, y, z + 1.5);
       if (sample === 0) continue;
@@ -2236,6 +2242,7 @@ export class SceneView {
     const routeMesh = new THREE.Mesh(routeGeometry, new THREE.MeshBasicMaterial({ color: 0xffdc82, side: THREE.DoubleSide, transparent: true, opacity: 0.8, depthWrite: false }));
     routeMesh.name = 'continuous-flight-route';
     this.mountainEnvironment.add(routeMesh);
+    if (downhill) this.buildDownhillCeiling();
     const frameGeometry = new THREE.BoxGeometry(1, 1, 1);
     const checkpointMaterial = new THREE.MeshBasicMaterial({ color: 0xf2ba62 });
     const frameThickness = downhill ? 1.6 : 0.6;
@@ -2243,7 +2250,7 @@ export class SceneView {
     const startMaterial = new THREE.MeshBasicMaterial({ color: 0x69caff });
     for (let index = 0; index < gates.length; index++) {
       const gate = gates[index], finish = index === gates.length - 1, timingStart = gate === startGate;
-      const profile = this.gateProfile(challenge, gate);
+      const profile = challengeGateProfile(challenge, gate);
       const material = timingStart ? startMaterial : finish ? finishMaterial : checkpointMaterial;
       const checkpointIndex = index + (startGate ? 0 : 1);
       const group = new THREE.Group();
@@ -2256,28 +2263,13 @@ export class SceneView {
         uniforms:{opacity:{value:0},finish:{value:0}},
         vertexShader:'varying vec2 stripe; void main(){stripe=position.yz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
         fragmentShader:'varying vec2 stripe;uniform float opacity;uniform float finish;void main(){float band=step(0.5,fract((stripe.x+stripe.y)*0.35));vec3 color=finish>0.5?mix(vec3(0.15,0.55,0.48),vec3(0.8,1.,0.92),band):mix(vec3(0.45,0.01,0.02),vec3(1.,0.08,0.05),band);gl_FragColor=vec4(color,finish>0.5?0.38:opacity);}' });
-      const regions=[[-gate.halfWidth-80,-gate.halfWidth,-80,gate.maxHeight+80],[gate.halfWidth,gate.halfWidth+80,-80,gate.maxHeight+80],[-gate.halfWidth,gate.halfWidth,gate.maxHeight,gate.maxHeight+80],[-gate.halfWidth,gate.halfWidth,-80,0]];
-      if (!downhill) regions.pop();
-      if(finish) regions.push([-gate.halfWidth,gate.halfWidth,0,gate.maxHeight]);
-      for(const [regionIndex,[left,right,bottom,top]] of regions.entries()){
-        const vertices: number[] = [];
-        const samples = downhill && regionIndex >= 2 ? profile : [
-          { z: left, bottom: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].bottom : 0, top: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].top : gate.maxHeight },
-          { z: right, bottom: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].bottom : 0, top: downhill ? profile[regionIndex === 0 ? 0 : profile.length - 1].top : gate.maxHeight },
-        ];
-        for (let sample = 1; sample < samples.length; sample++) {
-          const a = samples[sample - 1], b = samples[sample];
-          const aBottom = !downhill ? bottom : regionIndex === 2 ? a.top : regionIndex === 4 ? a.bottom : a.bottom - 80;
-          const bBottom = !downhill ? bottom : regionIndex === 2 ? b.top : regionIndex === 4 ? b.bottom : b.bottom - 80;
-          const aTop = !downhill ? top : regionIndex === 3 ? a.bottom : regionIndex === 4 ? a.top : a.top + 80;
-          const bTop = !downhill ? top : regionIndex === 3 ? b.bottom : regionIndex === 4 ? b.top : b.top + 80;
-          vertices.push(0,aBottom,a.z,0,aTop,a.z,0,bBottom,b.z,0,bBottom,b.z,0,aTop,a.z,0,bTop,b.z);
-        }
-        const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));
-        const regionMaterial=finish&&regionIndex===(downhill?4:3)?stripeMaterial.clone():stripeMaterial;
-        if(finish&&regionIndex===(downhill?4:3))regionMaterial.uniforms.finish.value=1;
-        const stripes=new THREE.Mesh(geometry,regionMaterial);stripes.userData.warning=true;
-        stripes.name = ['gate-left-boundary', 'gate-right-boundary', 'gate-ceiling-boundary', 'gate-ground-boundary', 'gate-finish-zone'][!downhill && regionIndex === 3 ? 4 : regionIndex];
+      for (const region of this.gateWarningRegions(challenge, gate, finish)) {
+        const geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(region.vertices, 3));
+        const regionMaterial = region.finish ? stripeMaterial.clone() : stripeMaterial;
+        if (region.finish) regionMaterial.uniforms.finish.value = 1;
+        const stripes = new THREE.Mesh(geometry, regionMaterial);
+        stripes.userData.warning = true;
+        stripes.name = region.name;
         group.add(stripes);
       }
       const height = downhill ? 20 : gate.maxHeight;
@@ -2343,23 +2335,44 @@ export class SceneView {
     this.mountainEnvironment.add(start);
   }
 
-  private gateProfile(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>) {
-    const points = [-gate.halfWidth, gate.halfWidth];
-    if (challenge === 'downhill') {
-      const step = challengeTerrainGrid.step;
-      const diagonal = step - (gate.x - Math.floor(gate.x / step) * step);
-      // 包含网格边和三角形对角线；横向折线与碰撞地形逐段一致。
-      for (let z = Math.floor((gate.z - gate.halfWidth) / step) * step; z < gate.z + gate.halfWidth; z += step) {
-        for (const worldZ of [z, z + diagonal]) {
-          const localZ = worldZ - gate.z;
-          if (localZ > -gate.halfWidth && localZ < gate.halfWidth) points.push(localZ);
-        }
+  private gateWarningRegions(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>, finish: boolean) {
+    const extent = CHALLENGE_WARNING_EXTENT, profile = challengeGateProfile(challenge, gate);
+    const regions: { name: string; finish: boolean; vertices: number[] }[] = [];
+    const add = (name: string, samples: { z: number; bottom: number; top: number }[], finishZone = false) => {
+      const vertices: number[] = [];
+      for (let index = 1; index < samples.length; index++) {
+        const a = samples[index - 1], b = samples[index];
+        vertices.push(0,a.bottom,a.z,0,a.top,a.z,0,b.bottom,b.z,0,b.bottom,b.z,0,a.top,a.z,0,b.top,b.z);
       }
+      regions.push({ name, finish: finishZone, vertices });
+    };
+    for (const [name, left, right] of [
+      ['gate-left-boundary', -extent, -gate.halfWidth],
+      ['gate-right-boundary', gate.halfWidth, extent],
+    ] as const) add(name, [left, right].map(z => ({ z, bottom: -extent, top: extent })));
+    add('gate-ceiling-boundary', profile.map(point => ({ z: point.z, bottom: point.top, top: extent })));
+    if (challenge === 'downhill') add('gate-ground-boundary', profile.map(point => ({ z: point.z, bottom: -extent, top: point.bottom })));
+    if (finish) add('gate-finish-zone', profile, true);
+    return regions;
+  }
+
+  private buildDownhillCeiling() {
+    const vertices: number[] = [];
+    for (const span of downhillCeilingSpans) for (let index = 1; index < span.z.length; index++) {
+      const left = index - 1;
+      vertices.push(
+        span.a.x, span.start[left], span.z[left], span.b.x, span.end[left], span.z[left], span.a.x, span.start[index], span.z[index],
+        span.a.x, span.start[index], span.z[index], span.b.x, span.end[left], span.z[left], span.b.x, span.end[index], span.z[index],
+      );
     }
-    return [...new Set(points)].sort((a, b) => a - b).map(z => ({
-      z, bottom: challenge === 'downhill' ? challengeCollisionHeight(challenge, gate.x, gate.z + z) - gate.y : 0,
-      top: challengeGateCeiling(challenge, gate, gate.z + z) - gate.y,
-    }));
+    const material = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: 'varying vec2 stripe;void main(){stripe=position.xz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+      fragmentShader: 'varying vec2 stripe;void main(){float band=step(0.5,fract((stripe.x+stripe.y)*0.18));gl_FragColor=vec4(mix(vec3(0.45,0.01,0.02),vec3(1.,0.08,0.05),band),0.18);}',
+    });
+    const ceiling = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)), material);
+    ceiling.name = 'downhill-course-ceiling-boundary';
+    this.mountainEnvironment.add(ceiling);
   }
 
   private buildChallengeLaunch(challenge: ChallengeMode): void {
@@ -2431,22 +2444,33 @@ export class SceneView {
     rail.name = 'low-altitude-rail';
     this.mountainEnvironment.add(rail);
     const top = launch.y + LOW_ALTITUDE_RAIL.height;
-    const midpoint = (launch.startX + launch.endX) / 2;
-    for (const side of [-1, 1]) {
-      const beam = this.mesh(unit, steel, rail);
-      beam.position.set(midpoint, top - 0.1, launch.z + side * 0.65);
-      beam.scale.set(launch.length, 0.2, 0.12);
+    const sample = this.railSample;
+    const bendStart = launch.endX - LOW_ALTITUDE_RAIL.bendLength;
+    for (let x = launch.startX; x < launch.endX;) {
+      const y0 = lowAltitudeRailSample(x, sample).y;
+      const x1 = x < bendStart ? bendStart : Math.min(x + 2, launch.endX);
+      const y1 = lowAltitudeRailSample(x1, sample).y;
+      for (const side of [-1, 1]) {
+        const beam = this.mesh(unit, steel, rail);
+        beam.position.set((x + x1) / 2, (y0 + y1) / 2 - 0.1, launch.z + side * 0.65);
+        beam.rotation.z = Math.atan2(y1 - y0, x1 - x);
+        beam.scale.set(Math.hypot(x1 - x, y1 - y0), 0.2, 0.12);
+      }
+      x = x1;
     }
     let supportCount = 0;
     for (let x = launch.startX; x <= launch.endX; x += 20) {
+      lowAltitudeRailSample(x, sample);
       for (const side of [-1, 1]) {
         const support = this.mesh(unit, steel, rail);
-        support.position.set(x, launch.y + (LOW_ALTITUDE_RAIL.height - 0.2) / 2, launch.z + side * 0.65);
-        support.scale.set(0.16, LOW_ALTITUDE_RAIL.height - 0.2, 0.16);
+        const height = sample.y - launch.y - 0.2;
+        support.position.set(x, launch.y + height / 2, launch.z + side * 0.65);
+        support.scale.set(0.16, height, 0.16);
         supportCount++;
       }
       const crossbar = this.mesh(unit, steel, rail);
-      crossbar.position.set(x, top - 0.28, launch.z);
+      crossbar.position.set(x, sample.y - 0.28, launch.z);
+      crossbar.rotation.z = sample.pitch;
       crossbar.scale.set(0.16, 0.16, 1.55);
     }
     rail.userData.supportCount = supportCount;
@@ -2764,14 +2788,20 @@ export class SceneView {
         const attached = this.simulation?.challenge === 'low-altitude' && this.simulation.launching;
         this.aircraft.updateWorldMatrix(true, false);
         this.vector.copy(this.railReferenceCG).sub(this.renderCG);
+        this.vector.y -= this.railReferenceHeight;
         this.aircraft.localToWorld(this.vector);
-        this.railCarriage.position.x = clamp(attached ? this.vector.x : this.railLastAttachedX, launch.startX, launch.endX);
+        const x = clamp(attached ? this.vector.x : this.simulation?.railPositionX ?? this.railLastAttachedX, launch.startX, launch.endX);
+        const sample = lowAltitudeRailSample(x, this.railSample);
+        this.railCarriage.position.set(x, sample.y, launch.z);
+        this.railCarriage.rotation.z = sample.pitch;
+        this.railCarriage.updateWorldMatrix(true, false);
         this.railAttachment.set(this.definition.fuselage.center, 0, 0).sub(this.renderCG);
         this.aircraft.localToWorld(this.railAttachment);
         this.railCoupling.visible = attached;
         if (attached) {
           // 与飞机使用相同插值变换；物理脱轨即隐藏连接，不按显示时间猜测释放。
-          this.vector.copy(this.railAttachment).sub(this.railCarriage.position);
+          this.vector.copy(this.railAttachment);
+          this.railCarriage.worldToLocal(this.vector);
           this.vector2.set(0, -0.3, 0);
           this.placeStrut(this.railCoupling, this.vector2, this.vector, 0.065);
         }
