@@ -53,24 +53,24 @@ describe('结构载荷自适应杆量', () => {
   }
   const full = { ...neutral, rudder: 1 };
 
-  it('同一空速下强材料/大截面允许更大满杆，弱结构实际满杆载荷收敛到极限60%', () => {
+  it('同一空速下强材料/大截面允许更大满杆，弱结构实际满杆载荷收敛到极限90%', () => {
     const weak = controlled(), strong = controlled('carbon-epoxy', 2);
-    expect(predict(weak, full, 0)).toBeLessThan(0.6);
-    expect(predict(weak, full, 1)).toBeGreaterThan(0.6);
+    expect(predict(weak, full, 0)).toBeLessThan(0.9);
+    expect(predict(weak, full, 1)).toBeGreaterThan(0.9);
     const before = state(weak), peaks = structuredClone(weak.structure.peakWings);
     const weakLimit = limit(weak, full), strongLimit = limit(strong, full);
     expect(weakLimit).toBeGreaterThan(0); expect(weakLimit).toBeLessThan(1);
     expect(strongLimit).toBeGreaterThan(weakLimit);
     expect(state(weak)).toEqual(before); expect(weak.structure.peakWings).toEqual(peaks);
     const predicted = predict(weak, full, weakLimit);
-    expect(predicted).toBeLessThanOrEqual(0.6); expect(predicted).toBeGreaterThan(0.599);
+    expect(predicted).toBeLessThanOrEqual(0.9); expect(predicted).toBeGreaterThan(0.899);
     weak.structure.update(weak, weak.telemetry.force, weak.telemetry.torque);
     expect(Math.max(...weak.structure.sections.map(section => section.stressRatio))).toBeCloseTo(predicted, 12);
     weak.velocity.set(0, 0, 0); weak.omega.set(0, 0, 0);
     expect(limit(weak, full)).toBe(1);
   });
 
-  it('三轴混合满杆、配平及已有大舵量的行程过渡均受真实60%载荷限制', () => {
+  it('三轴混合满杆、配平及已有大舵量的行程过渡均受真实90%载荷限制', () => {
     for (const elevator of [-1, 1]) for (const aileron of [-1, 1]) for (const rudder of [-1, 1]) {
       const simulation = controlled();
       const command: FlightControls = { ...neutral, elevator, aileron, rudder, adaptiveControls: true, trimPitch: 0.8, trimRoll: -0.8 };
@@ -79,7 +79,7 @@ describe('结构载荷自适应杆量', () => {
       const actual = simulation.telemetry.controlInputs, cap = simulation.telemetry.controlLimit;
       expect(cap).toBeGreaterThan(0); expect(cap).toBeLessThan(1);
       for (const axis of ['elevator', 'aileron', 'rudder'] as const) expect(Math.abs(actual[axis])).toBeLessThanOrEqual(cap);
-      expect(predict(simulation, actual, 1)).toBeLessThanOrEqual(0.601);
+      expect(predict(simulation, actual, 1)).toBeLessThanOrEqual(0.901);
       expect(simulation.structure.fractureCount).toBe(0);
     }
   });
@@ -103,8 +103,8 @@ describe('结构载荷自适应杆量', () => {
       const baseline = predict(simulation, full, 0);
       simulation.step({ ...full, adaptiveControls: true }, 1 / 120);
       const actualStress = Math.max(...simulation.structure.sections.map(section => section.stressRatio));
-      if (baseline < 0.6) {
-        expect(actualStress).toBeLessThanOrEqual(0.601);
+      if (baseline < 0.9) {
+        expect(actualStress).toBeLessThanOrEqual(0.901);
         limitedWithoutOverload ||= simulation.telemetry.controlLimit > 0 && simulation.telemetry.controlLimit < 1;
       } else {
         neutralOverload = true;

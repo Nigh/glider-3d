@@ -72,7 +72,7 @@ const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * D
 /** 标准化舵量每秒最多变化2.5；回中、反向与打满共用相同行程速度。 */
 export const CONTROL_SURFACE_RATE = 2.5;
 const CONTROL_AXES = ['aileron', 'elevator', 'rudder'] as const;
-const ADAPTIVE_STRESS_TARGET = 0.6;
+const ADAPTIVE_STRESS_TARGET = 0.9;
 
 export interface FlightControls extends Controls {
   autoTrim?: boolean;
@@ -1014,13 +1014,13 @@ export class FlightSimulation {
 
   private integrate(input: FlightControls, dt: number) {
     this.controlLimit = 1;
-    // 自动配平缓慢消除俯仰角速度；驾驶员主动推拉杆时保持配平，不争夺操纵。
-    if (this.autoTrim && !this.launching && Math.abs(input.elevator) < 0.05 && this.velocity.lengthSq() >= 25) {
-      this.trimPitch = clamp(this.trimPitch + clamp(this.omega.z * 0.8, -0.2, 0.2) * dt, -1, 1);
-    }
+    // 比例项提供即时俯仰阻尼；慢积分仅负责配平，避免把角速度持续积成反向大舵量。
+    const trimming = this.autoTrim && !this.launching && Math.abs(input.elevator) < 0.05 && this.velocity.lengthSq() >= 25;
+    const trimRate = trimming ? clamp(this.omega.z * 0.2, -0.05, 0.05) : 0;
     for (const axis of CONTROL_AXES) {
       const trim = this.definition.birdman ? 0 : axis === 'elevator' ? this.trimPitch : axis === 'aileron' ? input.trimRoll! : 0;
-      this.requestedControls[axis] = clamp(input[axis] + trim, -1, 1);
+      const damping = axis === 'elevator' && trimming ? clamp(this.omega.z * 0.35, -0.3, 0.3) : 0;
+      this.requestedControls[axis] = clamp(input[axis] + trim + damping, -1, 1);
     }
     this.updatePropulsion(input.throttle!, dt);
     // 前后移动仍沿用原准静态代理；侧移使用完整非对称惯量并守恒机体轴角动量。
@@ -1064,6 +1064,10 @@ export class FlightSimulation {
       // 反向/回中的行程中间态不一定与目标同向，必须单独预测，收紧安全上限优先于舵机速度。
       const transitionLimit = this.adaptiveControlLimit(this.applied);
       for (const axis of CONTROL_AXES) this.applied[axis] *= transitionLimit;
+    }
+    // 当前子步实际舵量包含结构限幅和舵机滞后；只阻止加深饱和，始终允许反向退积分。
+    if (trimming && trimRate * (this.requestedControls.elevator - this.applied.elevator) <= 1e-10) {
+      this.trimPitch = clamp(this.trimPitch + trimRate * dt, -1, 1);
     }
     this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
     this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
