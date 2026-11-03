@@ -274,9 +274,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Runway takeoff · river-valley scoring",
   "滑走路離陸 · 河谷で得点"
  ],
- "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · Shift / Ctrl 油门": [
-  "W / S pitch · A / D roll · Q / E yaw · Shift / Ctrl throttle",
-  "W / S ピッチ · A / D ロール · Q / E ヨー · Shift / Ctrl スロットル"
+ "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · 1 / 2 油门": [
+  "W / S pitch · A / D roll · Q / E yaw · 1 / 2 throttle",
+  "W / S ピッチ · A / D ロール · Q / E ヨー · 1 / 2 スロットル"
  ],
  "湖风 01 / 均衡型": [
   "Lakewind 01 / Balanced",
@@ -718,9 +718,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Above scoring ceiling · descend",
   "得点高度超過 · 高度を下げる"
  ],
- "油门 · Shift 增 / Ctrl 减": [
-  "Throttle · Shift up / Ctrl down",
-  "スロットル · Shift 増 / Ctrl 減"
+ "油门 · 1 增 / 2 减": [
+  "Throttle · 1 up / 2 down",
+  "スロットル · 1 増 / 2 減"
  ],
  "转速": [
   "RPM",

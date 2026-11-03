@@ -10,7 +10,7 @@ export const DOWNHILL_PLAIN_START = 4300;
 export function downhillHeightLimit(x: number): number { return x >= DOWNHILL_PLAIN_START ? 62.5 : 125; }
 
 export const LOW_ALTITUDE = { scoringHeight: 25, bonusHeight: 8, scoreScale: 1000, penaltyPerSecond: 4, sustainedPenalty: 2 } as const;
-export const LOW_ALTITUDE_RAIL = { height: 2, retentionAcceleration: 0.8, rollingResistance: 0.02 } as const;
+export const LOW_ALTITUDE_RAIL = { height: 2, retentionAcceleration: 0.8, rollingResistance: 0.02, bendLength: 100, exitPitch: Math.PI / 12 } as const;
 export const CHALLENGE_RIVER = { width: 24, depth: 3 } as const;
 
 /** 所有地形顶点与碰撞共用10m网格；每格沿(x0,z1)至(x1,z0)对角线分成两三角形。 */
@@ -50,6 +50,23 @@ const lowAltitudeRunway: Readonly<ChallengeLaunch> = {
   width: 32, length: 400, slope: 0, thickness: 0.2, speed: 0, acceleration: 0,
 };
 
+export interface LowAltitudeRailSample {
+  x: number; y: number; pitch: number; slope: number; pitchDerivative: number;
+}
+/** 末100m以三次平滑斜率抬升；两端曲率为零，出口沿15°切线延伸。 */
+export function lowAltitudeRailSample(x: number, out: LowAltitudeRailSample): LowAltitudeRailSample {
+  const length = LOW_ALTITUDE_RAIL.bendLength, end = lowAltitudeRunway.endX;
+  const u = Math.max(0, Math.min(1, (x - end + length) / length));
+  const slope = Math.tan(LOW_ALTITUDE_RAIL.exitPitch) * u * u * (3 - 2 * u);
+  out.x = x;
+  out.y = lowAltitudeRunway.y + LOW_ALTITUDE_RAIL.height
+    + Math.tan(LOW_ALTITUDE_RAIL.exitPitch) * (length * (u ** 3 - u ** 4 / 2) + Math.max(0, x - end));
+  out.slope = slope;
+  out.pitch = Math.atan(slope);
+  out.pitchDerivative = Math.tan(LOW_ALTITUDE_RAIL.exitPitch) * 6 * u * (1 - u) / (length * (1 + slope * slope));
+  return out;
+}
+
 function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
   const offset = z - challengeCenter(challenge, x);
   if (challenge === 'downhill') {
@@ -68,11 +85,15 @@ function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
   const mountain = 0.007 * Math.max(0, riverOffset - 35) ** 2
     + 18 * Math.sin(x / 73) ** 2 * Math.min(1, Math.max(0, riverOffset - 25) / 140);
   const natural = valley + mountain;
-  // 起终点各留20m平地安全带，保证整架飞机越过轨端后才接回山谷；外围20m平滑过渡。
   const dx = Math.max(lowAltitudeRunway.startX - 20 - x, 0, x - lowAltitudeRunway.endX - 20);
   const dz = Math.max(0, Math.abs(z - lowAltitudeRunway.z) - lowAltitudeRunway.width / 2 - 10);
-  const blend = Math.min(1, Math.max(dx, dz) / 20);
-  return lowAltitudeRunway.y + (natural - lowAltitudeRunway.y) * blend;
+  const original = lowAltitudeRunway.y + (natural - lowAltitudeRunway.y) * Math.min(1, Math.max(dx, dz) / 20);
+  // 只削低出口局部障碍：前80m保留宽翼净空，再用80m平滑接回原山谷。
+  const u = Math.min(1, Math.max((lowAltitudeRunway.endX - 40 - x) / 40,
+    (x - lowAltitudeRunway.endX - 80) / 80,
+    (Math.abs(z - lowAltitudeRunway.z) - lowAltitudeRunway.width / 2 - 20) / 30, 0));
+  const blend = u * u * (3 - 2 * u);
+  return original + (Math.min(original, lowAltitudeRunway.y) - original) * (1 - blend);
 }
 
 /** 分片平面，而非渲染网格外的隐藏解析曲面。鸟人间保持连续水面Y=0。 */
@@ -115,9 +136,26 @@ export interface ChallengeCheckpoint {
   x: number; y: number; z: number;
   halfWidth: number; maxHeight: number;
 }
-/** 速降门顶沿实际三角地形保持相同离地高度；低空门保留固定参考高度。 */
+/** 山谷恢复固定中心横门；废墟平原门顶沿真实横向地形保持62.5m净高。 */
 export function challengeGateCeiling(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>, z: number): number {
-  return (challenge === 'downhill' ? challengeCollisionHeight(challenge, gate.x, z) : gate.y) + gate.maxHeight;
+  return (challenge === 'downhill' && gate.x >= DOWNHILL_PLAIN_START ? challengeCollisionHeight(challenge, gate.x, z) : gate.y) + gate.maxHeight;
+}
+export function challengeGateProfile(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>) {
+  const points = [-gate.halfWidth, gate.halfWidth];
+  if (challenge === 'downhill') {
+    const step = challengeTerrainGrid.step;
+    const diagonal = step - (gate.x - Math.floor(gate.x / step) * step);
+    for (let z = Math.floor((gate.z - gate.halfWidth) / step) * step; z < gate.z + gate.halfWidth; z += step) {
+      for (const worldZ of [z, z + diagonal]) {
+        const localZ = worldZ - gate.z;
+        if (localZ > -gate.halfWidth && localZ < gate.halfWidth) points.push(localZ);
+      }
+    }
+  }
+  return [...new Set(points)].sort((a, b) => a - b).map(z => ({
+    z, bottom: challenge === 'downhill' ? challengeCollisionHeight(challenge, gate.x, gate.z + z) - gate.y : 0,
+    top: challengeGateCeiling(challenge, gate, gate.z + z) - gate.y,
+  }));
 }
 function gate(challenge: ChallengeMode, x: number): ChallengeCheckpoint {
   const z = challengeCenter(challenge, x);
@@ -134,6 +172,39 @@ const lowAltitudeCheckpoints = Array.from({ length: 30 }, (_, index) => gate('lo
 const noCheckpoints: readonly ChallengeCheckpoint[] = [];
 export function challengeCheckpoints(challenge: ChallengeMode): readonly ChallengeCheckpoint[] {
   return challenge === 'downhill' ? downhillCheckpoints : challenge === 'low-altitude' ? lowAltitudeCheckpoints : noCheckpoints;
+}
+
+/** 远超相机6000m远平面，门外红纹不会留下可见的有限红带边缘。 */
+export const CHALLENGE_WARNING_EXTENT = 20000;
+const downhillGates = [downhillStart, ...downhillCheckpoints];
+/** 同一三角顶面供物理求值和红纹网格使用，不再叠加当地AGL限高。 */
+export const downhillCeilingSpans = downhillGates.slice(1).map((b, index) => {
+  const a = downhillGates[index];
+  const z = [...new Set([
+    -CHALLENGE_WARNING_EXTENT, CHALLENGE_WARNING_EXTENT,
+    ...challengeGateProfile('downhill', a).map(point => a.z + point.z),
+    ...challengeGateProfile('downhill', b).map(point => b.z + point.z),
+  ])].sort((left, right) => left - right);
+  return { a, b, z, start: z.map(value => challengeGateCeiling('downhill', a, value)), end: z.map(value => challengeGateCeiling('downhill', b, value)) };
+});
+export function downhillCourseCeiling(x: number, z: number): number {
+  let spanIndex = 0;
+  while (spanIndex < downhillCeilingSpans.length - 1 && x > downhillCeilingSpans[spanIndex].b.x) spanIndex++;
+  const span = downhillCeilingSpans[spanIndex];
+  const tx = Math.max(0, Math.min(1, (x - span.a.x) / (span.b.x - span.a.x)));
+  let low = 0, high = span.z.length - 1;
+  while (high - low > 1) {
+    const middle = (low + high) >>> 1;
+    if (z < span.z[middle]) high = middle; else low = middle;
+  }
+  const tz = (z - span.z[low]) / (span.z[high] - span.z[low]);
+  const a = span.start[high], b = span.end[low];
+  if (tx + tz <= 1) {
+    const c = span.start[low];
+    return c + (b - c) * tx + (a - c) * tz;
+  }
+  const c = span.end[high];
+  return c + (a - c) * (1 - tx) + (b - c) * (1 - tz);
 }
 
 export interface ChallengeRuin {
