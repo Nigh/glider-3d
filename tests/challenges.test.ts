@@ -84,7 +84,6 @@ describe('三轴操纵与高山路径边界', () => {
       const s = create(); s.omega.z = direction * 0.5;
       s.step({ ...neutral, autoTrim: true }, 0.01);
       expect(s.telemetry.autoTrim).toBe(true);
-      expect(s.telemetry.trimPitch).toBeCloseTo(direction * 0.002, 12);
       const trim = s.telemetry.trimPitch;
       s.step({ ...neutral, elevator: 0.5, autoTrim: true }, 0.01);
       expect(s.telemetry.trimPitch).toBe(trim);
@@ -105,6 +104,34 @@ describe('三轴操纵与高山路径边界', () => {
     birdman.step({ ...neutral, autoTrim: true, trimPitch: 1, trimRoll: 1 });
     expect(birdman.telemetry.autoTrim).toBe(false); expect(birdman.telemetry.trimPitch).toBe(1); expect(birdman.telemetry.trimRoll).toBe(1);
     expect(birdman.controlDeflections.elevator).toBeCloseTo(0, 12); expect(birdman.controlDeflections.aileron).toBeCloseTo(0, 12);
+  });
+
+  it('结构限幅时自动配平不继续向受限方向积分，反向修正仍可退出饱和', () => {
+    for (const direction of [-1, 1]) {
+      const definition = clone(downhillAircraft);
+      for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
+        definition[key].materialAmount = 0.5; definition[key].materialId = 'spruce';
+      }
+      const s = airborne(new FlightSimulation(definition, 'downhill', 0));
+      s.velocity.set(50, 0, 0); s.omega.z = direction;
+      s.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: direction * 0.4 }, 0.01);
+      expect(s.telemetry.controlLimit).toBeLessThan(0.4);
+      expect(s.telemetry.trimPitch * direction).toBeLessThanOrEqual(0.4);
+      s.omega.z = -direction;
+      s.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: direction * 0.4 }, 0.01);
+      expect(s.telemetry.trimPitch * direction).toBeLessThan(0.4);
+    }
+  });
+
+  it('自动配平提供即时反俯仰舵量，而非等待配平积分累积', () => {
+    for (const direction of [-1, 1]) {
+      const assisted = create(), manual = create();
+      assisted.omega.z = manual.omega.z = direction * 0.5;
+      assisted.step({ ...neutral, autoTrim: true, adaptiveControls: true }, 0.01);
+      manual.step({ ...neutral, adaptiveControls: true }, 0.01);
+      expect(assisted.telemetry.controlInputs.elevator * direction).toBeGreaterThan(0);
+      expect((assisted.omega.z - manual.omega.z) * direction).toBeLessThan(0);
+    }
   });
 
   it('开关、手动配平、自动配平和实际杆量随混合步长逐帧重放，累计时间重置', () => {
