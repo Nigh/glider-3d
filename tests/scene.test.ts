@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
+import { Box3, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
 import { FlightSimulation, LAUNCH } from '../src/physics';
-import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, downhillCourseCeiling, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
+import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 function svgElement() {
@@ -322,21 +322,54 @@ describe('弹射蒸汽与门框边界', () => {
     }
   });
 
-  it('连续红顶面使用物理上限的同一三角形，双面可见且不注册碰撞', () => {
+  it('速降禁止区仅在门平面，靠近渐显，通过后整门消失且回头不会复现，重飞恢复', () => {
     const view = Object.create(SceneView.prototype);
     view.mountainEnvironment = new Group();
-    view.buildDownhillCeiling();
-    const ceiling = view.mountainEnvironment.getObjectByName('downhill-course-ceiling-boundary') as Mesh;
-    expect(ceiling).toBeDefined();
-    expect(ceiling.userData.collision).not.toBe(true);
-    expect((ceiling.material as MeshBasicMaterial).side).toBe(2);
-    const vertices = ceiling.geometry.getAttribute('position');
-    for (let index = 0; index < vertices.count; index += 3) {
-      const x = (vertices.getX(index) + vertices.getX(index + 1) + vertices.getX(index + 2)) / 3;
-      const y = (vertices.getY(index) + vertices.getY(index + 1) + vertices.getY(index + 2)) / 3;
-      const z = (vertices.getZ(index) + vertices.getZ(index + 1) + vertices.getZ(index + 2)) / 3;
-      if (Math.abs(z) < 600) expect(y).toBeCloseTo(downhillCourseCeiling(x, z), 2);
+    const gates = [challengeStartGate('downhill')!, ...challengeCheckpoints('downhill')];
+    for (const [index, gate] of gates.entries()) {
+      const group = new Group();
+      group.position.set(gate.x, gate.y, gate.z);
+      group.userData.gate = { checkpointIndex: index };
+      const material = new ShaderMaterial({ uniforms: { opacity: { value: 0 } } });
+      const warning = new Mesh(new BoxGeometry(), material);
+      warning.userData.warning = true;
+      group.add(warning, new Object3D());
+      view.mountainEnvironment.add(group);
+      for (const region of view.gateWarningRegions('downhill', gate, false)) {
+        for (let vertex = 0; vertex < region.vertices.length; vertex += 3) expect(region.vertices[vertex]).toBe(0);
+      }
     }
-    ceiling.geometry.dispose(); (ceiling.material as MeshBasicMaterial).dispose();
+    const simulation = { challenge: 'downhill', position: new Vector3(), telemetry: { timingStarted: false, challengeProgress: 0 } };
+    view.simulation = simulation;
+    const start = view.mountainEnvironment.children[0];
+    const opacity = (start.children[0] as Mesh<BoxGeometry, ShaderMaterial>).material.uniforms.opacity;
+    simulation.position.x = gates[0].x - 100;
+    view.updateChallengeGates(); expect(start.visible).toBe(true); expect(opacity.value).toBe(0);
+    simulation.position.x = gates[0].x - 45;
+    view.updateChallengeGates(); expect(opacity.value).toBe(0.5);
+    simulation.position.x = gates[0].x - 1;
+    view.updateChallengeGates(); expect(opacity.value).toBeGreaterThan(0.98);
+    simulation.position.x = gates[0].x;
+    simulation.telemetry.timingStarted = true;
+    view.updateChallengeGates(); expect(start.visible).toBe(false); expect(opacity.value).toBe(0);
+    for (let index = 1; index < gates.length; index++) {
+      simulation.position.x = gates[index].x;
+      simulation.telemetry.challengeProgress = index / challengeCheckpoints('downhill').length;
+      view.updateChallengeGates();
+      expect(view.mountainEnvironment.children[index].visible).toBe(false);
+      if (index + 1 < gates.length) expect(view.mountainEnvironment.children[index + 1].visible).toBe(true);
+    }
+    simulation.position.x = gates[0].x - 1;
+    view.updateChallengeGates();
+    expect(view.mountainEnvironment.children.every((gate: Object3D) => !gate.visible)).toBe(true);
+    simulation.telemetry.timingStarted = false; simulation.telemetry.challengeProgress = 0;
+    view.updateChallengeGates();
+    expect(view.mountainEnvironment.children.every((gate: Object3D) => gate.visible)).toBe(true);
+    view.simulation = null; view.updateChallengeGates();
+    expect(opacity.value).toBe(0);
+    for (const gate of view.mountainEnvironment.children) {
+      const warning = gate.children[0] as Mesh<BoxGeometry, ShaderMaterial>;
+      warning.geometry.dispose(); warning.material.dispose();
+    }
   });
 });

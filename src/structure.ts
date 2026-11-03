@@ -67,6 +67,7 @@ export class WingStructure {
   private readonly force = new Vector3();
   private readonly moment = new Vector3();
   private readonly totalLoad = new Vector3();
+  private readonly sectionMoment = new Vector3();
   private readonly arm = new Vector3();
   private readonly acceleration = new Vector3();
   private readonly angularAcceleration = new Vector3();
@@ -151,7 +152,8 @@ export class WingStructure {
    * 质量和惯量保留参考几何，不把无质量气动形状偏移伪装成弹性动能/势能，也不登记虚构结构耗散。
    * 需真实弹性能/振型时，应整体替换为含节点质量的能量一致梁积分，而不是修补耗散账本。
    */
-  update(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3) {
+  private measureStress(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3, commit: boolean) {
+    let maximum = 0;
     this.inverse.copy(body.quaternion).invert();
     this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
     this.acceleration.copy(totalForce).applyQuaternion(this.inverse).multiplyScalar(1 / body.mass).add(this.gravity);
@@ -164,8 +166,8 @@ export class WingStructure {
       this.force.crossVectors(this.angularAcceleration, this.arm);
       this.cross.crossVectors(body.omega, this.arm);
       this.force.add(this.moment.crossVectors(body.omega, this.cross)).add(this.acceleration);
-      s.load.copy(s.surface.force).applyQuaternion(this.inverse).addScaledVector(this.gravity, s.mass).addScaledVector(this.force, -s.mass);
-      s.moment.set(0, 0, 0);
+      if (commit) s.load.copy(s.surface.force).applyQuaternion(this.inverse).addScaledVector(this.gravity, s.mass).addScaledVector(this.force, -s.mass);
+      this.sectionMoment.set(0, 0, 0);
       this.totalLoad.set(0, 0, 0);
       // 全部外侧段累计；气动力在变形四分之一弦，质量惯性在参考质量中心，各自保留力臂。
       for (const outer of this.sections) {
@@ -175,28 +177,43 @@ export class WingStructure {
         this.cross.crossVectors(body.omega, this.arm);
         this.force.add(this.moment.crossVectors(body.omega, this.cross)).add(this.acceleration).sub(this.gravity).multiplyScalar(-outer.mass);
         this.arm.copy(outer.center).sub(s.root.position);
-        s.moment.add(this.moment.crossVectors(this.arm, this.force));
+        this.sectionMoment.add(this.moment.crossVectors(this.arm, this.force));
         this.totalLoad.add(this.force);
         this.force.copy(this.angularAcceleration).applyMatrix3(outer.inertia);
         this.cross.copy(body.omega).applyMatrix3(outer.inertia);
         this.force.add(this.moment.crossVectors(body.omega, this.cross));
-        s.moment.sub(this.force);
+        this.sectionMoment.sub(this.force);
         this.force.copy(outer.surface.force).applyQuaternion(this.inverse);
         this.totalLoad.add(this.force);
         this.arm.copy(outer.surface.point).sub(s.root.position);
-        s.moment.add(this.moment.crossVectors(this.arm, this.force));
+        this.sectionMoment.add(this.moment.crossVectors(this.arm, this.force));
       }
-      const bending = Math.abs(s.moment.dot(s.chordAxis)) / s.normalModulus + Math.abs(s.moment.dot(s.normalAxis)) / s.lateralModulus
+      const bending = Math.abs(this.sectionMoment.dot(s.chordAxis)) / s.normalModulus + Math.abs(this.sectionMoment.dot(s.normalAxis)) / s.lateralModulus
         + Math.abs(this.totalLoad.dot(s.beamAxis)) / s.sectionArea;
-      const shear = Math.abs(s.moment.dot(s.beamAxis)) / s.torsionModulus
+      const shear = Math.abs(this.sectionMoment.dot(s.beamAxis)) / s.torsionModulus
         + Math.hypot(this.totalLoad.dot(s.chordAxis), this.totalLoad.dot(s.normalAxis)) / s.sectionArea;
-      s.stress = Math.hypot(bending, Math.sqrt(3) * shear);
-      s.stressRatio = Math.hypot(bending / s.normalStrength, shear / s.shearStrength);
-      s.yieldRatio = s.stress / s.elasticLimit;
-      const peak = this.peakWings[s.wingKey === 'mainWing' ? 0 : s.wingKey === 'horizontalTail' ? 1 : 2];
-      peak.stress = Math.max(peak.stress, s.stressRatio);
-      peak.yieldRatio = Math.max(peak.yieldRatio, s.yieldRatio);
+      const stressRatio = Math.hypot(bending / s.normalStrength, shear / s.shearStrength);
+      maximum = Math.max(maximum, stressRatio);
+      if (commit) {
+        s.moment.copy(this.sectionMoment);
+        s.stress = Math.hypot(bending, Math.sqrt(3) * shear);
+        s.stressRatio = stressRatio;
+        s.yieldRatio = s.stress / s.elasticLimit;
+        const peak = this.peakWings[s.wingKey === 'mainWing' ? 0 : s.wingKey === 'horizontalTail' ? 1 : 2];
+        peak.stress = Math.max(peak.stress, s.stressRatio);
+        peak.yieldRatio = Math.max(peak.yieldRatio, s.yieldRatio);
+      }
     }
+    return maximum;
+  }
+
+  /** 与接受步共用载荷和失效公式，不提交形变、峰值或断裂。 */
+  predictStress(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3) {
+    return this.measureStress(body, totalForce, totalTorque, false);
+  }
+
+  update(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3) {
+    this.measureStress(body, totalForce, totalTorque, true);
     // 按每个连续拥有者从内到外积分，不跨断口。自由片首端保留断裂形状，但不把自由端作为断裂连接。
     for (const first of this.sections) {
       if (first.bodyId !== body.id || this.hasInnerSection(first)) continue;

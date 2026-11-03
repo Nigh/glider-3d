@@ -1,6 +1,6 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing } from './model';
-import { challengeGateCeiling, downhillCourseCeiling, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { challengeGateBlocked, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type StructuralBody, type WingFragment } from './structure';
@@ -72,8 +72,7 @@ const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * D
 /** 标准化舵量每秒最多变化2.5；回中、反向与打满共用相同行程速度。 */
 export const CONTROL_SURFACE_RATE = 2.5;
 const CONTROL_AXES = ['aileron', 'elevator', 'rudder'] as const;
-/** 25m/s以上按动压反比缩小杆量，保持同类操纵产生的气动力量级。 */
-export function adaptiveControlLimit(airspeed: number): number { return 1 / Math.max(1, (airspeed / 25) ** 2); }
+const ADAPTIVE_STRESS_TARGET = 0.6;
 
 export interface FlightControls extends Controls {
   autoTrim?: boolean;
@@ -773,6 +772,10 @@ export class FlightSimulation {
   private completed = false;
   private readonly effective: FlightControls = { ...ZERO_CONTROLS };
   private readonly applied: Controls = { ...ZERO_CONTROLS };
+  private readonly requestedControls: Controls = { ...ZERO_CONTROLS };
+  private readonly fullControls: Controls = { ...ZERO_CONTROLS };
+  private readonly predictedControls: Controls = { ...ZERO_CONTROLS };
+  private controlLimit = 1;
   private trimPitch = 0;
   private trimPitchInput = 0;
   private autoTrim = false;
@@ -863,6 +866,7 @@ export class FlightSimulation {
     this.effective.trimPitch = 0; this.effective.trimRoll = 0;
     this.trimPitch = 0; this.trimPitchInput = 0; this.autoTrim = false;
     Object.assign(this.applied, ZERO_CONTROLS);
+    this.controlLimit = 1;
     Object.assign(this.controlDeflections, { aileron: 0, elevator: 0, rudder: 0 });
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     evaluateReference(this.aircraft);
@@ -1009,19 +1013,15 @@ export class FlightSimulation {
   }
 
   private integrate(input: FlightControls, dt: number) {
-    const limit = input.adaptiveControls ? adaptiveControlLimit(this.velocity.length()) : 1;
+    this.controlLimit = 1;
     // 自动配平缓慢消除俯仰角速度；驾驶员主动推拉杆时保持配平，不争夺操纵。
     if (this.autoTrim && !this.launching && Math.abs(input.elevator) < 0.05 && this.velocity.lengthSq() >= 25) {
-      this.trimPitch = clamp(this.trimPitch + clamp(this.omega.z * 0.8, -0.2, 0.2) * dt, -limit, limit);
+      this.trimPitch = clamp(this.trimPitch + clamp(this.omega.z * 0.8, -0.2, 0.2) * dt, -1, 1);
     }
     for (const axis of CONTROL_AXES) {
       const trim = this.definition.birdman ? 0 : axis === 'elevator' ? this.trimPitch : axis === 'aileron' ? input.trimRoll! : 0;
-      const target = clamp(input[axis] * limit + trim, -limit, limit);
-      this.applied[axis] += clamp(target - this.applied[axis], -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt);
+      this.requestedControls[axis] = clamp(input[axis] + trim, -1, 1);
     }
-    this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
-    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
-    this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
     this.updatePropulsion(input.throttle!, dt);
     // 前后移动仍沿用原准静态代理；侧移使用完整非对称惯量并守恒机体轴角动量。
     this.weight += clamp(input.weight - this.weight, -dt * 1.5, dt * 1.5);
@@ -1050,6 +1050,24 @@ export class FlightSimulation {
       this.omega.set(0, 0, this.railStart.pitchDerivative * railSpeed);
       this.telemetry.controlWork += this.mass * this.velocity.lengthSq() / 2 + rotationalEnergy(this.inertiaTensor, this.omega) - oldKinetic;
     }
+    if (input.adaptiveControls) {
+      const magnitude = Math.max(Math.abs(this.requestedControls.aileron), Math.abs(this.requestedControls.elevator), Math.abs(this.requestedControls.rudder));
+      for (const axis of CONTROL_AXES) this.fullControls[axis] = magnitude > 0 ? this.requestedControls[axis] / magnitude : 0;
+      this.controlLimit = this.adaptiveControlLimit(this.fullControls);
+    }
+    for (const axis of CONTROL_AXES) {
+      const target = this.requestedControls[axis] * this.controlLimit;
+      this.applied[axis] = clamp(this.applied[axis] + clamp(target - this.applied[axis], -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt),
+        -this.controlLimit, this.controlLimit);
+    }
+    if (input.adaptiveControls) {
+      // 反向/回中的行程中间态不一定与目标同向，必须单独预测，收紧安全上限优先于舵机速度。
+      const transitionLimit = this.adaptiveControlLimit(this.applied);
+      for (const axis of CONTROL_AXES) this.applied[axis] *= transitionLimit;
+    }
+    this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
+    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
+    this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
     for (const section of this.structure.sections) if (section.bodyId === 0) {
       section.controlDeflection = section.wingKey === 'mainWing' ? -this.controlDeflections.aileron
         : section.wingKey === 'horizontalTail' ? -section.side * this.controlDeflections.elevator : this.controlDeflections.rudder;
@@ -1114,6 +1132,25 @@ export class FlightSimulation {
     this.integrateFlight(input, dt);
   }
 
+  private predictControlStress(controls: Controls, scale: number): number {
+    for (const axis of CONTROL_AXES) this.predictedControls[axis] = controls[axis] * scale;
+    this.evaluateForces(ZERO_CONTROLS, this.velocity, this.omega, this.quaternion, this.position, this.predictedControls);
+    return this.structure.predictStress(this, this.telemetry.force, this.telemetry.torque);
+  }
+
+  /** 冻结当前状态，直接重算候选舵量的气动力、惯性载荷及真实梁利用率。 */
+  private adaptiveControlLimit(controls: Controls): number {
+    // 零舵已有的气动/惯性/水载不能靠限制杆量消除，也不钳制真实应力或免除断裂。
+    if (this.predictControlStress(controls, 0) >= ADAPTIVE_STRESS_TARGET) return 0;
+    if (this.predictControlStress(controls, 1) <= ADAPTIVE_STRESS_TARGET) return 1;
+    let safe = 0, unsafe = 1;
+    for (let iteration = 0; iteration < 14; iteration++) {
+      const candidate = (safe + unsafe) / 2;
+      if (this.predictControlStress(controls, candidate) <= ADAPTIVE_STRESS_TARGET) safe = candidate;
+      else unsafe = candidate;
+    }
+    return safe;
+  }
 
   private beginFlight() {
     this.flightStarted = true;
@@ -1188,7 +1225,7 @@ export class FlightSimulation {
     }
   }
 
-  private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3) {
+  private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3, controls: Controls = this.applied) {
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
     const speed = velocity.length();
@@ -1209,7 +1246,7 @@ export class FlightSimulation {
         surface.groundEffect = groundEffectFactor(surface.clearance, span);
       }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      const cl = evaluateSurface(surface, this.applied, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      const cl = evaluateSurface(surface, controls, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
       const wet = this.surfaceWater(surface, orientation, position);
       if (surface.kind === 'main' && this.aircraft.wingArea > 0) mainDownwash += cl * (1 - wet) * surface.groundEffect * surface.area / this.aircraft.wingArea;
       // 升力与局部来流正交；空气/水阻计耗散，浮力功单独累计。
@@ -1849,14 +1886,11 @@ export class FlightSimulation {
     let startFraction = this.raceStarted ? 0 : 1;
     while (!this.completed) {
       const gate = this.raceStarted ? checkpoints[this.checkpointIndex] : challengeStartGate(this.challenge);
-      if (!gate || this.previousPosition.x >= gate.x || this.position.x < gate.x) break;
+      if (!gate || this.previousPosition.x > gate.x || this.position.x < gate.x || this.position.x <= this.previousPosition.x) break;
       const fraction = (gate.x - this.previousPosition.x) / (this.position.x - this.previousPosition.x);
       const z = this.previousPosition.z + (this.position.z - this.previousPosition.z) * fraction;
       const y = this.previousPosition.y + (this.position.y - this.previousPosition.y) * fraction;
-      const ceiling = challengeGateCeiling(this.challenge, gate, z);
-      // 只容纳插值及地形求值在当前坐标量级的浮点舍入。
-      const rounding = 8 * Number.EPSILON * Math.max(1, Math.abs(y), Math.abs(ceiling));
-      if (Math.abs(z - gate.z) > gate.halfWidth || y - ceiling > rounding) break;
+      if (challengeGateBlocked(this.challenge, gate, y, z)) break;
       if (!this.raceStarted) {
         this.raceStarted = true;
         this.travelled = 0;
@@ -1894,12 +1928,12 @@ export class FlightSimulation {
     const next = this.raceStarted ? challengeCheckpoints(this.challenge)[this.checkpointIndex] : challengeStartGate(this.challenge);
     // 两种航线均须顺序过门；低空超高扣分而非直接淘汰。
     const downhill = this.challenge === 'downhill';
-    const ceiling = downhill ? downhillCourseCeiling(x, z) : challengeCollisionHeight(this.challenge, x, z) + 1000;
+    const ceiling = challengeCollisionHeight(this.challenge, x, z) + 1000;
     const rounding = 8 * Number.EPSILON * Math.max(1, Math.abs(y), Math.abs(ceiling));
     return x < challengeLaunch(this.challenge)!.startX - 50 || x > challengeDefinitions[this.challenge].length + 100
       || (!downhill && Math.abs(z - challengeCenter(this.challenge, x)) > 100)
-      || ((downhill ? this.raceStarted : true) && y - ceiling > rounding)
-      || (next != null && x > next.x);
+      || (!downhill && y - ceiling > rounding)
+      || (next != null && (x > next.x || (downhill && x === next.x && challengeGateBlocked(this.challenge, next, y, z))));
   }
 
   private onRunway(x: number, z: number) {
@@ -1997,7 +2031,7 @@ export class FlightSimulation {
     t.engineRpm = this.engineRpm; t.fuelRemaining = this.fuelRemaining; t.thrust = this.thrust;
     t.autoTrim = this.autoTrim; t.adaptiveControls = this.effective.adaptiveControls === true;
     t.trimPitch = this.definition.birdman ? this.effective.trimPitch ?? 0 : this.trimPitch; t.trimRoll = this.effective.trimRoll ?? 0;
-    t.controlLimit = t.adaptiveControls ? adaptiveControlLimit(this.velocity.length()) : 1;
+    t.controlLimit = t.adaptiveControls ? this.controlLimit : 1;
     t.controlInputs.weight = this.weight; t.controlInputs.lateral = this.lateral;
     t.controlInputs.elevator = this.applied.elevator; t.controlInputs.aileron = this.applied.aileron; t.controlInputs.rudder = this.applied.rudder;
     t.aboveHeightTime = this.aboveHeightTime;

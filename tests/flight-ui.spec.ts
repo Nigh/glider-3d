@@ -5,6 +5,7 @@ async function enterFlight(page: Page, challenge = '高山速降') {
  await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
  await page.goto('/');
  await page.getByRole('button',{name:challenge,exact:false}).click();
+ await page.getByRole('button',{name:'重置设计',exact:true}).click();
  await page.getByRole('button',{name:'试飞',exact:true}).click();
 }
 

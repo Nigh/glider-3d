@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, clone, defaultAircraft, wing, type Controls } from '../src/model';
-import { FlightSimulation, GRAVITY } from '../src/physics';
+import { FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
 import { rotationalEnergy, summarizeWingStructure, type StructuralBody } from '../src/structure';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -27,6 +27,100 @@ function state(simulation: FlightSimulation) {
     fragments: simulation.fragments.map(fragment => [fragment.id, fragment.landed, fragment.mass, ...fragment.position.toArray(), ...fragment.quaternion.toArray(), ...fragment.velocity.toArray(), ...fragment.omega.toArray()]),
   };
 }
+
+describe('结构载荷自适应杆量', () => {
+  function controlled(materialId: 'spruce' | 'carbon-epoxy' = 'spruce', materialAmount = 0.5) {
+    const definition = clone(defaultAircraft);
+    definition.birdman = false;
+    definition.assembly.mainIncidence = -4;
+    for (const key of ['mainWing', 'horizontalTail'] as const) {
+      definition[key].structure = { width: 0.15, height: 0.3, wallThickness: 0.005 };
+      definition[key].controlSurface = 0.4;
+    }
+    definition.verticalTail.materialId = materialId;
+    definition.verticalTail.materialAmount = materialAmount;
+    const simulation = new FlightSimulation(definition, 'downhill', 0);
+    simulation.launching = false; simulation.structure.reset();
+    simulation.position.set(200, 5000, 0); simulation.quaternion.identity();
+    simulation.velocity.set(25, 0, 0); simulation.omega.set(0, 0, 0);
+    return simulation;
+  }
+  function predict(simulation: FlightSimulation, controls: Controls, scale: number) {
+    return (Reflect.get(simulation, 'predictControlStress') as (controls: Controls, scale: number) => number).call(simulation, controls, scale);
+  }
+  function limit(simulation: FlightSimulation, controls: Controls) {
+    return (Reflect.get(simulation, 'adaptiveControlLimit') as (controls: Controls) => number).call(simulation, controls);
+  }
+  const full = { ...neutral, rudder: 1 };
+
+  it('同一空速下强材料/大截面允许更大满杆，弱结构实际满杆载荷收敛到极限60%', () => {
+    const weak = controlled(), strong = controlled('carbon-epoxy', 2);
+    expect(predict(weak, full, 0)).toBeLessThan(0.6);
+    expect(predict(weak, full, 1)).toBeGreaterThan(0.6);
+    const before = state(weak), peaks = structuredClone(weak.structure.peakWings);
+    const weakLimit = limit(weak, full), strongLimit = limit(strong, full);
+    expect(weakLimit).toBeGreaterThan(0); expect(weakLimit).toBeLessThan(1);
+    expect(strongLimit).toBeGreaterThan(weakLimit);
+    expect(state(weak)).toEqual(before); expect(weak.structure.peakWings).toEqual(peaks);
+    const predicted = predict(weak, full, weakLimit);
+    expect(predicted).toBeLessThanOrEqual(0.6); expect(predicted).toBeGreaterThan(0.599);
+    weak.structure.update(weak, weak.telemetry.force, weak.telemetry.torque);
+    expect(Math.max(...weak.structure.sections.map(section => section.stressRatio))).toBeCloseTo(predicted, 12);
+    weak.velocity.set(0, 0, 0); weak.omega.set(0, 0, 0);
+    expect(limit(weak, full)).toBe(1);
+  });
+
+  it('三轴混合满杆、配平及已有大舵量的行程过渡均受真实60%载荷限制', () => {
+    for (const elevator of [-1, 1]) for (const aileron of [-1, 1]) for (const rudder of [-1, 1]) {
+      const simulation = controlled();
+      const command: FlightControls = { ...neutral, elevator, aileron, rudder, adaptiveControls: true, trimPitch: 0.8, trimRoll: -0.8 };
+      Object.assign(Reflect.get(simulation, 'applied'), { elevator: -elevator, aileron: -aileron, rudder: -rudder });
+      simulation.step(command, 1e-5);
+      const actual = simulation.telemetry.controlInputs, cap = simulation.telemetry.controlLimit;
+      expect(cap).toBeGreaterThan(0); expect(cap).toBeLessThan(1);
+      for (const axis of ['elevator', 'aileron', 'rudder'] as const) expect(Math.abs(actual[axis])).toBeLessThanOrEqual(cap);
+      expect(predict(simulation, actual, 1)).toBeLessThanOrEqual(0.601);
+      expect(simulation.structure.fractureCount).toBe(0);
+    }
+  });
+
+  it('零舵基础载荷已超限时归零杆量，但不伪造安全应力或阻止真实断裂', () => {
+    const simulation = controlled();
+    simulation.velocity.set(100, -50, 30);
+    expect(predict(simulation, full, 0)).toBeGreaterThan(1);
+    expect(limit(simulation, full)).toBe(0);
+    simulation.step({ ...full, adaptiveControls: true }, 1e-5);
+    expect(simulation.telemetry.controlLimit).toBe(0);
+    expect(simulation.telemetry.controlInputs.rudder).toBe(0);
+    expect(simulation.structure.fractureCount).toBeGreaterThan(0);
+  });
+
+  it('持续满杆时区分受控载荷与形变后真实零舵基础过载，后者仍可断裂', () => {
+    const simulation = controlled();
+    simulation.position.x = 100; Reflect.set(simulation, 'raceStarted', true);
+    let limitedWithoutOverload = false, neutralOverload = false;
+    for (let step = 0; step < 60; step++) {
+      const baseline = predict(simulation, full, 0);
+      simulation.step({ ...full, adaptiveControls: true }, 1 / 120);
+      const actualStress = Math.max(...simulation.structure.sections.map(section => section.stressRatio));
+      if (baseline < 0.6) {
+        expect(actualStress).toBeLessThanOrEqual(0.601);
+        limitedWithoutOverload ||= simulation.telemetry.controlLimit > 0 && simulation.telemetry.controlLimit < 1;
+      } else {
+        neutralOverload = true;
+        expect(simulation.telemetry.controlLimit).toBe(0);
+        expect(simulation.telemetry.controlInputs.rudder).toBe(0);
+      }
+      if (simulation.structure.fractureCount > 0) {
+        expect(baseline).toBeGreaterThan(1);
+        break;
+      }
+    }
+    expect(limitedWithoutOverload).toBe(true);
+    expect(neutralOverload).toBe(true);
+    expect(simulation.structure.fractureCount).toBeGreaterThan(0);
+  });
+});
 
 it('三翼分别汇总当前极限、弹性限与分离状态，不复用全机最大值', () => {
  const sections = [

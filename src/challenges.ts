@@ -140,6 +140,12 @@ export interface ChallengeCheckpoint {
 export function challengeGateCeiling(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>, z: number): number {
   return (challenge === 'downhill' && gate.x >= DOWNHILL_PLAIN_START ? challengeCollisionHeight(challenge, gate.x, z) : gate.y) + gate.maxHeight;
 }
+export function challengeGateBlocked(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>, y: number, z: number): boolean {
+  const ceiling = challengeGateCeiling(challenge, gate, z);
+  // 只容纳插值及地形求值在当前坐标量级的浮点舍入。
+  const rounding = 8 * Number.EPSILON * Math.max(1, Math.abs(y), Math.abs(ceiling));
+  return Math.abs(z - gate.z) > gate.halfWidth || y - ceiling > rounding;
+}
 export function challengeGateProfile(challenge: ChallengeMode, gate: Readonly<ChallengeCheckpoint>) {
   const points = [-gate.halfWidth, gate.halfWidth];
   if (challenge === 'downhill') {
@@ -176,36 +182,6 @@ export function challengeCheckpoints(challenge: ChallengeMode): readonly Challen
 
 /** 远超相机6000m远平面，门外红纹不会留下可见的有限红带边缘。 */
 export const CHALLENGE_WARNING_EXTENT = 20000;
-const downhillGates = [downhillStart, ...downhillCheckpoints];
-/** 同一三角顶面供物理求值和红纹网格使用，不再叠加当地AGL限高。 */
-export const downhillCeilingSpans = downhillGates.slice(1).map((b, index) => {
-  const a = downhillGates[index];
-  const z = [...new Set([
-    -CHALLENGE_WARNING_EXTENT, CHALLENGE_WARNING_EXTENT,
-    ...challengeGateProfile('downhill', a).map(point => a.z + point.z),
-    ...challengeGateProfile('downhill', b).map(point => b.z + point.z),
-  ])].sort((left, right) => left - right);
-  return { a, b, z, start: z.map(value => challengeGateCeiling('downhill', a, value)), end: z.map(value => challengeGateCeiling('downhill', b, value)) };
-});
-export function downhillCourseCeiling(x: number, z: number): number {
-  let spanIndex = 0;
-  while (spanIndex < downhillCeilingSpans.length - 1 && x > downhillCeilingSpans[spanIndex].b.x) spanIndex++;
-  const span = downhillCeilingSpans[spanIndex];
-  const tx = Math.max(0, Math.min(1, (x - span.a.x) / (span.b.x - span.a.x)));
-  let low = 0, high = span.z.length - 1;
-  while (high - low > 1) {
-    const middle = (low + high) >>> 1;
-    if (z < span.z[middle]) high = middle; else low = middle;
-  }
-  const tz = (z - span.z[low]) / (span.z[high] - span.z[low]);
-  const a = span.start[high], b = span.end[low];
-  if (tx + tz <= 1) {
-    const c = span.start[low];
-    return c + (b - c) * tx + (a - c) * tz;
-  }
-  const c = span.end[high];
-  return c + (a - c) * (1 - tx) + (b - c) * (1 - tz);
-}
 
 export interface ChallengeRuin {
   x: number; y: number; z: number;

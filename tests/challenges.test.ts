@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, validateAircraft, wing, type Controls } from '../src/model';
-import { adaptiveControlLimit, AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
-import { challengeGateCeiling, downhillCourseCeiling, downhillCeilingSpans, DOWNHILL_PLAIN_START, downhillHeightLimit, downhillRuinPassages, downhillRuins, downhillRouteCenter, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
+import { AIR_DENSITY, CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
+import { challengeGateCeiling, DOWNHILL_PLAIN_START, downhillHeightLimit, downhillRuinPassages, downhillRuins, downhillRouteCenter, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE_RAIL } from '../src/challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from '../src/challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor } from '../src/engines';
 import jetCruise50m from './fixtures/jet-cruise-50m.json';
@@ -79,22 +79,6 @@ describe('三轴操纵与高山路径边界', () => {
     for (const state of states) { replay.step(neutral); expect([...replay.position.toArray(), ...replay.quaternion.toArray(), ...Object.values(replay.controlDeflections)]).toEqual(state); }
   });
 
-  it('自适应杆量按空速动压缩小，配平和三轴目标遵循同一上限', () => {
-    expect(adaptiveControlLimit(0)).toBe(1); expect(adaptiveControlLimit(25)).toBe(1);
-    expect(adaptiveControlLimit(50)).toBe(0.25); expect(adaptiveControlLimit(100)).toBe(0.0625);
-    for (const speed of [20, 50, 100]) {
-      const s = create(); s.velocity.set(speed, 0, 0);
-      const integrate = Reflect.get(s, 'integrate') as (input: FlightControls, dt: number) => void;
-      const command = { ...neutral, throttle: 0, elevator: 1, aileron: -1, rudder: 1, trimPitch: 0.8, trimRoll: -0.8, adaptiveControls: true };
-      Reflect.set(s, 'trimPitch', command.trimPitch);
-      integrate.call(s, command, 0.25);
-      const limit = adaptiveControlLimit(speed);
-      expect(Math.abs(s.telemetry.controlInputs.elevator)).toBeLessThanOrEqual(limit);
-      expect(Math.abs(s.telemetry.controlInputs.aileron)).toBeLessThanOrEqual(limit);
-      expect(Math.abs(s.telemetry.controlInputs.rudder)).toBeLessThanOrEqual(limit);
-    }
-  });
-
   it('自动升降舵配平顺俯仰角速度缓调，主动杆量优先，鸟人强制禁用', () => {
     for (const direction of [-1, 1]) {
       const s = create(); s.omega.z = direction * 0.5;
@@ -112,7 +96,8 @@ describe('三轴操纵与高山路径边界', () => {
     expect(slow.telemetry.trimPitch).toBe(0.3);
     const saturated = create(); saturated.velocity.set(50, 0, 0); saturated.omega.z = 1;
     saturated.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: 1 }, 0.01);
-    expect(saturated.telemetry.trimPitch).toBe(0.25);
+    expect(saturated.telemetry.trimPitch).toBe(1);
+    expect(Math.abs(saturated.telemetry.controlInputs.elevator)).toBeLessThanOrEqual(saturated.telemetry.controlLimit);
     const edited = create(); edited.step({ ...neutral, autoTrim: true, trimPitch: 0.1 }, 0.01);
     edited.step({ ...neutral, autoTrim: true, trimPitch: 0.6, elevator: 0.5 }, 0.01);
     expect(edited.telemetry.trimPitch).toBe(0.6);
@@ -218,12 +203,12 @@ describe('三轴操纵与高山路径边界', () => {
     expect(s.ended).toBe(false); expect(s.telemetry.timingStarted).toBe(true);
   });
 
-  it('速降起飞准备区不被赛段125m上限提前终止，计时后仍限高', () => {
+  it('速降准备区和门间高空均不限制高度', () => {
     const preparing = airborne(new FlightSimulation(downhillAircraft, 'downhill', 0), 40, 150);
     preparing.step(neutral, 0.01); expect(preparing.ended).toBe(false);
     const racing = crossStart(create(), 60);
     airborne(racing, 150, 150); racing.step(neutral, 0.01);
-    expect(racing.result?.landing).toBe('boundary');
+    expect(racing.ended).toBe(false);
   });
 
   it('仅向前穿过下一门算进度，漏门和直达终点不能完成', () => {
@@ -279,7 +264,6 @@ describe('三轴操纵与高山路径边界', () => {
       for (const z of [challengeTerrainGrid.minZ, gate.z - 300, gate.z, gate.z + 300, challengeTerrainGrid.maxZ]) {
         const ceiling = challengeGateCeiling('downhill', gate, z);
         expect(ceiling).toBe((gate.x >= DOWNHILL_PLAIN_START ? challengeCollisionHeight('downhill', gate.x, z) : gate.y) + gate.maxHeight);
-        if (Math.abs(z - gate.z) <= gate.halfWidth) expect(downhillCourseCeiling(gate.x, z)).toBeCloseTo(ceiling, 9);
         for (const above of [false, true]) {
           Reflect.set(s, 'raceStarted', index > 0); Reflect.set(s, 'checkpointIndex', Math.max(0, index - 1));
           Reflect.set(s, 'completed', false);
@@ -295,52 +279,46 @@ describe('三轴操纵与高山路径边界', () => {
     expect(challengeGateCeiling('low-altitude', low, low.z + 90)).toBe(low.y + low.maxHeight);
   });
 
-  it('陡降每扇门前、门面和门后共享透明上限，真实积分通过不触发boundary', () => {
-    const gates = challengeCheckpoints('downhill');
+  it('速降只有未通过门的平面禁止区有效，触碰即判界外，门间和已通过门无限高', () => {
+    const gates = [challengeStartGate('downhill')!, ...challengeCheckpoints('downhill')];
     for (const [index, gate] of gates.entries()) {
-      if (gate.x < 2300 || gate.x > 2900) continue;
-      for (const offset of [-35, 0, 35]) {
-        const z = gate.z + offset, s = crossStart(create(), 60);
-        Reflect.set(s, 'checkpointIndex', index);
-        const outside = Reflect.get(s, 'outsideChallenge') as () => boolean;
-        for (const x of [gate.x - 1, gate.x, gate.x + 1]) {
-          s.position.set(x, downhillCourseCeiling(x, z) - 0.1, z);
-          if (x > gate.x) Reflect.set(s, 'checkpointIndex', index + 1);
-          expect(outside.call(s)).toBe(false);
-          s.position.y += 0.2;
-          expect(outside.call(s)).toBe(true);
-        }
-        Reflect.set(s, 'checkpointIndex', index);
-        const beforeSlope = downhillCourseCeiling(gate.x, z) - downhillCourseCeiling(gate.x - 1, z);
-        const afterSlope = downhillCourseCeiling(gate.x + 1, z) - downhillCourseCeiling(gate.x, z);
-        s.position.set(gate.x - 0.1, downhillCourseCeiling(gate.x - 0.1, z) - 1, z);
-        s.velocity.set(30, 30 * Math.min(beforeSlope, afterSlope), 0);
-        s.quaternion.identity();
-        s.step(neutral, 0.02);
-        expect(s.position.x).toBeGreaterThan(gate.x);
-        expect(s.ended).toBe(false);
-        expect(s.telemetry.challengeProgress).toBe((index + 1) / gates.length);
+      const s = create();
+      Reflect.set(s, 'raceStarted', index > 0); Reflect.set(s, 'checkpointIndex', Math.max(0, index - 1));
+      const outside = Reflect.get(s, 'outsideChallenge') as () => boolean;
+      for (const z of [gate.z - 35, gate.z, gate.z + 35]) {
+        const ceiling = challengeGateCeiling('downhill', gate, z);
+        s.position.set(gate.x - 1, ceiling + 1000, z);
+        expect(outside.call(s)).toBe(false);
+        s.position.set(gate.x, ceiling + 0.01, z);
+        expect(outside.call(s)).toBe(true);
+        s.position.y = ceiling;
+        expect(outside.call(s)).toBe(false);
+        s.position.set(gate.x, ceiling - 1, gate.z + gate.halfWidth + 1);
+        expect(outside.call(s)).toBe(true);
+      }
+      const previous = Reflect.get(s, 'previousPosition') as Vector3;
+      previous.set(gate.x - 1, gate.y + 20, gate.z);
+      s.position.set(gate.x, gate.y + 20, gate.z);
+      (Reflect.get(s, 'advanceChallenge') as (dt: number, timed: number) => number).call(s, 0.01, 0.01);
+      expect(Reflect.get(s, 'raceStarted')).toBe(true);
+      expect(Reflect.get(s, 'checkpointIndex')).toBe(index);
+      for (const x of [gate.x + 1, gate.x, gate.x - 1]) {
+        s.position.set(x, challengeGateCeiling('downhill', gate, gate.z) + 1000, gate.z);
+        expect(outside.call(s)).toBe(false);
       }
     }
   });
 
-  it('相邻门的红纹三角顶面和物理上限逐点一致，门前后没有限高跳变', () => {
-    for (const span of downhillCeilingSpans) {
-      for (let index = 1; index < span.z.length; index++) {
-        const left = index - 1, width = span.z[index] - span.z[left];
-        // X最大5400m、门距最小130m；归一化坐标相减及高度插值按64ε相对误差比较。
-        // 保持门面本身的绝对精度断言，不用固定小数位比较远处百万米级外推顶点。
-        const rounding = 64 * Number.EPSILON * Math.max(1, Math.abs(span.start[left]), Math.abs(span.start[index]), Math.abs(span.end[left]), Math.abs(span.end[index]));
-        const x = span.a.x + (span.b.x - span.a.x) / 3, z = span.z[left] + width / 3;
-        const firstExpected = (span.start[left] + span.end[left] + span.start[index]) / 3;
-        expect(Math.abs(downhillCourseCeiling(x, z) - firstExpected)).toBeLessThanOrEqual(rounding);
-        const x2 = span.a.x + (span.b.x - span.a.x) * 2 / 3, z2 = span.z[left] + width * 2 / 3;
-        const secondExpected = (span.start[index] + span.end[left] + span.end[index]) / 3;
-        expect(Math.abs(downhillCourseCeiling(x2, z2) - secondExpected)).toBeLessThanOrEqual(rounding);
-      }
-      for (const z of [span.b.z - 80, span.b.z, span.b.z + 80]) {
-        expect(downhillCourseCeiling(span.b.x - 1e-6, z)).toBeCloseTo(downhillCourseCeiling(span.b.x + 1e-6, z), 4);
-      }
+  it('速降在门前高于门顶仍可俯冲过门，穿越禁止区不因落点回到开口而漏判', () => {
+    const gate = challengeCheckpoints('downhill')[0];
+    for (const blocked of [false, true]) {
+      const s = crossStart(create(), 60), ceiling = challengeGateCeiling('downhill', gate, gate.z);
+      const previous = Reflect.get(s, 'previousPosition') as Vector3;
+      previous.set(gate.x - 1, ceiling + (blocked ? 30 : 10), gate.z);
+      s.position.set(gate.x + 1, ceiling - 20, gate.z);
+      (Reflect.get(s, 'advanceChallenge') as (dt: number, timed: number) => number).call(s, 0.02, 0.02);
+      expect(Reflect.get(s, 'checkpointIndex')).toBe(blocked ? 0 : 1);
+      expect((Reflect.get(s, 'outsideChallenge') as () => boolean).call(s)).toBe(blocked);
     }
   });
 
@@ -865,12 +843,10 @@ describe('物理smoke：低展弦比三角翼质量、发射和高速受力', ()
 });
 
 describe('平原废墟与门高',()=>{
- it('平原门高减半，其余山谷门不变，实际赛段上限连接相邻门顶',()=>{
+ it('平原门高减半，其余山谷门不变',()=>{
   for(const gate of challengeCheckpoints('downhill'))expect(gate.maxHeight).toBe(gate.x>=DOWNHILL_PLAIN_START?62.5:125);
   for(const x of [4500,5000,5400]) { const z=challengeCenter('downhill',x),floor=challengeTerrainHeight('downhill',x,z); for(const side of [-1,1]) expect(challengeTerrainHeight('downhill',x,z+side*500)-floor).toBeGreaterThan(800); }
   expect(downhillHeightLimit(DOWNHILL_PLAIN_START-1)).toBe(125);expect(downhillHeightLimit(DOWNHILL_PLAIN_START)).toBe(62.5);
-  const s=crossStart(create()),x=DOWNHILL_PLAIN_START+10,z=challengeCenter('downhill',x);airborne(s,x,70);s.position.y=downhillCourseCeiling(x,z)+1;s.step(neutral,0.001);
-  expect(s.result?.landing).toBe('boundary');
  });
  it('大量旋转倒塌楼体有真实碰撞，高速线段不能穿墙，交错通道保持可通行',()=>{
   expect(downhillRuins.length).toBeGreaterThan(60);
