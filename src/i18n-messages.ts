@@ -18,8 +18,8 @@ export const messages: Record<string, readonly [string, string]> = {
  "拖动控制俯仰与滚转": ["Drag to control pitch and roll", "ドラッグでピッチとロールを操作"],
  "自动升降舵配平": ["Auto pitch trim", "自動ピッチトリム"],
  "自动升降舵配平（T）": ["Auto pitch trim (T)", "自動ピッチトリム（T）"],
- "自适应杆量": ["Adaptive controls", "速度連動の操舵制限"],
- "自适应杆量（Y）": ["Adaptive controls (Y)", "速度連動の操舵制限（Y）"],
+ "自适应杆量": ["Adaptive controls", "構造強度連動の操舵制限"],
+ "自适应杆量（Y）": ["Adaptive controls (Y)", "構造強度連動の操舵制限（Y）"],
  "左偏航": ["Yaw left", "左ヨー"],
  "右偏航": ["Yaw right", "右ヨー"],
  "偏航": ["Yaw", "ヨー"],
@@ -358,9 +358,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Ailerons and elevator control attitude; the pilot sits inside a streamlined cockpit.",
   "副翼と昇降舵で姿勢を操作し、操縦者は流線型のコックピットに収まります。"
  ],
- "切换挑战载入对应几何与梁截面，保留当前三翼材料。重置设计或选择预设会载入预设的材料与截面。": [
-  "Changing challenge loads its geometry and spar sections, keeping all three current materials. Resetting or choosing a preset loads the preset materials and sections.",
-  "挑戦を変えると形状と桁断面を読み込み、3翼面の材料は維持します。リセットとプリセット選択では材料と断面もプリセットに戻ります。"
+ "切换挑战保留当前飞机。仅进入鸟人间时，不符合规则的飞机恢复默认。重置设计会载入当前挑战的默认飞机。": [
+  "Changing challenges keeps your aircraft. Only entering Birdman replaces an ineligible aircraft with the default. Reset design loads the current challenge's default aircraft.",
+  "挑戦を変えても現在の機体を維持します。鳥人間に入るときだけ、ルール外の機体を初期機体に戻します。設計リセットでは現在の挑戦の初期機体を読み込みます。"
  ],
  "机头端点": [
   "Nose endpoint",

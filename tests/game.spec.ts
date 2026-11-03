@@ -1143,6 +1143,7 @@ test('鸟人间隐藏动力，切换挑战后不保留动力编辑状态', async
   await expect(page.getByRole('tab', { name: '动力', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '返回主菜单', exact: true }).click();
   await page.getByRole('button', { name: '高山速降', exact: false }).click();
+  await page.getByRole('button', { name: '重置设计', exact: true }).click();
   await page.getByRole('tab', { name: '动力', exact: true }).click();
   await page.getByRole('button', { name: '返回主菜单', exact: true }).click();
   await page.getByRole('button', { name: '鸟人间挑战', exact: false }).click();

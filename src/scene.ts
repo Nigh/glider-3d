@@ -5,7 +5,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
-import { downhillCourseCeiling, downhillCeilingSpans, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
+import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
 import { language, t } from './i18n';
@@ -1532,6 +1532,7 @@ export class SceneView {
     this.trailGeometry.setDrawRange(0, 0);
     this.clearWingTrail();
     this.updateEnvironment();
+    this.updateChallengeGates();
     this.splashAge = -1;
     this.wasInWater = false;
     this.splash.visible = this.ring.visible = false;
@@ -1716,11 +1717,7 @@ export class SceneView {
       if (!this.crashSecond && this.crashAge >= 0.8) {this.crashSecond=true;this.crashStroke?.();}
       this.crashMark.children.forEach((child,index)=>(child as Line2).geometry.instanceCount=Math.floor(clamp((this.crashAge-0.4-index*0.4)/0.32,0,1)*64));
     }
-    if (sim) for (const gate of this.mountainEnvironment.children) {
-      if (!gate.userData.gate) continue;
-      const proximity=1-clamp(Math.abs(sim.position.x-gate.position.x)/90,0,1);
-      for(const child of gate.children) if(child.userData.warning) (child as THREE.Mesh<THREE.BufferGeometry,THREE.ShaderMaterial>).material.uniforms.opacity.value=proximity;
-    }
+    this.updateChallengeGates();
     this.updateExhaust();
     if (this.splashAge >= 0) this.updateSplash(seconds);
     if (this.controls.enabled) this.controls.update();
@@ -2229,7 +2226,7 @@ export class SceneView {
     for (let x = 0, sample = 0; x <= course.length; x += step, sample++) {
       const z = downhill ? downhillRouteCenter(x) : challengeCenter(challenge, x);
       const floor = challengeCollisionHeight(challenge, x, z);
-      const routeY = downhill ? (floor + downhillCourseCeiling(x, z)) / 2 : floor + LOW_ALTITUDE.scoringHeight / 2;
+      const routeY = floor + (downhill ? downhillHeightLimit(x) : LOW_ALTITUDE.scoringHeight) / 2;
       const y = THREE.MathUtils.lerp(launch?.y ?? 0, routeY, clamp(x / 180, 0, 1));
       route.push(x, y, z - 1.5, x, y, z + 1.5);
       if (sample === 0) continue;
@@ -2242,7 +2239,6 @@ export class SceneView {
     const routeMesh = new THREE.Mesh(routeGeometry, new THREE.MeshBasicMaterial({ color: 0xffdc82, side: THREE.DoubleSide, transparent: true, opacity: 0.8, depthWrite: false }));
     routeMesh.name = 'continuous-flight-route';
     this.mountainEnvironment.add(routeMesh);
-    if (downhill) this.buildDownhillCeiling();
     const frameGeometry = new THREE.BoxGeometry(1, 1, 1);
     const checkpointMaterial = new THREE.MeshBasicMaterial({ color: 0xf2ba62 });
     const frameThickness = downhill ? 1.6 : 0.6;
@@ -2257,7 +2253,7 @@ export class SceneView {
       group.name = timingStart ? 'challenge-start' : finish ? 'challenge-finish' : `checkpoint-${checkpointIndex}`;
       group.position.set(gate.x, gate.y, gate.z);
       // 门框仅作导航标记，不注册为地形或物理碰撞体；开口直接使用判门共享参数。
-      group.userData.gate = { halfWidth: gate.halfWidth, maxHeight: gate.maxHeight, collision: false, profile };
+      group.userData.gate = { checkpointIndex, halfWidth: gate.halfWidth, maxHeight: gate.maxHeight, collision: false, profile };
       this.mountainEnvironment.add(group);
       const stripeMaterial = new THREE.ShaderMaterial({transparent:true,depthWrite:false,side:THREE.DoubleSide,
         uniforms:{opacity:{value:0},finish:{value:0}},
@@ -2356,23 +2352,20 @@ export class SceneView {
     return regions;
   }
 
-  private buildDownhillCeiling() {
-    const vertices: number[] = [];
-    for (const span of downhillCeilingSpans) for (let index = 1; index < span.z.length; index++) {
-      const left = index - 1;
-      vertices.push(
-        span.a.x, span.start[left], span.z[left], span.b.x, span.end[left], span.z[left], span.a.x, span.start[index], span.z[index],
-        span.a.x, span.start[index], span.z[index], span.b.x, span.end[left], span.z[left], span.b.x, span.end[index], span.z[index],
-      );
+  private updateChallengeGates() {
+    const sim = this.simulation;
+    const passed = sim?.telemetry.timingStarted
+      ? Math.round(sim.telemetry.challengeProgress * challengeCheckpoints(sim.challenge).length) : -1;
+    for (const gate of this.mountainEnvironment.children) {
+      const data = gate.userData.gate;
+      if (!data) continue;
+      gate.visible = !sim || sim.challenge !== 'downhill' || data.checkpointIndex > passed;
+      const distance = sim ? gate.position.x - sim.position.x : Infinity;
+      const proximity = sim && gate.visible ? 1 - clamp((sim.challenge === 'downhill' ? distance : Math.abs(distance)) / 90, 0, 1) : 0;
+      for (const child of gate.children) {
+        if (child.userData.warning) (child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>).material.uniforms.opacity.value = proximity;
+      }
     }
-    const material = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      vertexShader: 'varying vec2 stripe;void main(){stripe=position.xz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-      fragmentShader: 'varying vec2 stripe;void main(){float band=step(0.5,fract((stripe.x+stripe.y)*0.18));gl_FragColor=vec4(mix(vec3(0.45,0.01,0.02),vec3(1.,0.08,0.05),band),0.18);}',
-    });
-    const ceiling = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)), material);
-    ceiling.name = 'downhill-course-ceiling-boundary';
-    this.mountainEnvironment.add(ceiling);
   }
 
   private buildChallengeLaunch(challenge: ChallengeMode): void {
