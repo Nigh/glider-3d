@@ -53,6 +53,25 @@ describe('结构载荷自适应杆量', () => {
   }
   const full = { ...neutral, rudder: 1 };
 
+  it('大载荷解除后杆量上限单向缓释，不在满杆附近瞬间开闭', () => {
+    const simulation = controlled();
+    simulation.velocity.set(50, 0, 0);
+    simulation.step({ ...full, adaptiveControls: true }, 1 / 60);
+    const limited = simulation.telemetry.controlLimit;
+    expect(limited).toBeGreaterThanOrEqual(0);
+    expect(limited).toBeLessThan(1);
+    simulation.velocity.set(0, 0, 0);
+    let previous = limited;
+    for (let step = 0; step < 20; step++) {
+      simulation.step({ ...full, adaptiveControls: true }, 1 / 60);
+      const current = simulation.telemetry.controlLimit;
+      expect(current).toBeGreaterThanOrEqual(previous - 1e-12);
+      expect(current - previous).toBeLessThanOrEqual(0.35 / 60 + 1e-12);
+      previous = current;
+    }
+    expect(previous).toBeLessThan(1);
+  });
+
   it('同一空速下强材料/大截面允许更大满杆，弱结构实际满杆载荷收敛到极限90%', () => {
     const weak = controlled(), strong = controlled('carbon-epoxy', 2);
     expect(predict(weak, full, 0)).toBeLessThan(0.9);

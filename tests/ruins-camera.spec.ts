@@ -48,8 +48,14 @@ test('平原废墟实例与碰撞盒一致，连续路线穿过楼间通道',asy
  await expect(start).toBeInViewport();await start.click();await expect(start).toBeHidden();
  await page.getByRole('button',{name:'暂停',exact:true}).click();
  await page.getByRole('combobox',{name:'飞行相机',exact:true}).selectOption('驾驶员');
- await expect(page.getByRole('img',{name:'HUD',exact:true})).toBeVisible();
+ const hud=page.getByRole('img',{name:'HUD',exact:true});
+ await expect(hud).toBeVisible();
+ await expect.poll(()=>page.evaluate(()=>(window as any).glider.scene.firstPerson)).toMatchObject({bodyVisible:false,cockpitVisible:true});
+ const before=await hud.getAttribute('style'),canvas=page.locator('canvas');const box=await canvas.boundingBox();
+ if(box){await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width*0.7,box.y+box.height*0.38,{steps:4});await page.mouse.up();}
+ await expect.poll(()=>hud.getAttribute('style')).not.toBe(before);
  await page.screenshot({path:info.outputPath('pilot-hud.png')});
  await page.getByRole('combobox',{name:'飞行相机',exact:true}).selectOption('追尾');
  await expect(page.getByRole('img',{name:'HUD',exact:true})).toHaveCount(0);
+ await expect.poll(()=>page.evaluate(()=>(window as any).glider.scene.firstPerson)).toMatchObject({bodyVisible:true,cockpitVisible:false});
  });

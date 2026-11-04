@@ -69,10 +69,12 @@ const MAX_FRAMES = 36_000;
 const FRAME_WIDTH = 11;
 const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 0 };
 const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
-/** 标准化舵量每秒最多变化2.5；回中、反向与打满共用相同行程速度。 */
-export const CONTROL_SURFACE_RATE = 2.5;
+/** 标准化舵量每秒最多变化2.0；回中、反向与打满共用相同行程速度。 */
+export const CONTROL_SURFACE_RATE = 2;
 const CONTROL_AXES = ['aileron', 'elevator', 'rudder'] as const;
 const ADAPTIVE_STRESS_TARGET = 0.9;
+/** 结构裕度恢复后缓慢放回杆量，避免满杆大载荷附近反复开闭限幅。 */
+const ADAPTIVE_RELEASE_RATE = 0.35;
 
 export interface FlightControls extends Controls {
   autoTrim?: boolean;
@@ -776,6 +778,7 @@ export class FlightSimulation {
   private readonly fullControls: Controls = { ...ZERO_CONTROLS };
   private readonly predictedControls: Controls = { ...ZERO_CONTROLS };
   private controlLimit = 1;
+  private adaptiveLimit = 1;
   private trimPitch = 0;
   private trimPitchInput = 0;
   private autoTrim = false;
@@ -863,6 +866,7 @@ export class FlightSimulation {
     }
     Object.assign(this.effective, ZERO_CONTROLS);
     this.effective.autoTrim = false; this.effective.adaptiveControls = false;
+    this.controlLimit = this.adaptiveLimit = 1;
     this.effective.trimPitch = 0; this.effective.trimRoll = 0;
     this.trimPitch = 0; this.trimPitchInput = 0; this.autoTrim = false;
     Object.assign(this.applied, ZERO_CONTROLS);
@@ -1053,8 +1057,13 @@ export class FlightSimulation {
     if (input.adaptiveControls) {
       const magnitude = Math.max(Math.abs(this.requestedControls.aileron), Math.abs(this.requestedControls.elevator), Math.abs(this.requestedControls.rudder));
       for (const axis of CONTROL_AXES) this.fullControls[axis] = magnitude > 0 ? this.requestedControls[axis] / magnitude : 0;
-      this.controlLimit = this.adaptiveControlLimit(this.fullControls);
-    }
+      const safeLimit = this.adaptiveControlLimit(this.fullControls);
+      // Unsafe changes clamp immediately; recovered authority returns slowly.  The
+      // one-sided slew is the hysteresis that prevents high-load limit cycling.
+      this.adaptiveLimit = safeLimit < this.adaptiveLimit ? safeLimit
+        : Math.min(safeLimit, this.adaptiveLimit + ADAPTIVE_RELEASE_RATE * dt);
+      this.controlLimit = this.adaptiveLimit;
+    } else this.adaptiveLimit = 1;
     for (const axis of CONTROL_AXES) {
       const target = this.requestedControls[axis] * this.controlLimit;
       this.applied[axis] = clamp(this.applied[axis] + clamp(target - this.applied[axis], -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt),

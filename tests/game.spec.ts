@@ -1230,19 +1230,21 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
         view.render(1 / 60, 1);
       }
       // Inspect private renderer geometry without exposing a production API.
-      const renderer = view as unknown as { wingTrailGeometry: BufferGeometry };
+      const renderer = view as unknown as { wingTrailGeometry: BufferGeometry; wingTrail: { material: { opacity: number } } };
       const geometry = renderer.wingTrailGeometry;
       const color = geometry.getAttribute('color'), count = geometry.drawRange.count;
       const alpha = Array.from({ length: count }, (_, index) => color.getW(index));
       sim.telemetry.stall = true;
       view.render(1 / 60, 1);
-      return { count, itemSize: color.itemSize, first: alpha[0], peak: Math.max(...alpha), last: alpha.at(-1), stalled: geometry.drawRange.count };
+      return { count, itemSize: color.itemSize, first: alpha[0], peak: Math.max(...alpha), last: alpha.at(-1),
+        materialOpacity: renderer.wingTrail.material.opacity, stalled: geometry.drawRange.count };
     } finally { view.dispose(); host.remove(); }
   });
   expect(result.count).toBeGreaterThan(0);
   expect(result.itemSize).toBe(4);
   expect(result.first).toBe(0);
   expect(result.peak).toBeGreaterThan(0.8);
+  expect(result.materialOpacity).toBeLessThanOrEqual(0.8);
   expect(result.last).toBeCloseTo(0, 6);
   expect(result.stalled).toBe(0);
 });

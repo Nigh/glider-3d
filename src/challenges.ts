@@ -253,3 +253,39 @@ export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:numbe
   }
   return false;
 }
+
+/**
+ * Replay compatibility fingerprint.  It is derived from the actual launch,
+ * gates, sampled terrain/river and ruin collision geometry rather than from a
+ * hand-maintained label, so changing a course invalidates old replay files.
+ */
+export function challengeMapHash(challenge: ChallengeMode): string {
+  const values: (string | number)[] = [challenge];
+  const launch = challengeLaunch(challenge);
+  if (launch) values.push(launch.kind, launch.startX, launch.endX, launch.z, launch.y, launch.width,
+    launch.length, launch.slope, launch.thickness, launch.speed, launch.acceleration);
+  for (const gate of [challengeStartGate(challenge), ...challengeCheckpoints(challenge)]) {
+    if (gate) values.push(gate.x, gate.y, gate.z, gate.halfWidth, gate.maxHeight);
+  }
+  const courseLength = challengeDefinitions[challenge].length;
+  for (let x = 0; x <= courseLength; x += 50) {
+    const center = challenge === 'low-altitude' ? challengeRiverCenter(x) : challengeCenter(challenge, x);
+    values.push(x, center);
+    for (const offset of [-120, -40, 0, 40, 120]) values.push(challengeCollisionHeight(challenge, x, center + offset));
+    if (challenge === 'low-altitude') values.push(challengeRiverHeight(x));
+  }
+  if (challenge === 'downhill') {
+    for (const ruin of downhillRuins) values.push(ruin.x, ruin.y, ruin.z, ruin.width, ruin.height, ruin.length, ruin.yaw, ruin.tilt, ruin.radiusX);
+  }
+  let hash = 0x811c9dc5;
+  for (const value of values) {
+    const text = typeof value === 'number' ? (Number.isFinite(value) ? value.toFixed(6) : String(value)) : value;
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    hash ^= 0xff;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}

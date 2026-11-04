@@ -58,9 +58,9 @@ describe('三轴操纵与高山路径边界', () => {
     expect(s.controlDeflections.aileron).toBeCloseTo(18 * DEG * CONTROL_SURFACE_RATE * 0.1, 12);
     expect(s.controlDeflections.elevator).toBeCloseTo(-22 * DEG * CONTROL_SURFACE_RATE * 0.1, 12);
     expect(s.controlDeflections.rudder).toBeCloseTo(15 * DEG * CONTROL_SURFACE_RATE * 0.1, 12);
-    s.step(neutral, 0.04); expect(s.controlDeflections.aileron).toBeCloseTo(18 * DEG * 0.15, 12);
-    s.step({ ...neutral, aileron: -1 }, 0.04); expect(s.controlDeflections.aileron).toBeCloseTo(18 * DEG * 0.05, 12);
-    s.step({ ...neutral, aileron: -1 }, 0.04); expect(s.controlDeflections.aileron).toBeCloseTo(-18 * DEG * 0.05, 12);
+    s.step(neutral, 0.04); expect(s.controlDeflections.aileron).toBeCloseTo(18 * DEG * CONTROL_SURFACE_RATE * 0.06, 12);
+    s.step({ ...neutral, aileron: -1 }, 0.04); expect(s.controlDeflections.aileron).toBeCloseTo(18 * DEG * CONTROL_SURFACE_RATE * 0.02, 12);
+    s.step({ ...neutral, aileron: -1 }, 0.04); expect(s.controlDeflections.aileron).toBeCloseTo(-18 * DEG * CONTROL_SURFACE_RATE * 0.02, 12);
     s.reset(); expect(s.controlDeflections).toEqual({ aileron: 0, elevator: 0, rudder: 0 });
   });
 
