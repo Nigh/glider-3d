@@ -419,7 +419,7 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
 });
 
-test('所有飞行视角可拖动，松开三秒后缓缓回正', async ({ page, isMobile }) => {
+test('飞行视角拖动回正，锁定禁止拖动，自由视角保持环绕并支持滚轮缩放', async ({ page, isMobile }) => {
   test.skip(isMobile, '鼠标拖动在桌面验证');
   await enterDesign(page);
   await page.getByRole('button', { name: '前往挑战' }).click();
@@ -430,14 +430,32 @@ test('所有飞行视角可拖动，松开三秒后缓缓回正', async ({ page,
   });
   const distance = (a: CameraPoint[], b: CameraPoint[]) =>
     a.reduce((sum, point, index) => sum + Math.hypot(point.x - b[index].x, point.y - b[index].y, point.z - b[index].z), 0);
-  for (const name of ['追尾', '侧追尾', '侧面', '驾驶员', '自由']) {
+  for (const name of ['追尾', '锁定', '侧追尾', '侧面', '驾驶员', '自由']) {
     await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(name);
     const before = await snapshot();
     await page.mouse.move(1000, 420); await page.mouse.down();
     await page.mouse.move(1120, 470, { steps: 8 }); await page.mouse.up();
     const dragged = await snapshot();
+    if (name === '锁定') {
+      expect(distance(before, dragged)).toBeLessThan(0.001);
+      continue;
+    }
     expect(distance(before, dragged)).toBeGreaterThan(1);
     expect(name === '驾驶员' ? dragged[1].y : dragged[0].y).toBeGreaterThan(name === '驾驶员' ? before[1].y : before[0].y);
+    if (name === '自由') {
+      await page.waitForTimeout(4_000);
+      const settled = await snapshot();
+      expect(distance(before, settled)).toBeGreaterThan(1);
+      await page.waitForTimeout(4_000);
+      expect(distance(settled, await snapshot())).toBeLessThan(0.05);
+      const radius = Math.hypot(settled[0].x - settled[1].x, settled[0].y - settled[1].y, settled[0].z - settled[1].z);
+      await page.mouse.wheel(0, 400);
+      await expect.poll(async () => {
+        const points = await snapshot();
+        return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y, points[0].z - points[1].z);
+      }).toBeGreaterThan(radius * 1.1);
+      continue;
+    }
     if (name === '追尾') {
       await page.waitForTimeout(4_000);
       expect(distance(before, await snapshot())).toBeGreaterThan(distance(before, dragged) * 0.5);
@@ -581,7 +599,7 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await expect(page.locator('.pause-banner')).toBeVisible();
   const stopped = await page.evaluate(() => window.glider.time);
   const camera = page.getByRole('combobox', { name: '飞行相机', exact: true });
-  for (const view of ['侧追尾', '侧面', '驾驶员', '自由', '追尾']) {
+  for (const view of ['锁定', '侧追尾', '侧面', '驾驶员', '自由', '追尾']) {
     await page.keyboard.press('c');
     await expect(camera).toHaveValue(view);
   }
@@ -1246,8 +1264,8 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
   expect(result.peak).toBeGreaterThan(0.8);
   expect(result.last).toBeCloseTo(0, 6);
   expect(result.stalled).toBe(0);
-  expect(result.opacity).toBeLessThanOrEqual(0.8);
-  expect(result.opacity).toBeGreaterThan(0);
+  expect(result.opacity).toBe(0.95);
+  expect(result.peak * result.opacity).toBeLessThanOrEqual(0.95);
 });
 
 test('三翼调整材料用量并独立撤销，保留预设截面且不提供尺寸输入', async ({ page }) => {
@@ -1443,6 +1461,7 @@ test('快捷键、独立气动窗口与鼠标操纵杆释放复位', async ({pag
  await expect(page.getByLabel('虚拟操纵杆')).toBeVisible();
  await page.keyboard.up('x');
  await expect(page.getByLabel('虚拟操纵杆')).toHaveCount(0);
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
  await page.keyboard.press('r');
  await expect.poll(()=>page.evaluate(()=>window.glider.flightReady)).toBe(false);
  await page.keyboard.press('Escape');

@@ -22,6 +22,12 @@ type EditorTarget = 'mainWing' | 'horizontalTail' | 'verticalTail' | 'assembly' 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+export type PilotHudFrame = {
+  width: number; height: number; clip: string; marker: string; ladder: string; dashedLadder: string;
+  labels: { angle: number; left: string; right: string }[];
+  speedLabel: string; speed: string; altitudeLabel: string; altitude: string; clearance: string; stall: string;
+};
+
 type PhysicsSection = FlightSimulation['structure']['sections'][number];
 type WingRenderSection = {
   wingIndex: number; side: number; spanStart: number; spanEnd: number;
@@ -68,7 +74,6 @@ export class SceneView {
   private readonly headInverse = new THREE.Quaternion();
   private headTime = 0;
   private readonly hudMatrix = new THREE.Matrix4();
-  private readonly hudScreenMatrix = new THREE.Matrix4();
   private readonly engines: THREE.Group[] = [];
   private readonly engineSupports: THREE.Mesh[] = [];
   private readonly exhausts: THREE.Group[] = [];
@@ -346,7 +351,7 @@ export class SceneView {
     this.controls.addEventListener('start', () => { this.cameraDragging = true; });
     this.controls.addEventListener('end', () => { this.cameraDragging = false; this.cameraReleasedAt = this.elapsed; });
     this.renderer.domElement.addEventListener('pointerdown', event => {
-      if (this.controls.enabled || event.button !== 0) return;
+      if (this.controls.enabled || this.view === 'locked' && !this.resultOrbit || event.button !== 0) return;
       this.cameraPointer = event.pointerId;
       this.cameraPointerX = event.clientX; this.cameraPointerY = event.clientY;
       this.cameraDragging = true;
@@ -679,7 +684,7 @@ export class SceneView {
   }
 
   private constrainCamera(): void {
-    if (this.editorTarget && !this.simulation) return;
+    if (this.editorTarget && !this.simulation || this.simulation && !this.simulation.ended && this.view === 'locked') return;
     const minimum = this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 0.55;
     if (this.camera.position.y >= minimum) return;
     const correction = minimum - this.camera.position.y;
@@ -1603,18 +1608,21 @@ export class SceneView {
   }
 
   cameraView(name: string): void {
-    const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '侧追尾': 'legacy-chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
+    const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '锁定': 'locked', '侧追尾': 'legacy-chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
     this.view = names[name] ?? name;
     this.cameraYaw = this.cameraPitch = 0;
     this.followInitialized = false;
     this.cameraDragging = false;
     this.cameraReleasedAt = -Infinity;
+    if (this.cameraPointer >= 0 && this.renderer.domElement.hasPointerCapture(this.cameraPointer)) this.renderer.domElement.releasePointerCapture(this.cameraPointer);
+    this.cameraPointer = -1;
     if (!this.simulation && this.editorTarget) this.view = this.editorTarget === 'mainWing' || this.editorTarget === 'horizontalTail' ? 'top' : 'side';
     const orthographic = ['top', 'side', 'front', 'rear'].includes(this.view);
     this.camera = orthographic ? this.orthographic : this.perspective;
     this.controls.object = this.camera;
     this.controls.enabled = !this.simulation || this.view === 'free' || this.view === 'orbit' || orthographic;
     this.controls.enableRotate = true;
+    this.controls.enableDamping = this.view !== 'locked';
     this.target.copy(this.aircraft.position);
     if (this.editorTarget && this.editorTarget !== 'assembly' && this.editorTarget !== 'propulsion' && !this.simulation) {
       const key = this.editorTarget, wing = this.definition[key], origin = wingOrigin(this.definition, key);
@@ -1645,7 +1653,7 @@ export class SceneView {
     this.editorDirty = true;
     this.controls.update();
     this.constrainCamera();
-    if (this.simulation && !this.controls.enabled) this.followCamera(1, true);
+    if (this.simulation && (!this.controls.enabled || this.view === 'free')) this.followCamera(1, true);
     this.cameraHome.copy(this.camera.position);
     this.targetHome.copy(this.controls.target);
   }
@@ -2963,22 +2971,80 @@ export class SceneView {
     if (this.width !== previousWidth || this.height !== previousHeight) this.renderer.setSize(this.width, this.height, false);
   }
 
-  /** Project a body-fixed 1.5 x 1 m HUD plane, including perspective under head turns. */
-  pilotHudStyle(): string {
-    if (!this.simulation || this.view !== 'pilot' || this.simulation.ended) return 'visibility:hidden';
+  /** Project native SVG at viewport resolution from a body-fixed 1.2 x 0.8 m plane. */
+  pilotHud(pitch: number, roll: number): PilotHudFrame | null {
+    if (!this.simulation || this.view !== 'pilot' || this.simulation.ended) return null;
     this.body.updateWorldMatrix(true, false);
     this.camera.updateMatrixWorld();
     this.hudMatrix.set(0, 0, 0, this.definition.cockpit.position + 2.79,
-      0, -0.0025, 0, 0.82, 0.0025, 0, 0, -0.75, 0, 0, 0, 1);
+      0, -0.002, 0, 0.72, 0.002, 0, 0, -0.6, 0, 0, 0, 1);
     this.hudMatrix.premultiply(this.body.matrixWorld).premultiply(this.camera.matrixWorldInverse).premultiply(this.camera.projectionMatrix);
     const e = this.hudMatrix.elements;
-    // CSS perspective does not clip behind the eye the way WebGL does.
-    for (const x of [0, 600]) for (const y of [0, 400]) if (e[3] * x + e[7] * y + e[15] <= 0.1) return 'visibility:hidden';
-    this.hudScreenMatrix.set(
-      (e[0]+e[3])*this.width/2, (e[4]+e[7])*this.width/2, 0, (e[12]+e[15])*this.width/2,
-      (e[3]-e[1])*this.height/2, (e[7]-e[5])*this.height/2, 0, (e[15]-e[13])*this.height/2,
-      0, 0, 1, 0, e[3], e[7], 0, e[15]);
-    return `transform:matrix3d(${this.hudScreenMatrix.elements.join(',')});visibility:visible`;
+    // Hide the panel if any corner crosses the camera's near plane.
+    for (const x of [0, 600]) for (const y of [0, 400]) if (e[3] * x + e[7] * y + e[15] <= 0.1) return null;
+    const project = (x: number, y: number) => {
+      const w = e[3] * x + e[7] * y + e[15];
+      return {
+        x: (1 + (e[0] * x + e[4] * y + e[12]) / w) * this.width / 2,
+        y: (1 - (e[1] * x + e[5] * y + e[13]) / w) * this.height / 2,
+      };
+    };
+    const affine = (x: number, y: number, rotation = 0) => {
+      const point = project(x, y), w = e[3] * x + e[7] * y + e[15];
+      const nx = (e[0] * x + e[4] * y + e[12]) / w, ny = (e[1] * x + e[5] * y + e[13]) / w;
+      const xx = (e[0] - nx * e[3]) / w * this.width / 2, xy = -(e[1] - ny * e[3]) / w * this.height / 2;
+      const yx = (e[4] - nx * e[7]) / w * this.width / 2, yy = -(e[5] - ny * e[7]) / w * this.height / 2;
+      const c = Math.cos(rotation), s = Math.sin(rotation);
+      // Local SVG affine keeps each small label sharp without flattening the whole panel.
+      return `matrix(${xx*c+yx*s} ${xy*c+yy*s} ${yx*c-xx*s} ${yy*c-xy*s} ${point.x} ${point.y})`;
+    };
+    const line = (x1: number, y1: number, x2: number, y2: number, clip = false) => {
+      if (clip) {
+        // Clip in panel coordinates before perspective division, including steep attitudes.
+        const dx = x2 - x1, dy = y2 - y1;
+        let start = 0, end = 1;
+        for (const [p, q] of [[-dx, x1-180], [dx, 420-x1], [-dy, y1-75], [dy, 325-y1]]) {
+          if (p === 0) { if (q < 0) return ''; }
+          else if (p < 0) start = Math.max(start, q / p);
+          else end = Math.min(end, q / p);
+          if (start > end) return '';
+        }
+        x2 = x1 + dx * end; y2 = y1 + dy * end;
+        x1 += dx * start; y1 += dy * start;
+      }
+      const a = project(x1, y1), b = project(x2, y2);
+      return `M ${a.x} ${a.y} L ${b.x} ${b.y} `;
+    };
+    const rotation = -roll * Math.PI / 180, c = Math.cos(rotation), s = Math.sin(rotation);
+    const attitudePoint = (x: number, y: number) => ({ x: 300 + x*c - y*s, y: 200 + x*s + y*c });
+    const attitudeLine = (x1: number, y1: number, x2: number, y2: number) => {
+      const a = attitudePoint(x1, y1), b = attitudePoint(x2, y2);
+      return line(a.x, a.y, b.x, b.y, true);
+    };
+    let ladder = '', dashedLadder = '';
+    const labels: { angle: number; left: string; right: string }[] = [];
+    for (let angle = -60; angle <= 60; angle += 10) {
+      const y = (pitch - angle) * 4, extent = angle === 0 ? 110 : 65;
+      let path = attitudeLine(-extent, y, -25, y) + attitudeLine(25, y, extent, y);
+      if (angle !== 0) path += attitudeLine(-65, y+5, -65, y) + attitudeLine(65, y, 65, y+5);
+      if (angle < 0) dashedLadder += path; else ladder += path;
+      const text = (x: number) => {
+        const point = attitudePoint(x, y+4);
+        return point.x >= 180 && point.x <= 420 && point.y >= 75 && point.y <= 325 ? affine(point.x, point.y, rotation) : '';
+      };
+      const left = text(-88), right = text(80);
+      if (left || right) labels.push({ angle, left, right });
+    }
+    const clip = [[180,75], [420,75], [420,325], [180,325]].map(([x,y]) => {
+      const point = project(x,y); return `${point.x},${point.y}`;
+    }).join(' ');
+    const marker = line(265,200,288,200) + line(288,200,300,208) + line(300,208,312,200) + line(312,200,335,200)
+      + line(300,185,300,193) + line(285,62,300,72) + line(300,72,315,62);
+    return {
+      width: this.width, height: this.height, clip, marker, ladder, dashedLadder, labels,
+      speedLabel: affine(78,175), speed: affine(78,205), altitudeLabel: affine(520,175), altitude: affine(520,205),
+      clearance: affine(300,352), stall: affine(300,110),
+    };
   }
 
   private followCamera(dt: number, immediate: boolean): void {
@@ -3002,17 +3068,28 @@ export class SceneView {
       this.camera.lookAt(this.target);
       return;
     }
-    if (this.controls.enabled) return;
+    if (this.controls.enabled) {
+      if (this.view === 'free') {
+        if (this.followInitialized) {
+          this.vector.subVectors(this.aircraft.position, this.followPosition);
+          this.camera.position.add(this.vector);
+          this.controls.target.add(this.vector);
+        }
+        this.followPosition.copy(this.aircraft.position);
+        this.followInitialized = true;
+      }
+      return;
+    }
     const sim = this.simulation;
     if (!sim) return;
     const pilot = this.view === 'pilot';
-    if (this.view === 'chase') {
+    if (this.view === 'chase' || this.view === 'locked') {
       this.vector.set(1, 0, 0).applyQuaternion(this.aircraft.quaternion);
       this.vector2.copy(UP).applyQuaternion(this.aircraft.quaternion);
       const distance = Math.max(23, this.definition.mainWing.points[1].y * 1.8 / Math.max(0.65, this.width / this.height));
       this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.vector, -distance).addScaledVector(this.vector2, distance * 0.065);
       this.desiredTarget.copy(this.aircraft.position).addScaledVector(this.vector, 6).add(this.vector2);
-      const blend = immediate || this.reducedMotion ? 1 : 1 - Math.exp(-dt * 3.5);
+      const blend = immediate || this.view === 'locked' || this.reducedMotion ? 1 : 1 - Math.exp(-dt * 3.5);
       this.camera.position.lerp(this.desiredPosition, blend);
       this.target.lerp(this.desiredTarget, blend);
       this.camera.up.lerp(this.vector2, blend).normalize();
@@ -3051,6 +3128,7 @@ export class SceneView {
   private updateCameraInteraction(dt: number): void {
     // Editing disables OrbitControls; do not mistake that for a flight camera orbit.
     if (this.editorPointerId >= 0) return;
+    if ((this.view === 'free' || this.view === 'locked') && !this.resultOrbit) return;
     const returning = !this.cameraDragging && this.elapsed - this.cameraReleasedAt > 3;
     const blend = 1 - Math.exp(-dt * 0.35);
     if (this.controls.enabled) {
@@ -3106,7 +3184,7 @@ export class SceneView {
     }
     const strength = clamp((sim.telemetry.speed - 9) / 12, 0, 1);
     if (sim.time < this.wingTrailTime || sim.time - this.wingTrailTime > 0.15) this.clearWingTrail();
-    this.wingTrail.material.opacity = 0.8;
+    this.wingTrail.material.opacity = 0.95;
     const sample = this.wingTrailTime !== sim.time;
     this.wingTrailTime = sim.time;
     this.wingTrailActive = true;
@@ -3158,7 +3236,7 @@ export class SceneView {
         const pixelWidth = this.camera === this.orthographic
           ? (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height
           : 2 * this.vector2.length() * Math.tan(this.perspective.fov * DEG / 2) / this.height;
-        this.wingTrailWidth.normalize().multiplyScalar(Math.max(0.022 + strength * 0.045, pixelWidth * 0.7));
+        this.wingTrailWidth.normalize().multiplyScalar(Math.max(0.012 + strength * 0.022, pixelWidth * 0.45));
         // Two camera-facing triangles per segment; width never depends on WebGL lineWidth.
         for (let vertex = 0; vertex < 6; vertex++) {
           const start = vertex === 0 || vertex === 1 || vertex === 3;

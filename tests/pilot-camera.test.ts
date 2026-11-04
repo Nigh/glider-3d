@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { Group, Matrix4, PerspectiveCamera, Quaternion, Vector3, Vector4 } from 'three';
+import { Group, Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { defaultAircraft } from '../src/model';
 import { SceneView } from '../src/scene';
 
@@ -10,34 +10,80 @@ function pilotView() {
   return Object.assign(Object.create(SceneView.prototype), {
     aircraft, body, camera, definition: defaultAircraft, width: 1200, height: 800, view: 'pilot',
     simulation: { ended: false, elapsedTime: 0, mass: 100, telemetry: { force: new Vector3(0, 981, 0) } },
-    hudMatrix: new Matrix4(), hudScreenMatrix: new Matrix4(), renderCG: new Vector3(),
+    hudMatrix: new Matrix4(), renderCG: new Vector3(),
     headOffset: new Vector3(), headInverse: new Quaternion(), headTime: 0,
     desiredPosition: new Vector3(), desiredTarget: new Vector3(), target: new Vector3(),
     vector: new Vector3(), vector2: new Vector3(), controls: { enabled: false }, followInitialized: false,
   });
 }
-function center(style: string) {
-  const elements = style.match(/matrix3d\(([^)]+)\)/)![1].split(',').map(Number);
-  const matrix = new Matrix4().fromArray(elements);
-  expect(Math.abs(matrix.determinant())).toBeGreaterThan(1e-10);
-  const projected = new Vector4(300, 200, 0, 1).applyMatrix4(matrix);
-  return new Vector3(projected.x / projected.w, projected.y / projected.w, 0);
+function affine(transform: string): number[] {
+  return transform.slice(7, -1).split(' ').map(Number);
+}
+function anchor(transform: string) {
+  const matrix = affine(transform);
+  return new Vector3(matrix[4], matrix[5], 0);
+}
+function panelPoint(view: { body: Group; camera: PerspectiveCamera; width: number; height: number }, x: number, y: number) {
+  const projected = new Vector3(defaultAircraft.cockpit.position + 2.79, 0.72-y*0.002, -0.6+x*0.002)
+    .applyMatrix4(view.body.matrixWorld).project(view.camera);
+  return new Vector3((1+projected.x)*view.width/2, (1-projected.y)*view.height/2, 0);
 }
 
 it('keeps HUD in aircraft coordinates while head turns and translates', () => {
   const view = pilotView();
-  const initial = center(view.pilotHudStyle());
-  expect(initial.x).toBeCloseTo(600); expect(initial.y).toBeCloseTo(400);
+  const initial = anchor(view.pilotHud(0, 0).clearance);
+  expect(initial.distanceTo(panelPoint(view, 300, 352))).toBeLessThan(1e-8);
+  expect(initial.x).toBeCloseTo(600);
   view.camera.position.z += 0.04;
-  const translated = center(view.pilotHudStyle()); expect(translated.x).toBeLessThan(initial.x);
+  const translated = anchor(view.pilotHud(0, 0).clearance); expect(translated.x).toBeLessThan(initial.x);
   view.camera.rotateY(0.3);
-  expect(center(view.pilotHudStyle()).distanceTo(initial)).toBeGreaterThan(100);
+  const turned = anchor(view.pilotHud(0, 0).clearance);
+  expect(turned.distanceTo(initial)).toBeGreaterThan(100);
   // Aircraft + camera translation together leaves the projected instrument unchanged.
-  const turned = center(view.pilotHudStyle());
   view.aircraft.position.set(200, 500, 30); view.camera.position.add(view.aircraft.position);
-  expect(center(view.pilotHudStyle()).distanceTo(turned)).toBeLessThan(1e-8);
+  expect(anchor(view.pilotHud(0, 0).clearance).distanceTo(turned)).toBeLessThan(1e-8);
   view.camera.rotateY(Math.PI);
-  expect(view.pilotHudStyle()).toBe('visibility:hidden');
+  expect(view.pilotHud(0, 0)).toBeNull();
+});
+
+it('shrinks the panel by 20% and projects text locally under perspective', () => {
+  const view = pilotView(), frame = view.pilotHud(0, 0);
+  const oldSeparation = (520-78)*0.0025*view.height/(4*Math.tan(view.camera.fov*Math.PI/360));
+  expect(anchor(frame.altitudeLabel).x-anchor(frame.speedLabel).x).toBeCloseTo(oldSeparation*0.8);
+  expect([frame.width, frame.height]).toEqual([1200, 800]);
+  view.camera.rotateY(0.4);
+  const turned = view.pilotHud(0, 0), matrix = affine(turned.speedLabel);
+  const point = panelPoint(view, 78, 175), step = 0.001;
+  expect(anchor(turned.speedLabel).distanceTo(point)).toBeLessThan(1e-8);
+  const dx = panelPoint(view, 78+step, 175).sub(point).divideScalar(step);
+  const dy = panelPoint(view, 78, 175+step).sub(point).divideScalar(step);
+  expect(matrix[0]).toBeCloseTo(dx.x, 4); expect(matrix[1]).toBeCloseTo(dx.y, 4);
+  expect(matrix[2]).toBeCloseTo(dy.x, 4); expect(matrix[3]).toBeCloseTo(dy.y, 4);
+  expect(Math.abs(matrix[0]-affine(turned.altitudeLabel)[0])).toBeGreaterThan(0.01);
+});
+
+it('clips rotated pitch lines to the panel before projection, including extreme attitudes', () => {
+  const view = pilotView(), initial = view.pilotHud(0, 0);
+  for (const [pitch, roll] of [[0,0], [78,133], [-82,-157], [180,0]]) {
+    const frame = view.pilotHud(pitch, roll);
+    const clip = frame.clip.split(/[ ,]+/).map(Number), xs = clip.filter((_: number, i: number) => i%2 === 0), ys = clip.filter((_: number, i: number) => i%2 === 1);
+    const points = (frame.ladder+frame.dashedLadder).match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)?.map(Number) ?? [];
+    for (let i = 0; i < points.length; i += 2) {
+      expect(Number.isFinite(points[i]) && Number.isFinite(points[i+1])).toBe(true);
+      expect(points[i]).toBeGreaterThanOrEqual(Math.min(...xs)-1e-8); expect(points[i]).toBeLessThanOrEqual(Math.max(...xs)+1e-8);
+      expect(points[i+1]).toBeGreaterThanOrEqual(Math.min(...ys)-1e-8); expect(points[i+1]).toBeLessThanOrEqual(Math.max(...ys)+1e-8);
+    }
+    expect(frame.marker).toBe(initial.marker);
+  }
+  expect(view.pilotHud(0, 0).ladder).not.toBe(view.pilotHud(20, 35).ladder);
+});
+
+it('hides HUD outside pilot view, at the near plane and after flight termination', () => {
+  const view = pilotView();
+  view.view = 'chase'; expect(view.pilotHud(0, 0)).toBeNull();
+  view.view = 'pilot'; view.simulation.ended = true; expect(view.pilotHud(0, 0)).toBeNull();
+  view.simulation.ended = false; view.camera.position.x += 1.95;
+  expect(view.pilotHud(0, 0)).toBeNull();
 });
 
 it('responds smoothly to body loads, stays bounded and freezes with physics time', () => {

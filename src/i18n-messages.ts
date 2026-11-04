@@ -1002,6 +1002,10 @@ export const messages: Record<string, readonly [string, string]> = {
   "Try again",
   "再挑戦"
  ],
+ "再试一次（仅暂停或结算时）": [
+  "Try again (only when paused or on results)",
+  "再挑戦（一時停止中または結果画面のみ）"
+ ],
  "重放飞行": [
   "Replay flight",
   "飛行を再生"
@@ -1189,6 +1193,10 @@ export const messages: Record<string, readonly [string, string]> = {
  "导入成功": [
   "Import complete",
   "読み込み完了"
+ ],
+ "已导入机库，但当前挑战只允许无动力鸟人间设计，未加载。": [
+  "Saved to the hangar, but not loaded: this challenge only allows unpowered Birdman designs.",
+  "格納庫に保存しましたが、読み込みませんでした。このチャレンジでは無動力の鳥人間設計のみ使用できます。"
  ],
  "高山速降机动型": [
   "Alpine agile",
@@ -1882,9 +1890,13 @@ export const messages: Record<string, readonly [string, string]> = {
   "Flight camera",
   "飛行カメラ"
  ],
- "C 键切换视角": [
-  "C to change view",
-  "Cで視点切替"
+ "锁定": [
+  "Locked",
+  "固定"
+ ],
+ "C 键切换视角 · 锁定视角不可拖动 · 自由视角拖动环绕、滚轮缩放，不自动回中": [
+  "C to change view · Locked view cannot be dragged · Free view: drag to orbit, scroll to zoom, no automatic recentering",
+  "Cで視点切替 · 固定視点はドラッグ不可 · 自由視点：ドラッグで旋回、ホイールでズーム、自動復帰なし"
  ],
  "重心操纵输入": [
   "Pitch / weight-shift input",

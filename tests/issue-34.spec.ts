@@ -14,13 +14,13 @@ test('pilot view uses a common open cockpit and keeps HUD fixed to the airframe 
   await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption('驾驶员');
   const hud = page.getByRole('img', { name: 'HUD', exact: true });
   await expect(hud).toBeVisible();
-  const before = await hud.getAttribute('style');
+  const marker = hud.locator('.hud-marker'), before = await marker.getAttribute('d');
   const state = () => page.evaluate(() => ({ exterior: (window as any).glider.scene.aircraftExteriorVisible, interior: (window as any).glider.scene.pilotInteriorVisible }));
   await expect.poll(state).toEqual({ exterior: false, interior: true });
   const size = page.viewportSize()!;
   await page.mouse.move(size.width * 0.55, size.height * 0.48);
   await page.mouse.down(); await page.mouse.move(size.width * 0.55 + 65, size.height * 0.48 + 15, { steps: 5 }); await page.mouse.up();
-  await expect.poll(() => hud.getAttribute('style')).not.toBe(before);
+  await expect.poll(() => marker.getAttribute('d')).not.toBe(before);
   await page.screenshot({ path: info.outputPath('pilot-airframe-hud.png') });
   await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption('追尾');
   await expect.poll(state).toEqual({ exterior: true, interior: false });
@@ -55,4 +55,9 @@ test('imports a complete recording, exports it losslessly and rejects incompatib
   expect(exported).toEqual(JSON.parse(source.text));
   await page.screenshot({ path: info.outputPath('replay-result.png') });
   expect(errors).toEqual([]);
+  await page.keyboard.press('r');
+  await expect(page.getByRole('region', { name: '飞行结算', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '开始试飞', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.glider.flightReady)).toBe(false);
+  expect(await page.evaluate(() => window.glider.time)).toBe(0);
 });
