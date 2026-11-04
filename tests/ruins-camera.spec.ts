@@ -3,6 +3,7 @@ import {test,expect} from '@playwright/test';
 test('油门位于左侧并保留竖直滑条',async({page})=>{
  await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
  await page.goto('/');await page.getByRole('button',{name:'低空飞行',exact:false}).click();
+ await page.getByRole('button',{name:'重置设计',exact:true}).click();
  await page.getByRole('button',{name:'试飞',exact:true}).click();
  const throttle=page.getByRole('slider',{name:'油门',exact:true});
  const box=(await throttle.boundingBox())!;

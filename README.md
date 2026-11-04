@@ -37,6 +37,10 @@ npm run build -- --base /glider-3d/
 npx vite preview --base /glider-3d/
 ```
 
+## Cloudflare Workers preview
+
+Cloudflare Workers Builds runs `npm run build`, then `npx wrangler preview` for preview branches. The root `wrangler.jsonc` names the Worker `glider-3d`, serves static assets from `dist/`, and includes the required empty `previews` block. Keep the Cloudflare Worker name aligned with this configuration.
+
 ## Challenges and aircraft
 
 - Each home-screen challenge button opens its aircraft workshop. Returning to the menu and switching challenges preserve the current aircraft, saved selection and undo history.
@@ -125,12 +129,21 @@ Jet audio uses dedicated oscillators and filtered noise. Pitch, loudness and spe
 ## Saving and replay
 
 Design provides one Save action. A new name creates an aircraft; saving a name already in the hangar asks for confirmation before overwriting it. The hangar retains multiple aircraft, marks the current one, and provides each aircraft's load, rename, copy, delete and JSON export actions in its own menu. The hangar's top toolbar only imports JSON. Successful loading closes the hangar; a damaged record leaves the hangar open and preserves the current design. Deletion requires confirmation. Damaged records do not overwrite other valid records. Storage exhaustion and permission errors show a notification. Clearing browser site data deletes the hangar; export important designs as backups.
+ Aircraft JSON import saves the original validated design to the hangar and closes it. A compatible design loads immediately; an incompatible Birdman design stays saved but does not replace the current aircraft, and a notification explains why. Malformed files and storage failures preserve the current design and leave the hangar open.
 
 Birdman distance is measured horizontally from the platform front to the aircraft's rearmost body point, not its center of mass or accumulated path length. Lateral offsets use a radial measurement convention. New records remain separate from the old center-of-mass-distance records; old data is neither deleted nor mixed into the new ranking.
 
 Undo and redo retain up to 60 snapshots. `Ctrl/Cmd+Z` undoes; `Ctrl/Cmd+Shift+Z` redoes. A parameter drag creates a snapshot when it ends. Saving after undo or redo follows the same name-confirmation rule, protecting other aircraft from silent replacement. The six presets are balanced, high aspect ratio, high stability, responsive, aft center of mass, and high wing loading.
 
-Results can replay the latest flight. Recording stores the launch's random roll target and fixed-step control inputs, not a prebuilt trajectory. Replay runs the same flight core again.
+Results can replay the latest flight or export it as JSON. Import replay is available on the home screen and in the workshop. Files contain the challenge, complete aircraft, launch disturbance and every recorded control frame. Imports require the same physics version and a SHA-256 match of the deterministic map geometry and rules. Invalid files leave the current design intact. Imported replays do not update personal records; truncated recordings pause at their last frame. Files are limited to 16 MiB and 36,000 frames.
+
+ Pilot view uses a common open cockpit instead of the aircraft's exterior model. The HUD projects a 1.2 × 0.8 m plane fixed to the airframe into native SVG paths and text, avoiding CSS 3D bitmap scaling and shadows. It is 20% smaller than the previous HUD. Looking around moves it out of the center. Small, bounded head translations respond to body loads and freeze with simulation time; reduced-motion preferences disable them. Returning to other cameras restores the exterior.
+
+Adaptive control authority tightens immediately for safety and recovers with a 0.75 s time constant. Control surfaces move at 1.25 normalized units per second. This damps repeated limit recovery under sustained full stick; real neutral-load overloads can still break the aircraft. The physics version is updated to keep old scores separate.
+
+ Birdman energy-cost charts scale to normal airborne samples using an outlier fence. Water-contact spikes and other values above the scale retain their raw samples and appear as triangles at the top, with exact values on hover. Result charts retain at least 720 px width and 235 px height; narrow screens scroll the chart horizontally rather than shrinking labels, and the result panel scrolls vertically when needed. Right axes use compact 50-unit spacing. Course guidance is lavender, separate from amber checkpoint gates. Wingtip trails are thinner, use at most 95% material opacity and fade over longer portions of their length.
+ 
+ C cycles through chase, locked, rear-quarter, side, pilot and free cameras. Locked uses the chase position but follows the airframe rigidly, without drag, smoothing or terrain offsets. Free follows aircraft translation while retaining user orbit and wheel zoom; it never recenters automatically. R restarts only during pause or on the result screen, not before launch or during active flight. The home replay-import entry uses the same secondary-button style and size as challenge entries.
 
 ## Checks
 

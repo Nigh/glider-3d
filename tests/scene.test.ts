@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
+import { Box3, BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
 import { FlightSimulation, LAUNCH } from '../src/physics';
@@ -167,6 +167,123 @@ it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回�
   for(let frame=0;frame<240;frame++){view.updateCameraInteraction(1/60);view.followCamera(1/60,false);}
   expect(camera.position.distanceTo(view.desiredPosition)).toBeLessThan(0.001);
  }
+});
+
+function flightCameraView() {
+  const aircraft = new Group(), camera = new PerspectiveCamera(43, 1.6, 0.1, 3000);
+  aircraft.position.set(100, 500, 30);
+  return Object.assign(Object.create(SceneView.prototype), {
+    aircraft, camera, perspective: camera, orthographic: new OrthographicCamera(), definition: defaultAircraft,
+    simulation: { ended: false }, controls: { enabled: false, target: new Vector3(), update() {} },
+    desiredPosition: new Vector3(), desiredTarget: new Vector3(), target: new Vector3(),
+    vector: new Vector3(), vector2: new Vector3(), cameraHome: new Vector3(), targetHome: new Vector3(),
+    followPosition: new Vector3(), followTarget: new Vector3(), followInitialized: false,
+    cameraYaw: 0, cameraPitch: 0, cameraPointer: -1, cameraDragging: false, cameraReleasedAt: -Infinity,
+    view: 'chase', width: 1440, height: 900, editorPointerId: -1, elapsed: 10, resultOrbit: false,
+    resize() {}, surfaceHeight() { return 0; },
+  });
+}
+
+it('锁定与追尾初始位置相同，平移、竖直俯仰和滚转均严格跟随，不响应拖动或地表回避', () => {
+  const view = flightCameraView();
+  view.cameraView('追尾');
+  const position = view.camera.position.clone(), rotation = view.camera.quaternion.clone();
+  view.cameraView('锁定');
+  expect(view.view).toBe('locked');
+  expect(view.controls.enabled).toBe(false);
+  expect(view.controls.enableDamping).toBe(false);
+  expect(view.camera.position.toArray()).toEqual(position.toArray());
+  expect(view.camera.quaternion.toArray()).toEqual(rotation.toArray());
+  for (const pitch of [0, Math.PI / 2, -Math.PI / 2]) for (const roll of [0, Math.PI / 2, Math.PI]) {
+    view.aircraft.position.add(new Vector3(12, -3, 8));
+    view.aircraft.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), pitch)
+      .multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), roll));
+    view.followCamera(1 / 240, false);
+    expect(view.camera.position.distanceTo(view.desiredPosition)).toBeLessThan(1e-10);
+    expect(view.target.distanceTo(view.desiredTarget)).toBeLessThan(1e-10);
+    expect(view.camera.up.distanceTo(new Vector3(0, 1, 0).applyQuaternion(view.aircraft.quaternion))).toBeLessThan(1e-10);
+    const lockedPosition = view.camera.position.clone(), lockedRotation = view.camera.quaternion.clone();
+    view.cameraYaw = 0.8; view.cameraPitch = 0.4;
+    view.updateCameraInteraction(1);
+    view.surfaceHeight = () => 1000;
+    view.constrainCamera();
+    expect(view.camera.position.toArray()).toEqual(lockedPosition.toArray());
+    expect(view.camera.quaternion.toArray()).toEqual(lockedRotation.toArray());
+  }
+  view.surfaceHeight = () => 0;
+  view.cameraView('自由');
+  expect(view.controls.enabled).toBe(true);
+  expect(view.controls.enableDamping).toBe(true);
+});
+
+it('自由视角只跟随飞机平移，保留环绕角度、平移偏置和缩放距离，空闲不回中', () => {
+  const view = flightCameraView();
+  view.cameraView('自由');
+  view.camera.position.set(80, 510, 50);
+  view.controls.target.copy(view.aircraft.position).add(new Vector3(0, 2, 3));
+  view.camera.lookAt(view.controls.target);
+  const offset = view.camera.position.clone().sub(view.aircraft.position);
+  const targetOffset = view.controls.target.clone().sub(view.aircraft.position);
+  const rotation = view.camera.quaternion.clone();
+  for (let frame = 0; frame < 240; frame++) {
+    view.aircraft.position.add(new Vector3(0.5, -0.1, 0.2));
+    view.aircraft.rotation.set(frame * 0.01, frame * 0.02, frame * 0.03);
+    view.elapsed += 1 / 60;
+    view.followCamera(1 / 60, false);
+    view.updateCameraInteraction(1 / 60);
+  }
+  expect(view.camera.position.clone().sub(view.aircraft.position).distanceTo(offset)).toBeLessThan(1e-10);
+  expect(view.controls.target.clone().sub(view.aircraft.position).distanceTo(targetOffset)).toBeLessThan(1e-10);
+  expect(view.camera.quaternion.angleTo(rotation)).toBeLessThan(1e-7);
+  // OrbitControls owns wheel zoom; follow must preserve its new radius.
+  view.camera.position.lerp(view.controls.target, 0.5);
+  const zoomedDistance = view.camera.position.distanceTo(view.controls.target);
+  view.aircraft.position.x += 20;
+  view.followCamera(1 / 60, false);
+  view.updateCameraInteraction(10);
+  expect(view.camera.position.distanceTo(view.controls.target)).toBeCloseTo(zoomedDistance, 10);
+});
+
+it('翼尖涡流使用更细条带且最高不透明度95%，保持距离渐变及失速清除', () => {
+  const geometry = new BufferGeometry(), positions = new Float32Array(192 * 36), colors = new Float32Array(192 * 48);
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new BufferAttribute(colors, 4));
+  const camera = new PerspectiveCamera(43, 1.6); camera.position.set(20, 5, 10);
+  const view = Object.assign(Object.create(SceneView.prototype), {
+    simulation: { time: 0, telemetry: { speed: 21, stall: false } }, aircraft: new Group(),
+    camera, perspective: camera, orthographic: new OrthographicCamera(), height: 10000,
+    wingTrailGeometry: geometry, wingTrailArray: positions, wingTrailColors: colors,
+    wingTrail: new Mesh(geometry, new MeshBasicMaterial()), wingTrailHistory: new Float32Array(193 * 6),
+    wingTrailDistances: new Float64Array(2), wingTrailLengths: new Float64Array(2),
+    wingTrailPoint: new Vector3(), wingTrailOlder: new Vector3(), wingTrailWidth: new Vector3(),
+    wingTrailCount: 0, wingTrailIndex: 0, wingTrailTime: -1,
+    vector: new Vector3(), vector2: new Vector3(),
+    wingTipWorld(side: number, out: Vector3) { return out.set(this.aircraft.position.x, 5, side * 6); },
+  });
+  for (let index = 0; index < 180; index++) {
+    view.simulation.time += 1 / 60;
+    view.aircraft.position.x += 0.5;
+    view.recordWingTrail();
+  }
+  expect(geometry.drawRange.count).toBeGreaterThan(0);
+  const widths: number[] = [], alpha: number[] = [];
+  for (let vertex = 0; vertex < geometry.drawRange.count; vertex += 6) {
+    const a = new Vector3().fromBufferAttribute(geometry.getAttribute('position'), vertex);
+    const b = new Vector3().fromBufferAttribute(geometry.getAttribute('position'), vertex + 1);
+    widths.push(a.distanceTo(b));
+  }
+  for (let vertex = 0; vertex < geometry.drawRange.count; vertex++) alpha.push(colors[vertex * 4 + 3]);
+  expect(Math.max(...widths)).toBeGreaterThan(0.05);
+  expect(Math.max(...widths)).toBeLessThanOrEqual(0.06801);
+  expect(alpha[0]).toBe(0);
+  expect(Math.max(...alpha)).toBeGreaterThan(0.9);
+  expect(Math.max(...alpha) * view.wingTrail.material.opacity).toBeLessThanOrEqual(0.95);
+  expect(view.wingTrail.material.opacity).toBe(0.95);
+  view.simulation.telemetry.stall = true;
+  view.recordWingTrail();
+  expect(geometry.drawRange.count).toBe(0);
+  expect(view.wingTrail.visible).toBe(false);
+  geometry.dispose(); view.wingTrail.material.dispose();
 });
 
 function steamView(challenge: ChallengeMode) {

@@ -74,3 +74,24 @@ test('满油门待开始可调，1增2减且Shift和Ctrl不再控制油门',asyn
  await page.getByRole('button',{name:'暂停',exact:true}).click();
  await expect(throttle).toHaveValue(selected);
 });
+
+test('R仅暂停时重飞，准备和飞行中保留当前试飞',async({page})=>{
+ await enterFlight(page,'低空飞行');
+ const throttle=page.getByRole('slider',{name:'油门',exact:true});
+ const start=page.getByRole('button',{name:'开始试飞',exact:true});
+ await throttle.fill('0.43');
+ await page.keyboard.press('r');
+ await expect(start).toBeVisible();await expect(throttle).toHaveValue('0.43');
+ await start.click();
+ await expect.poll(()=>page.evaluate(()=>window.glider.recordingLength)).toBeGreaterThan(6);
+ const frames=await page.evaluate(()=>window.glider.recordingLength);
+ await page.keyboard.press('r');
+ await expect(start).toHaveCount(0);await expect(throttle).toHaveValue('0.43');
+ expect(await page.evaluate(()=>window.glider.flightReady)).toBe(true);
+ expect(await page.evaluate(()=>window.glider.recordingLength)).toBeGreaterThanOrEqual(frames);
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
+ await page.keyboard.press('r');
+ await expect(start).toBeVisible();await expect(throttle).toHaveValue('1');
+ expect(await page.evaluate(()=>window.glider.flightReady)).toBe(false);
+ expect(await page.evaluate(()=>window.glider.recordingLength)).toBe(0);
+});
