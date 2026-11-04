@@ -63,6 +63,12 @@ export class SceneView {
   private readonly pilot = new THREE.Group();
   private readonly driver = new THREE.Group();
   private readonly cockpit = new THREE.Group();
+  private readonly pilotInterior = new THREE.Group();
+  private readonly headOffset = new THREE.Vector3();
+  private readonly headInverse = new THREE.Quaternion();
+  private headTime = 0;
+  private readonly hudMatrix = new THREE.Matrix4();
+  private readonly hudScreenMatrix = new THREE.Matrix4();
   private readonly engines: THREE.Group[] = [];
   private readonly engineSupports: THREE.Mesh[] = [];
   private readonly exhausts: THREE.Group[] = [];
@@ -296,7 +302,7 @@ export class SceneView {
     this.wingTrailGeometry.setAttribute('position', new THREE.BufferAttribute(this.wingTrailArray, 3).setUsage(THREE.DynamicDrawUsage));
     this.wingTrailGeometry.setAttribute('color', new THREE.BufferAttribute(this.wingTrailColors, 4).setUsage(THREE.DynamicDrawUsage));
     this.wingTrailGeometry.setDrawRange(0, 0);
-    this.wingTrail = new THREE.Mesh(this.wingTrailGeometry, new THREE.MeshBasicMaterial({ color: 0xf5fcff, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+    this.wingTrail = new THREE.Mesh(this.wingTrailGeometry, new THREE.MeshBasicMaterial({ color: 0xf5fcff, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
     this.wingTrail.frustumCulled = false;
     this.wingTrail.visible = false;
     this.scene.add(this.wingTrail);
@@ -425,6 +431,8 @@ export class SceneView {
       aircraft: position(this.aircraft.position),
       pilot: { visible: this.pilot.visible, movement: position(this.driver.position) },
       cockpitVisible: this.cockpit.visible,
+      aircraftExteriorVisible: this.body.visible,
+      pilotInteriorVisible: this.pilotInterior.visible,
       engines: this.engines.map((engine, index) => ({ visible: engine.visible, position: position(engine.position), supportVisible: this.engineSupports[index].visible, supportLength: this.engineSupports[index].scale.y })),
       fuelTank: { visible: this.fuelTank.visible, position: position(this.fuelTank.position) },
       exhaustStrength: this.exhaustStrength,
@@ -1301,6 +1309,12 @@ export class SceneView {
     const { ivory, main, orange, graphite, skin, suit, canopy } = this.aircraftMaterials;
     this.aircraft.add(this.body);
     this.body.add(this.pilot, this.cockpit);
+    // Common low dashboard, with no canopy or design-dependent wing obstruction.
+    this.aircraft.add(this.pilotInterior);
+    this.pilotInterior.name = 'pilot-interior';
+    const dashboard = this.mesh(new THREE.BoxGeometry(0.35, 0.12, 1.1), graphite, this.pilotInterior);
+    dashboard.position.set(1.8, -0.1, 0);
+    this.pilotInterior.visible = false;
     this.pilot.add(this.driver);
     this.wingMeshes.push(this.mesh(new THREE.BufferGeometry(), main, this.body),
       this.mesh(new THREE.BufferGeometry(), main, this.body),
@@ -1518,6 +1532,10 @@ export class SceneView {
     this.editorDirty = true;
     this.applyAircraft();
     this.simulation = sim;
+    this.headOffset.set(0, 0, 0);
+    this.headTime = sim?.elapsedTime ?? 0;
+    this.body.visible = true;
+    this.pilotInterior.visible = false;
     this.clearFragments();
     this.syncWingPhysics();
     this.renderBlend = 1;
@@ -1723,6 +1741,11 @@ export class SceneView {
     if (this.controls.enabled) this.controls.update();
     this.updateCameraInteraction(seconds);
     this.constrainCamera();
+    const interior = !!sim && !sim.ended && this.view === 'pilot';
+    this.body.visible = !interior;
+    this.pilotInterior.visible = interior;
+    this.pilotInterior.position.copy(this.body.position);
+    this.pilotInterior.position.x += this.definition.cockpit.position;
     this.updateCenters();
     this.updateFuelCgRange();
     this.updateEditorOverlay();
@@ -2236,7 +2259,7 @@ export class SceneView {
     const routeGeometry = new THREE.BufferGeometry();
     routeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(route, 3));
     routeGeometry.setIndex(routeIndices);
-    const routeMesh = new THREE.Mesh(routeGeometry, new THREE.MeshBasicMaterial({ color: 0xffdc82, side: THREE.DoubleSide, transparent: true, opacity: 0.8, depthWrite: false }));
+    const routeMesh = new THREE.Mesh(routeGeometry, new THREE.MeshBasicMaterial({ color: 0xb9a2ff, side: THREE.DoubleSide, transparent: true, opacity: 0.65, depthWrite: false }));
     routeMesh.name = 'continuous-flight-route';
     this.mountainEnvironment.add(routeMesh);
     const frameGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -2940,6 +2963,24 @@ export class SceneView {
     if (this.width !== previousWidth || this.height !== previousHeight) this.renderer.setSize(this.width, this.height, false);
   }
 
+  /** Project a body-fixed 1.5 x 1 m HUD plane, including perspective under head turns. */
+  pilotHudStyle(): string {
+    if (!this.simulation || this.view !== 'pilot' || this.simulation.ended) return 'visibility:hidden';
+    this.body.updateWorldMatrix(true, false);
+    this.camera.updateMatrixWorld();
+    this.hudMatrix.set(0, 0, 0, this.definition.cockpit.position + 2.79,
+      0, -0.0025, 0, 0.82, 0.0025, 0, 0, -0.75, 0, 0, 0, 1);
+    this.hudMatrix.premultiply(this.body.matrixWorld).premultiply(this.camera.matrixWorldInverse).premultiply(this.camera.projectionMatrix);
+    const e = this.hudMatrix.elements;
+    // CSS perspective does not clip behind the eye the way WebGL does.
+    for (const x of [0, 600]) for (const y of [0, 400]) if (e[3] * x + e[7] * y + e[15] <= 0.1) return 'visibility:hidden';
+    this.hudScreenMatrix.set(
+      (e[0]+e[3])*this.width/2, (e[4]+e[7])*this.width/2, 0, (e[12]+e[15])*this.width/2,
+      (e[3]-e[1])*this.height/2, (e[7]-e[5])*this.height/2, 0, (e[15]-e[13])*this.height/2,
+      0, 0, 1, 0, e[3], e[7], 0, e[15]);
+    return `transform:matrix3d(${this.hudScreenMatrix.elements.join(',')});visibility:visible`;
+  }
+
   private followCamera(dt: number, immediate: boolean): void {
     if (!immediate && !this.simulation?.ended && !this.controls.enabled && this.followInitialized) {
       this.camera.position.copy(this.followPosition);
@@ -2979,8 +3020,15 @@ export class SceneView {
       return;
     }
     if (pilot) {
-      this.desiredPosition.set(this.definition.cockpit.position + this.driver.position.x + 0.79, 0.32, 0);
-      this.desiredTarget.set(35, 0.6, 0);
+      const headDt = Math.max(0, Math.min(0.1, sim.elapsedTime - this.headTime));
+      this.headTime = sim.elapsedTime;
+      this.vector.copy(sim.telemetry.force).divideScalar(sim.mass).applyQuaternion(this.headInverse.copy(this.aircraft.quaternion).invert());
+      this.vector.y -= 9.81;
+      this.vector.multiplyScalar(-0.0018).clampScalar(-0.06, 0.06);
+      if (this.reducedMotion) this.headOffset.set(0, 0, 0);
+      else this.headOffset.lerp(this.vector, 1 - Math.exp(-headDt * 8));
+      this.desiredPosition.set(this.definition.cockpit.position + 0.79, 0.32, 0).add(this.headOffset);
+      this.desiredTarget.copy(this.desiredPosition).add(this.vector.set(35, 0, 0));
     } else if (this.view === 'flight-side' || this.view === 'side-flight') {
       this.desiredPosition.set(-3, 4, 23);
       this.desiredTarget.set(3, 0.3, 0);
@@ -3058,7 +3106,7 @@ export class SceneView {
     }
     const strength = clamp((sim.telemetry.speed - 9) / 12, 0, 1);
     if (sim.time < this.wingTrailTime || sim.time - this.wingTrailTime > 0.15) this.clearWingTrail();
-    this.wingTrail.material.opacity = 1;
+    this.wingTrail.material.opacity = 0.8;
     const sample = this.wingTrailTime !== sim.time;
     this.wingTrailTime = sim.time;
     this.wingTrailActive = true;
@@ -3110,13 +3158,13 @@ export class SceneView {
         const pixelWidth = this.camera === this.orthographic
           ? (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height
           : 2 * this.vector2.length() * Math.tan(this.perspective.fov * DEG / 2) / this.height;
-        this.wingTrailWidth.normalize().multiplyScalar(Math.max(0.055 + strength * 0.12, pixelWidth * 1.8));
+        this.wingTrailWidth.normalize().multiplyScalar(Math.max(0.022 + strength * 0.045, pixelWidth * 0.7));
         // Two camera-facing triangles per segment; width never depends on WebGL lineWidth.
         for (let vertex = 0; vertex < 6; vertex++) {
           const start = vertex === 0 || vertex === 1 || vertex === 3;
           const sign = vertex === 0 || vertex === 3 || vertex === 5 ? -1 : 1;
           const vertexDistance = start ? distance : endDistance;
-          const taper = clamp((vertexDistance-gap)/2,0,1)*clamp((length-vertexDistance)/2,0,1);
+          const taper = clamp((vertexDistance-gap)/Math.max(6,length*0.3),0,1)*clamp((length-vertexDistance)/Math.max(10,length*0.5),0,1);
           const point = start ? this.wingTrailPoint : this.wingTrailOlder;
           for (let axis = 0; axis < 3; axis++) {
             this.wingTrailArray[offset++] = point.getComponent(axis) + this.wingTrailWidth.getComponent(axis) * sign * taper;

@@ -1230,13 +1230,14 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
         view.render(1 / 60, 1);
       }
       // Inspect private renderer geometry without exposing a production API.
-      const renderer = view as unknown as { wingTrailGeometry: BufferGeometry };
+      const renderer = view as unknown as { wingTrailGeometry: BufferGeometry; wingTrail: { material: { opacity: number; blending: number } } };
       const geometry = renderer.wingTrailGeometry;
       const color = geometry.getAttribute('color'), count = geometry.drawRange.count;
       const alpha = Array.from({ length: count }, (_, index) => color.getW(index));
+      const opacity = renderer.wingTrail.material.opacity;
       sim.telemetry.stall = true;
       view.render(1 / 60, 1);
-      return { count, itemSize: color.itemSize, first: alpha[0], peak: Math.max(...alpha), last: alpha.at(-1), stalled: geometry.drawRange.count };
+      return { count, itemSize: color.itemSize, first: alpha[0], peak: Math.max(...alpha), last: alpha.at(-1), stalled: geometry.drawRange.count, opacity };
     } finally { view.dispose(); host.remove(); }
   });
   expect(result.count).toBeGreaterThan(0);
@@ -1245,6 +1246,8 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
   expect(result.peak).toBeGreaterThan(0.8);
   expect(result.last).toBeCloseTo(0, 6);
   expect(result.stalled).toBe(0);
+  expect(result.opacity).toBeLessThanOrEqual(0.8);
+  expect(result.opacity).toBeGreaterThan(0);
 });
 
 test('三翼调整材料用量并独立撤销，保留预设截面且不提供尺寸输入', async ({ page }) => {

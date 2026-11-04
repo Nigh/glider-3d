@@ -1,5 +1,13 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
 export const messages: Record<string, readonly [string, string]> = {
+ "导入回放": ["Import replay", "リプレイをインポート"],
+ "导出回放": ["Export replay", "リプレイをエクスポート"],
+ "回放结束": ["Replay finished", "リプレイ終了"],
+ "回放文件超过 16 MB": ["Replay file exceeds 16 MB", "リプレイファイルは16 MBを超えています"],
+ "回放文件格式无效": ["Invalid replay file format", "リプレイファイルの形式が無効です"],
+ "回放物理版本不匹配": ["Replay physics version does not match", "リプレイの物理バージョンが一致しません"],
+ "回放地图不匹配": ["Replay map does not match", "リプレイのマップが一致しません"],
+ "能耗纵轴按正常飞行缩放；擦水与离群峰值以顶部三角标记，悬停查看原值。": ["Energy cost scale follows normal flight; skimming and outlier peaks are marked by top triangles. Hover for raw values.", "エネルギー消費軸は通常飛行に合わせて調整します。水面接触や外れ値は上端の三角で示し、ホバーで元の値を表示します。"],
  "低空分": ["Low flight points", "低空スコア"],
  "速度分": ["Speed points", "速度スコア"],
  "超高扣分": ["Height penalty", "高度超過減点"],

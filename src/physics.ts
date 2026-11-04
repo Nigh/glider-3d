@@ -65,12 +65,12 @@ const SECTION_POLAR = [
   [15, 1.6100, 0.06077, 1.6475, 0.05556],
   [17, 1.5913, 0.08793, 1.6548, 0.07833],
 ] as const;
-const MAX_FRAMES = 36_000;
-const FRAME_WIDTH = 11;
+export const MAX_FRAMES = 36_000;
+export const FRAME_WIDTH = 11;
 const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 0 };
 const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
-/** 标准化舵量每秒最多变化2.5；回中、反向与打满共用相同行程速度。 */
-export const CONTROL_SURFACE_RATE = 2.5;
+/** 标准化舵量每秒最多变化1.25，减少高载荷下结构/操纵反馈的激励。 */
+export const CONTROL_SURFACE_RATE = 1.25;
 const CONTROL_AXES = ['aileron', 'elevator', 'rudder'] as const;
 const ADAPTIVE_STRESS_TARGET = 0.9;
 
@@ -206,6 +206,18 @@ export interface FlightTelemetry {
   waterWork: number;
 }
 export interface InputRecording { frames: Float64Array; length: number; launchRoll: number }
+
+export function validateRecording(recording: InputRecording): void {
+  if (!(recording.frames instanceof Float64Array) || !Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length !== recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
+  if (!Number.isFinite(recording.launchRoll) || Math.abs(recording.launchRoll) > LAUNCH_ROLL_LIMIT) throw new Error('飞行记录离台滚转角无效');
+  for (let i = 0; i < recording.frames.length; i++) {
+    const value = recording.frames[i], field = i % FRAME_WIDTH;
+    const valid = field === 0 ? value > 0 && value <= 0.25
+      : field === 7 || field === 8 ? value === 0 || value === 1
+      : field === 6 ? value >= 0 && value <= 1 : Math.abs(value) <= 1;
+    if (!Number.isFinite(value) || !valid) throw new Error('飞行记录包含无效输入');
+  }
+}
 
 function quarterChord(w: Wing) {
   const p = planform(w);
@@ -776,6 +788,7 @@ export class FlightSimulation {
   private readonly fullControls: Controls = { ...ZERO_CONTROLS };
   private readonly predictedControls: Controls = { ...ZERO_CONTROLS };
   private controlLimit = 1;
+  private controlAuthority = 1;
   private trimPitch = 0;
   private trimPitchInput = 0;
   private autoTrim = false;
@@ -866,7 +879,7 @@ export class FlightSimulation {
     this.effective.trimPitch = 0; this.effective.trimRoll = 0;
     this.trimPitch = 0; this.trimPitchInput = 0; this.autoTrim = false;
     Object.assign(this.applied, ZERO_CONTROLS);
-    this.controlLimit = 1;
+    this.controlLimit = this.controlAuthority = 1;
     Object.assign(this.controlDeflections, { aileron: 0, elevator: 0, rudder: 0 });
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     evaluateReference(this.aircraft);
@@ -904,11 +917,7 @@ export class FlightSimulation {
   }
 
   loadReplay(recording: InputRecording) {
-    if (!Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length < recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
-    if (!Number.isFinite(recording.launchRoll) || Math.abs(recording.launchRoll) > LAUNCH_ROLL_LIMIT) throw new Error('飞行记录离台滚转角无效');
-    for (let i = 0; i < recording.length * FRAME_WIDTH; i++) {
-      if (!Number.isFinite(recording.frames[i]) || (i % FRAME_WIDTH === 0 && (recording.frames[i] <= 0 || recording.frames[i] > 0.25))) throw new Error('飞行记录包含无效输入');
-    }
+    validateRecording(recording);
     const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length, launchRoll: recording.launchRoll };
     this.reset(copy.launchRoll);
     this.replay = copy;
@@ -1053,8 +1062,11 @@ export class FlightSimulation {
     if (input.adaptiveControls) {
       const magnitude = Math.max(Math.abs(this.requestedControls.aileron), Math.abs(this.requestedControls.elevator), Math.abs(this.requestedControls.rudder));
       for (const axis of CONTROL_AXES) this.fullControls[axis] = magnitude > 0 ? this.requestedControls[axis] / magnitude : 0;
-      this.controlLimit = this.adaptiveControlLimit(this.fullControls);
-    }
+      const safeLimit = this.adaptiveControlLimit(this.fullControls);
+      // 安全收紧立即生效；恢复采用0.75s时间常数，避免每步在满舵与零舵间切换。
+      this.controlAuthority = Math.min(safeLimit, this.controlAuthority + (safeLimit - this.controlAuthority) * (1 - Math.exp(-dt / 0.75)));
+      this.controlLimit = this.controlAuthority;
+    } else this.controlAuthority = 1;
     for (const axis of CONTROL_AXES) {
       const target = this.requestedControls[axis] * this.controlLimit;
       this.applied[axis] = clamp(this.applied[axis] + clamp(target - this.applied[axis], -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt),

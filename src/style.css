@@ -167,9 +167,10 @@ html:not([lang=zh]) .aero-preview table{min-width:560px}html:not([lang=zh]) .fli
 @media(min-height:601px) and (max-height:850px){.race-results .wing-peaks{display:none}.race-results .result-structure{grid-column:1/-1}.race-results .trajectory-panel svg{max-height:18dvh}}
 
 
-.pilot-hud{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(650px,66vw);height:min(440px,65dvh);pointer-events:none;fill:none;stroke:#8dff96;stroke-width:1.5;filter:drop-shadow(0 1px 2px #102c17);font:13px monospace}
+.pilot-hud{position:absolute;left:0;top:0;transform-origin:0 0;width:600px;height:400px;pointer-events:none;fill:none;stroke:#8dff96;stroke-width:1.5;filter:drop-shadow(0 1px 2px #102c17);font:13px monospace}
 .pilot-hud text{fill:#8dff96;stroke:none;text-anchor:middle}.pilot-hud .hud-value{font-size:25px}
-@media(max-width:700px){.pilot-hud{width:80vw;height:48dvh}}
+.replay-import{display:inline-flex;align-items:center;cursor:pointer}.replay-import input{display:none}
+.replay-toolbar{padding:0 22px 8px}.replay-toolbar .button{font-size:11px;min-height:32px;padding:4px 8px}.welcome>.replay-import{font-size:12px;padding:8px 13px}
 
 .stick-panel{position:absolute;z-index:4;left:28px;bottom:max(30px,env(safe-area-inset-bottom));width:340px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px;font-variant-numeric:tabular-nums;box-shadow:0 5px 18px #173e4314}
 .powered-flight .stick-panel{left:205px}

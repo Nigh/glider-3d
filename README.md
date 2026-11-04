@@ -130,7 +130,13 @@ Birdman distance is measured horizontally from the platform front to the aircraf
 
 Undo and redo retain up to 60 snapshots. `Ctrl/Cmd+Z` undoes; `Ctrl/Cmd+Shift+Z` redoes. A parameter drag creates a snapshot when it ends. Saving after undo or redo follows the same name-confirmation rule, protecting other aircraft from silent replacement. The six presets are balanced, high aspect ratio, high stability, responsive, aft center of mass, and high wing loading.
 
-Results can replay the latest flight. Recording stores the launch's random roll target and fixed-step control inputs, not a prebuilt trajectory. Replay runs the same flight core again.
+Results can replay the latest flight or export it as JSON. Import replay is available on the home screen and in the workshop. Files contain the challenge, complete aircraft, launch disturbance and every recorded control frame. Imports require the same physics version and a SHA-256 match of the deterministic map geometry and rules. Invalid files leave the current design intact. Imported replays do not update personal records; truncated recordings pause at their last frame. Files are limited to 16 MiB and 36,000 frames.
+
+Pilot view uses a common open cockpit instead of the aircraft's exterior model. The HUD is projected from a plane fixed to the airframe, so looking around moves it out of the center. Small, bounded head translations respond to body loads and freeze with simulation time; reduced-motion preferences disable them. Returning to other cameras restores the exterior.
+
+Adaptive control authority tightens immediately for safety and recovers with a 0.75 s time constant. Control surfaces move at 1.25 normalized units per second. This damps repeated limit recovery under sustained full stick; real neutral-load overloads can still break the aircraft. The physics version is updated to keep old scores separate.
+
+Birdman energy-cost charts scale to normal airborne samples using an outlier fence. Water-contact spikes and other values above the scale retain their raw samples and appear as triangles at the top, with exact values on hover. Course guidance is lavender, separate from amber checkpoint gates. Wingtip trails are thinner, use at most 80% material opacity and fade over longer portions of their length.
 
 ## Checks
 
