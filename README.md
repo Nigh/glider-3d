@@ -37,6 +37,10 @@ npm run build -- --base /glider-3d/
 npx vite preview --base /glider-3d/
 ```
 
+## Cloudflare Workers preview
+
+Cloudflare Workers Builds runs `npm run build`, then `npx wrangler preview` for preview branches. The root `wrangler.jsonc` names the Worker `glider-3d`, serves static assets from `dist/`, and includes the required empty `previews` block. Keep the Cloudflare Worker name aligned with this configuration.
+
 ## Challenges and aircraft
 
 - Each home-screen challenge button opens its aircraft workshop. Returning to the menu and switching challenges preserve the current aircraft, saved selection and undo history.
