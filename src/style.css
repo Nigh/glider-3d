@@ -187,3 +187,11 @@ html:not([lang=zh]) .aero-preview table{min-width:560px}html:not([lang=zh]) .fli
  .chart-viewport{min-width:0;overflow-x:auto;overscroll-behavior-x:contain}
  .results .result-instruments .trajectory-panel svg{min-width:720px;max-height:none;height:auto;margin:0}
  @media(min-width:701px){.results:not(.race-results){width:min(860px,calc(100vw - 48px))}}
+.chart-g-line{fill:none;stroke:#ae6817;stroke-width:2}.g-key{color:#ae6817}.chart-legend .g-key:before{border-color:#ae6817}.result-g{margin:4px 0;font-size:12px;grid-column:1/-1}.result-g small{display:block;font-size:10px;margin-top:3px}
+.replay-panel{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);width:min(600px,calc(100vw - 32px));z-index:15}
+.flying:has(.replay-panel) .stick-panel,.flying:has(.replay-panel) .flight-keyboard-hints{display:none}
+.flying:has(.replay-panel) .flight-sidebar{bottom:240px}
+@media(max-height:500px){.replay-panel{left:auto;right:12px;transform:none;width:calc(100% - 330px);bottom:8px}}
+
+.flying:has(.replay-panel) .launch-action{bottom:240px}
+@media(max-height:500px) and (min-width:701px){.flying:has(.replay-panel) .launch-action{left:12px;right:auto;bottom:16px;width:290px;transform:none}}

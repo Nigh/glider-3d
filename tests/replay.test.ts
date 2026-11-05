@@ -12,6 +12,14 @@ const sample = () => {
 };
 afterEach(() => vi.restoreAllMocks());
 
+it('keeps the exported aircraft snapshot independent of later design edits', async () => {
+  const source=sample(), expected=clone(source.definition);
+  const pending=exportReplay(source);
+  source.definition.mainWing.points[1].y+=0.5;
+  source.definition.mainWing.points[2].y+=0.5;
+  expect((await importReplay(await pending)).definition).toEqual(expected);
+});
+
 it('exports lossless JSON and reproduces every recorded state after import', async () => {
   const source = sample(), restored = await importReplay(await exportReplay(source));
   expect(restored).toEqual(source);

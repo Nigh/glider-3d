@@ -170,6 +170,7 @@ export interface AerodynamicSurface {
   alpha: number;
 }
 export interface FlightResult {
+  maxG: number;
   distance: number;
   time: number;
   averageSpeed: number;
@@ -180,6 +181,8 @@ export interface FlightResult {
   challenge: ChallengeMode; score: number; completed: boolean; checkpointScores: number[]; speedScore: number; heightPenalty: number;
 }
 export interface FlightTelemetry {
+  /** Proper acceleration magnitude at the CG, including launch/support loads; 1 G at rest. */
+  gForce: number;
   speed: number; altitude: number; distance: number;
   alpha: number; pitch: number; roll: number; sink: number; glide: number;
   stall: boolean; physicsMs: number; cg: Vector3; mass: number;
@@ -706,6 +709,7 @@ export class FlightSimulation {
   private launchRoll = 0;
   private replay: InputRecording | null = null;
   private replayIndex = 0;
+  get replayFrame() { return this.replayIndex; }
   private readonly parts: MassPart[];
   private readonly fuelPart: MassPart | undefined;
   private readonly enginePositions: EngineMount[];
@@ -777,6 +781,7 @@ export class FlightSimulation {
   private maxSpeed = 10;
   private minSpeed = 10;
   private maxHeight = 10;
+  private maxG = 1;
   private travelled = 0;
   private weight = 0;
   private lateral = 0;
@@ -831,7 +836,7 @@ export class FlightSimulation {
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
     this.launchCg.copy(this.aircraft.cg);
     evaluateReference(this.aircraft);
-    this.telemetry = { speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
+    this.telemetry = { gForce: 1, speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
       stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(),
       aeroPower: 0, energy: 0, staticMargin: 0, energyPerDistance: null, potentialEnergy: 0, kineticEnergy: 0,
       dissipatedEnergy: 0, initialEnergy: 0, liftDragRatio: 0, aerodynamics: this.aerodynamics,
@@ -845,6 +850,7 @@ export class FlightSimulation {
 
   /** 新飞行重新抽样；构造时明确指定角度则保持该角度。回放仅覆盖本次重置。 */
   reset(launchRoll = this.fixedLaunchRoll ?? (Math.random() * 2 - 1) * LAUNCH_ROLL_LIMIT) {
+    this.maxG = 1;
     if (!Number.isFinite(launchRoll) || Math.abs(launchRoll) > LAUNCH_ROLL_LIMIT) throw new RangeError('离台滚转角须在 ±1° 之间');
     this.launchRoll = launchRoll;
     this.railX = LOW_RUNWAY.startX;
@@ -897,6 +903,7 @@ export class FlightSimulation {
     // 待发射也由发射架承重；先求真实自重下垂，不能等首个运动步才建立梁载荷。
     // 此处只恢复静载形状，断裂仍在接受物理步时提交。
     this.supportForce.set(0, this.mass * GRAVITY, 0);
+    this.telemetry.gForce = 1;
     this.supportTorque.set(0, 0, 0);
     this.structure.update(this, this.supportForce, this.supportTorque);
     this.structure.summarize();
@@ -1528,6 +1535,9 @@ export class FlightSimulation {
   }
 
   private advanceStructure(dt: number, force: Vector3, torque: Vector3) {
+    // Measure before fracturing can change the mass represented by this force.
+    this.telemetry.gForce = force.length() / (this.mass * GRAVITY);
+    this.maxG = Math.max(this.maxG, this.telemetry.gForce);
     // 仅接受步提交形变和拓扑；已有片先积分，刚产生的片不重复推进本步。
     const fragmentCount = this.fragments.length;
     for (let index = 0; index < fragmentCount; index++) {
@@ -2149,7 +2159,7 @@ export class FlightSimulation {
 
   private finish(landing: FlightResult['landing']) {
     this.ended = true;
-    this.result = { distance: this.telemetry.distance, time: this.time, averageSpeed: this.time > 0 ? this.travelled / this.time : 0,
+    this.result = { maxG: this.maxG, distance: this.telemetry.distance, time: this.time, averageSpeed: this.time > 0 ? this.travelled / this.time : 0,
       maxSpeed: this.maxSpeed, minSpeed: this.minSpeed, maxHeight: this.maxHeight, landing,
       challenge: this.challenge, score: this.telemetry.score, completed: this.completed,
       checkpointScores: [...this.checkpointScores], heightPenalty: this.heightPenalty,
