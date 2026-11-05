@@ -1,12 +1,15 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
 export const messages: Record<string, readonly [string, string]> = {
- "跳至负载峰值": ["Jump to peak load", "最大負荷位置へ"],
+ "垂直速度": ["Vertical velocity", "鉛直速度"],
+ "实时杆量": ["Live control inputs", "現在の操縦入力"],
+ "此记录未保存负载曲线": ["This recording has no saved load curves", "この記録には負荷曲線が保存されていません"],
+ "飞行记录包含无效负载": ["Invalid recorded wing loads", "記録の翼面負荷が無効です"],
  "回放时间轴": ["Replay timeline","リプレイのタイムライン"],
  "回放进度": ["Replay position","リプレイ位置"],
  "翼面负载曲线": ["Wing load curves","翼面負荷曲線"],
 
  "正在跳转回放…": ["Seeking replay…","リプレイ位置を移動中…"],
- "正在计算负载曲线…": ["Calculating load curves…","負荷曲線を計算中…"],
+
  "G值": ["G load","G荷重"],
  "G值曲线": ["G load curve","G荷重曲線"],
  "最大G值": ["Maximum G load","最大G荷重"],

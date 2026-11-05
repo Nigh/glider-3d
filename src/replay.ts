@@ -35,7 +35,7 @@ function checkedReplay(replay: Replay): Replay {
 export async function exportReplay(replay: Replay): Promise<string> {
   const checked = checkedReplay(replay);
   // Snapshot before hashing: the caller may start another flight while awaiting it.
-  const data = { format: 'aero-formula-replay', version: 1, physicsVersion: PHYSICS_VERSION, challenge: checked.challenge, definition: clone(checked.definition), recording: { ...checked.recording, frames: Array.from(checked.recording.frames) } };
+  const data = { format: 'aero-formula-replay', version: 1, physicsVersion: PHYSICS_VERSION, challenge: checked.challenge, definition: clone(checked.definition), recording: { ...checked.recording, frames: Array.from(checked.recording.frames), wingLoads: checked.recording.wingLoads ? Array.from(checked.recording.wingLoads) : undefined } };
   return JSON.stringify({ ...data, mapHash: await mapHash(checked.challenge) });
 }
 
@@ -48,7 +48,8 @@ export async function importReplay(text: string): Promise<Replay> {
   if (!Object.hasOwn(challengeDefinitions, data.challenge)) throw Error('未知飞行挑战');
   const recording = data.recording;
   if (!recording || !Array.isArray(recording.frames) || recording.frames.length > MAX_FRAMES * FRAME_WIDTH || recording.frames.some((value: unknown) => typeof value !== 'number')) throw Error('飞行记录包含无效输入');
-  const replay = checkedReplay({ definition: data.definition, challenge: data.challenge, recording: { ...recording, frames: new Float64Array(recording.frames) } });
+  if (recording.wingLoads !== undefined && (!Array.isArray(recording.wingLoads) || recording.wingLoads.some((value: unknown) => typeof value !== 'number'))) throw Error('飞行记录包含无效负载');
+  const replay = checkedReplay({ definition: data.definition, challenge: data.challenge, recording: { ...recording, frames: new Float64Array(recording.frames), wingLoads: recording.wingLoads === undefined ? undefined : new Float64Array(recording.wingLoads) } });
   if (data.mapHash !== await mapHash(replay.challenge)) throw Error('回放地图不匹配');
   return replay;
 }

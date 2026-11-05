@@ -1525,7 +1525,7 @@ export class SceneView {
     this.crashMark.visible = true;
   }
 
-  setFlight(sim: FlightSimulation | null): void {
+  setFlight(sim: FlightSimulation | null, reuseAircraft = false): void {
     this.crashMark.visible = false; this.crashAge = -1; this.crashStroke = null;
     for (const child of [...this.crashMark.children]) {const mesh=child as THREE.Mesh;mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();this.crashMark.remove(child);}
 
@@ -1533,7 +1533,7 @@ export class SceneView {
     this.endEditorDrag();
     this.editorDirty = true;
     this.simulation = sim;
-    if (sim) this.updateAircraft(sim.definition);
+    if (sim && !reuseAircraft) this.updateAircraft(sim.definition);
     this.applyAircraft();
     this.headOffset.set(0, 0, 0);
     this.headTime = sim?.elapsedTime ?? 0;

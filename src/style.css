@@ -195,3 +195,12 @@ html:not([lang=zh]) .aero-preview table{min-width:560px}html:not([lang=zh]) .fli
 
 .flying:has(.replay-panel) .launch-action{bottom:240px}
 @media(max-height:500px) and (min-width:701px){.flying:has(.replay-panel) .launch-action{left:12px;right:auto;bottom:16px;width:290px;transform:none}}
+
+.vertical-arrow{font-size:1.4em;font-weight:1000;line-height:1;margin-right:6px;-webkit-text-stroke:1px currentColor}.vertical-speed[data-direction="up"] .vertical-arrow{color:#cf302c}.vertical-speed[data-direction="down"] .vertical-arrow{color:#178854}.vertical-speed[data-direction="level"] .vertical-arrow{color:#777}
+.replay-inputs{position:fixed;left:16px;bottom:16px;display:flex;flex-direction:column;align-items:center;padding:6px 10px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:11px;z-index:14}.replay-inputs svg{width:84px;height:84px}.replay-panel{width:min(600px,calc(100vw - 240px));left:auto;right:16px;transform:none}.flying:has(.replay-panel) .flight-sidebar{bottom:200px}.flying:has(.replay-panel) .launch-action{bottom:200px}
+@media(max-width:700px){.replay-inputs{left:8px;bottom:8px;padding:4px;font-size:9px}.replay-inputs svg{width:58px;height:58px}.replay-inputs span:first-of-type{max-width:96px}.replay-panel{right:8px;bottom:8px;width:calc(100vw - 124px)}}
+@media(max-height:500px) and (min-width:701px){.replay-inputs{left:12px;bottom:68px}.replay-inputs svg{width:56px;height:56px}.replay-panel{width:calc(100% - 330px);right:12px;bottom:8px}.flying:has(.replay-panel) .launch-action{bottom:16px}}
+
+.flying:has(.replay-panel) .flight-sidebar .engine-hud{position:static;width:100%;text-align:left}.flying:has(.replay-panel) .engine-hud input{display:none}
+
+@media(max-width:700px){.flying .flight-sidebar .flight-hud.compact-hud:has(.vertical-speed){grid-template-columns:1fr}}

@@ -1,6 +1,6 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing } from './model';
-import { challengeGateBlocked, hitsChallengeRuin, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type StructuralBody, type WingFragment } from './structure';
@@ -19,6 +19,7 @@ export function runwayHeight(x: number) { return LAUNCH.height - x * Math.tan(LA
 /** 与可见坡面共用的有限厚度刚性平台，尺寸为游戏近似。 */
 export const PLATFORM = { thickness: 0.6, width: 13, slotWidth: 0.6, slotDepth: 0.305, slotFloorThickness: 0.15 } as const;
 const PLATFORM_COS = Math.cos(LAUNCH.slope), PLATFORM_SIN = Math.sin(LAUNCH.slope);
+const CONTACT_SLOTS = 5; // three launcher boxes, terrain, ruin
 const CONTACT_TOLERANCE = 2e-6;
 const PLATFORM_NORMALS = [
   new Vector3(-PLATFORM_COS, PLATFORM_SIN, 0), new Vector3(PLATFORM_COS, -PLATFORM_SIN, 0),
@@ -36,6 +37,8 @@ const RUNWAY_NORMALS = [
   new Vector3(0, 1, 0), new Vector3(0, 0, -1), new Vector3(0, 0, 1),
 ];
 const LOW_RUNWAY = challengeLaunch('low-altitude')!;
+const DOWNHILL_LAUNCH = challengeLaunch('downhill')!;
+const DOWNHILL_BOXES = [[new Vector3(-DOWNHILL_LAUNCH.length, -DOWNHILL_LAUNCH.thickness, -DOWNHILL_LAUNCH.width / 2), new Vector3(0, 0, DOWNHILL_LAUNCH.width / 2)]];
 const RUNWAY_BOXES = [[new Vector3(-LOW_RUNWAY.length, -LOW_RUNWAY.thickness, -LOW_RUNWAY.width / 2),
   new Vector3(0, 0, LOW_RUNWAY.width / 2)]];
 /** 整段助跑逐渐施加的滚转扰动上限（rad）。 */
@@ -208,10 +211,11 @@ export interface FlightTelemetry {
   /** 累计浮力功，可正可负；列于能量预算输入侧。 */
   waterWork: number;
 }
-export interface InputRecording { frames: Float64Array; length: number; launchRoll: number }
+export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array }
 
 export function validateRecording(recording: InputRecording): void {
   if (!(recording.frames instanceof Float64Array) || !Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length !== recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
+  if (recording.wingLoads !== undefined && (!(recording.wingLoads instanceof Float64Array) || recording.wingLoads.length !== recording.length * 3 || recording.wingLoads.some(value => !Number.isFinite(value) || value < 0))) throw new Error('飞行记录包含无效负载');
   if (!Number.isFinite(recording.launchRoll) || Math.abs(recording.launchRoll) > LAUNCH_ROLL_LIMIT) throw new Error('飞行记录离台滚转角无效');
   for (let i = 0; i < recording.frames.length; i++) {
     const value = recording.frames[i], field = i % FRAME_WIDTH;
@@ -680,8 +684,8 @@ export class FlightSimulation {
   get inverseInertia() { return this.aircraft.inverseInertia; }
   get railAttachmentHeight() { return lowAltitudeRailSample(this.railX, this.railStart).y; }
   get railPositionX() { return this.railX; }
-  private get contactBoxes() { return this.challenge === 'low-altitude' ? RUNWAY_BOXES : PLATFORM_BOXES; }
-  private get contactNormals() { return this.challenge === 'low-altitude' ? RUNWAY_NORMALS : PLATFORM_NORMALS; }
+  private get contactBoxes() { return this.challenge === 'birdman' ? PLATFORM_BOXES : this.challenge === 'low-altitude' ? RUNWAY_BOXES : DOWNHILL_BOXES; }
+  private get contactNormals() { return this.challenge === 'birdman' ? PLATFORM_NORMALS : RUNWAY_NORMALS; }
   readonly challenge: ChallengeMode;
   readonly controlDeflections = { aileron: 0, elevator: 0, rudder: 0 };
   readonly pilotOffset = { x: 0, z: 0 };
@@ -694,6 +698,8 @@ export class FlightSimulation {
   readonly aircraft: AircraftProperties;
   readonly telemetry: FlightTelemetry;
   readonly recording = new Float64Array(MAX_FRAMES * FRAME_WIDTH);
+  readonly wingLoads = new Float64Array(MAX_FRAMES * 3);
+  private readonly frameLoads = [0, 0, 0];
   recordingLength = 0;
   time = 0;
   readonly groundImpactPoint = new Vector3();
@@ -748,6 +754,7 @@ export class FlightSimulation {
   private readonly platformGaps: Float64Array;
   private readonly platformImpulses: Float64Array;
   private readonly platformAxes: Vector3[];
+  private readonly groundNormals: Vector3[];
   private readonly platformActive: Int32Array;
   private platformCount = 0;
   private readonly platformStart = new Vector3();
@@ -827,10 +834,11 @@ export class FlightSimulation {
           * WATER.bodyBuoyancyFraction / WATER.bodySamples,
       };
     });
-    const contactCount = this.contacts.length * PLATFORM_BOXES.length;
+    const contactCount = this.contacts.length * CONTACT_SLOTS;
     this.platformFaces = new Int8Array(contactCount);
     this.platformGaps = new Float64Array(contactCount);
     this.platformImpulses = new Float64Array(contactCount);
+    this.groundNormals = Array.from({ length: contactCount }, () => new Vector3());
     this.platformAxes = Array.from({ length: contactCount }, () => new Vector3());
     this.platformActive = new Int32Array(contactCount);
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
@@ -920,22 +928,50 @@ export class FlightSimulation {
   }
 
   getRecording(): InputRecording {
-    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll };
+    if(this.replay) return { ...this.replay, frames:this.replay.frames.slice(), wingLoads:this.replay.wingLoads?.slice() };
+    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3) };
+  }
+
+  /** Copy the complete mutable physics graph, preserving prototypes and internal aliases.
+   * Large append-only recording buffers and the validated aircraft definition are shared. */
+  checkpoint(): FlightSimulation {
+    const seen = new Map<object, any>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, this.definition]]);
+    if (this.replay) seen.set(this.replay, this.replay);
+    const copy = (value: any): any => {
+      if (value === null || typeof value !== 'object') return value;
+      if (seen.has(value)) return seen.get(value);
+      if (ArrayBuffer.isView(value)) { const result = (value as Float64Array).slice(); seen.set(value, result); return result; }
+      const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
+      seen.set(value, result);
+      for (const key of Object.keys(value)) result[key] = copy(value[key]);
+      return result;
+    };
+    return copy(this);
+  }
+
+  /** Attach immutable recorded inputs to an already restored state without resetting it. */
+  resumeReplay(recording: InputRecording, frame: number) {
+    this.replay = recording;
+    this.replayIndex = frame;
+    this.recordingLength = recording.length;
+    this.replayFinished = frame >= recording.length;
   }
 
   loadReplay(recording: InputRecording) {
     validateRecording(recording);
-    const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length, launchRoll: recording.launchRoll };
+    const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length, launchRoll: recording.launchRoll, wingLoads: recording.wingLoads?.slice() };
     this.reset(copy.launchRoll);
     this.replay = copy;
     this.recording.set(copy.frames);
+    this.wingLoads.fill(0);
+    if (copy.wingLoads) this.wingLoads.set(copy.wingLoads);
     this.recordingLength = copy.length;
     this.replayFinished = copy.length === 0;
   }
 
   step(controls: FlightControls, dt = 1 / 60) {
     if (this.ended || this.replayFinished) return;
-    const started = performance.now();
+    const started = performance.now(), recordingFrame = this.recordingLength;
     const input = this.effective;
     if (this.replay) {
       const offset = this.replayIndex * FRAME_WIDTH;
@@ -987,7 +1023,9 @@ export class FlightSimulation {
     // 60 Hz 是标准物理步；较大的外部步长只拆成相同上限，绝不按帧率缩放气动力。
     const steps = Math.max(1, Math.ceil(dt * 60 - 1e-10));
     const h = dt / steps;
+    this.frameLoads.fill(0);
     for (let i = 0; i < steps && !this.ended; i++) this.integrate(input, h);
+    if (!this.replay && recordingFrame < this.recordingLength) this.wingLoads.set(this.frameLoads, recordingFrame * 3);
     this.telemetry.physicsMs = performance.now() - started;
   }
 
@@ -1448,7 +1486,7 @@ export class FlightSimulation {
     }
     const landing = this.landingAt(this.candidatePosition, this.candidateQuaternion, this.candidateVelocity.lengthSq());
     const noseHit = this.sweepsNose();
-    const platformHit = this.challenge !== 'downhill' && this.sweepsPlatform();
+    const platformHit = this.sweepsPlatform();
     const terrainHit = this.challenge !== 'birdman' && this.sweepsTerrain();
     const finalGate = challengeCheckpoints(this.challenge)[this.checkpointIndex];
     const finishCrossing = finalGate && this.checkpointIndex === challengeCheckpoints(this.challenge).length - 1
@@ -1484,7 +1522,7 @@ export class FlightSimulation {
     this.telemetry.propulsionWork += this.propulsionPower * dt;
     this.telemetry.waterWork += this.waterPower * dt;
     for (let i = 0; i < this.platformCount; i++) {
-      const index = this.platformActive[i], normal = this.contactNormals[this.platformFaces[index] % 6];
+      const index = this.platformActive[i], normal = this.groundNormals[index];
       const contactSpeed = normal.dot(this.midpointVelocity) + this.platformAxes[index].dot(this.midpointOmega);
       this.telemetry.dissipatedEnergy -= 2 * this.platformImpulses[index] * contactSpeed;
     }
@@ -1500,7 +1538,7 @@ export class FlightSimulation {
     if (this.challenge === 'low-altitude' && this.raceStarted && scoringTime > 0) this.updateLowAltitudeScore(scoringTime);
     this.maxSpeed = Math.max(this.maxSpeed, currentSpeed); this.minSpeed = Math.min(this.minSpeed, currentSpeed);
     this.maxHeight = Math.max(this.maxHeight, this.position.y);
-    if (platformHit) { this.preparePlatformContacts(); this.resolvePlatformImpact(); }
+    if (platformHit || terrainHit) { this.preparePlatformContacts(); this.resolvePlatformImpact(); }
     this.supportForce.subVectors(this.velocity, this.previousVelocity).multiplyScalar(mass / dt);
     this.supportForce.y += mass * GRAVITY;
     this.supportTorque.subVectors(this.omega, this.previousOmega).applyMatrix3(this.inertiaTensor).multiplyScalar(1 / dt);
@@ -1546,6 +1584,11 @@ export class FlightSimulation {
       if (!fragment.landed) this.commitFractures(fragment);
     }
     this.structure.update(this, force, torque);
+    for (const section of this.structure.sections) {
+      const index = section.wingKey === 'mainWing' ? 0 : section.wingKey === 'horizontalTail' ? 1 : 2;
+      this.frameLoads[index] = Math.max(this.frameLoads[index], section.stressRatio);
+    }
+
     this.commitFractures(this);
     for (const fragment of this.fragments) if (!fragment.landed) this.telemetry.aeroPower += fragment.aeroPower;
     this.structure.summarize();
@@ -1790,7 +1833,7 @@ export class FlightSimulation {
   /** 世界坐标转为坡面坐标；两侧板和槽底共用同一有限盒接触路径。 */
   private platformPoint(point: Vector3, position: Vector3, orientation: Quaternion, out: Vector3) {
     out.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
-    if (this.challenge === 'low-altitude') { out.sub(this.contactNormal.set(LOW_RUNWAY.endX, LOW_RUNWAY.y, LOW_RUNWAY.z)); return; }
+    if (this.challenge !== 'birdman') { const launch = challengeLaunch(this.challenge)!; out.sub(this.contactNormal.set(launch.endX, launch.y, launch.z)); return; }
     const x = out.x - LAUNCH.endX, y = out.y - LAUNCH.height;
     out.set(PLATFORM_COS * x - PLATFORM_SIN * y, PLATFORM_SIN * x + PLATFORM_COS * y, out.z);
   }
@@ -1798,13 +1841,12 @@ export class FlightSimulation {
   private preparePlatformContacts() {
     this.platformCount = 0;
     this.platformFaces.fill(-1);
-    if (this.challenge === 'downhill') return;
-    for (let point = 0; point < this.contacts.length; point++) {
+    for (let point = this.challenge === 'birdman' ? 0 : 2; point < this.contacts.length; point++) {
       if (!this.mainContact(this.contacts[point])) continue;
       this.platformPoint(this.contacts[point], this.position, this.quaternion, this.platformStart);
       const p = this.platformStart;
       for (let box = 0; box < this.contactBoxes.length; box++) {
-        const index = point * PLATFORM_BOXES.length + box;
+        const index = point * CONTACT_SLOTS + box;
         const [low, high] = this.contactBoxes[box];
         if (p.x < low.x - CONTACT_TOLERANCE || p.x > high.x + CONTACT_TOLERANCE
           || p.y < low.y - CONTACT_TOLERANCE || p.y > high.y + CONTACT_TOLERANCE
@@ -1815,9 +1857,36 @@ export class FlightSimulation {
           if (low.getComponent(axis) - value > gap) { gap = low.getComponent(axis) - value; face = axis * 2; }
           if (value - high.getComponent(axis) > gap) { gap = value - high.getComponent(axis); face = axis * 2 + 1; }
         }
+        this.groundNormals[index].copy(this.contactNormals[face]);
         this.platformFaces[index] = box * 6 + face;
         this.platformGaps[index] = gap;
         this.platformActive[this.platformCount++] = index;
+      }
+      if (this.challenge === 'birdman') continue;
+      p.copy(this.contacts[point]).sub(this.aircraft.cg).applyQuaternion(this.quaternion).add(this.position);
+      const height = challengeTerrainHeight(this.challenge, p.x, p.z);
+      if (!this.onRunway(p.x, p.z) && p.y <= height + CONTACT_TOLERANCE) {
+        const index = point * CONTACT_SLOTS + 3, h = 1e-4;
+        const normal = this.groundNormals[index].set(
+          -(challengeTerrainHeight(this.challenge, p.x+h, p.z)-challengeTerrainHeight(this.challenge, p.x-h, p.z))/(2*h), 1,
+          -(challengeTerrainHeight(this.challenge, p.x, p.z+h)-challengeTerrainHeight(this.challenge, p.x, p.z-h))/(2*h)).normalize();
+        this.platformGaps[index] = (p.y-height)*normal.y;
+        this.platformFaces[index] = 0;
+        this.platformActive[this.platformCount++] = index;
+      }
+      if (this.challenge !== 'downhill') continue;
+      for (const ruin of downhillRuins) {
+        if (Math.abs(p.x-ruin.x)>ruin.radiusX+CONTACT_TOLERANCE) continue;
+        const cy=Math.cos(ruin.yaw),sy=Math.sin(ruin.yaw),ct=Math.cos(ruin.tilt),st=Math.sin(ruin.tilt);
+        const x=p.x-ruin.x,y=p.y-ruin.y,z=p.z-ruin.z,r=sy*x+cy*z;
+        const local=[cy*x-sy*z,ct*y+st*r,-st*y+ct*r], half=[ruin.width/2,ruin.height/2,ruin.length/2];
+        if(local.some((v,i)=>Math.abs(v)>half[i]+CONTACT_TOLERANCE)) continue;
+        let axis=0;for(let i=1;i<3;i++)if(Math.abs(local[i])-half[i]>Math.abs(local[axis])-half[axis])axis=i;
+        const sign=local[axis]<0?-1:1,index=point*CONTACT_SLOTS+4;
+        const n=this.groundNormals[index];
+        if(axis===0)n.set(cy,0,-sy);else if(axis===1)n.set(st*sy,ct,st*cy);else n.set(ct*sy,-st,ct*cy);
+        n.multiplyScalar(sign);this.platformGaps[index]=Math.abs(local[axis])-half[axis];this.platformFaces[index]=0;
+        this.platformActive[this.platformCount++]=index;break;
       }
     }
   }
@@ -1829,8 +1898,8 @@ export class FlightSimulation {
     for (let iteration = 0; iteration < 32; iteration++) {
       let closing = false;
       for (let i = 0; i < this.platformCount; i++) {
-        const index = this.platformActive[i], normal = this.contactNormals[this.platformFaces[index] % 6];
-        this.arm.copy(this.contacts[Math.floor(index / PLATFORM_BOXES.length)]).sub(this.aircraft.cg);
+        const index = this.platformActive[i], normal = this.groundNormals[index];
+        this.arm.copy(this.contacts[Math.floor(index / CONTACT_SLOTS)]).sub(this.aircraft.cg);
         this.contactNormal.copy(normal).applyQuaternion(this.inverse);
         this.cross.crossVectors(this.arm, this.contactNormal);
         const speed = this.velocity.dot(normal) + this.cross.dot(this.omega);
@@ -1856,15 +1925,15 @@ export class FlightSimulation {
     this.inverse.copy(this.midpointQuaternion).invert();
     for (let i = 0; i < this.platformCount; i++) {
       const index = this.platformActive[i];
-      this.arm.copy(this.contacts[Math.floor(index / PLATFORM_BOXES.length)]).sub(this.aircraft.cg);
-      this.contactNormal.copy(this.contactNormals[this.platformFaces[index] % 6]).applyQuaternion(this.inverse);
+      this.arm.copy(this.contacts[Math.floor(index / CONTACT_SLOTS)]).sub(this.aircraft.cg);
+      this.contactNormal.copy(this.groundNormals[index]).applyQuaternion(this.inverse);
       this.platformAxes[index].crossVectors(this.arm, this.contactNormal).multiplyScalar(sinc);
       this.platformImpulses[index] = 0;
     }
     for (let iteration = 0; iteration < 128; iteration++) {
       let change = 0;
       for (let i = 0; i < this.platformCount; i++) {
-        const index = this.platformActive[i], axis = this.platformAxes[index], normal = this.contactNormals[this.platformFaces[index] % 6];
+        const index = this.platformActive[i], axis = this.platformAxes[index], normal = this.groundNormals[index];
         const speed = normal.dot(this.candidateVelocity) + axis.dot(this.candidateOmega);
         this.angularAcceleration.copy(axis).applyMatrix3(this.inverseInertia);
         const inverseMass = 1 / mass + axis.dot(this.angularAcceleration);
@@ -1882,12 +1951,12 @@ export class FlightSimulation {
 
   /** 逐采样点做线段/长方体扫掠，能检测一帧内完全穿过薄板的情况。 */
   private sweepsPlatform() {
-    for (let index = 0; index < this.contacts.length; index++) {
+    for (let index = this.challenge === 'birdman' ? 0 : 2; index < this.contacts.length; index++) {
       if (!this.mainContact(this.contacts[index])) continue;
       this.platformPoint(this.contacts[index], this.position, this.quaternion, this.platformStart);
       this.platformPoint(this.contacts[index], this.candidatePosition, this.candidateQuaternion, this.platformEnd);
       for (let box = 0; box < this.contactBoxes.length; box++) {
-        if (this.platformFaces[index * PLATFORM_BOXES.length + box] >= 0) continue;
+        if (this.platformFaces[index * CONTACT_SLOTS + box] >= 0) continue;
         const [low, high] = this.contactBoxes[box];
         let entry = 0, exit = 1;
         for (let axis = 0; axis < 3; axis++) {
@@ -1969,14 +2038,16 @@ export class FlightSimulation {
   /** 分片平面上，端点与X、Z、X+Z网格线交点包含线段净空的所有极小值。 */
   private sweepsTerrain() {
     const step = challengeTerrainGrid.step;
-    for (const point of this.contacts) {
+    for (let pointIndex=2;pointIndex<this.contacts.length;pointIndex++) {
+      const point=this.contacts[pointIndex];
       if (!this.mainContact(point)) continue;
+      if (this.platformFaces[pointIndex*CONTACT_SLOTS+3]>=0 || this.platformFaces[pointIndex*CONTACT_SLOTS+4]>=0) continue;
       this.platformStart.copy(point).sub(this.aircraft.cg).applyQuaternion(this.quaternion).add(this.position);
       this.platformEnd.copy(point).sub(this.aircraft.cg).applyQuaternion(this.candidateQuaternion).add(this.candidatePosition);
       const a = this.platformStart, b = this.platformEnd;
       if (hitsChallengeRuin(this.challenge, a, b)) return true;
       // 河面是流体，不进入硬地递归；仍扫掠原三角河床、岸坡与有限起飞台。
-      if (this.challenge !== 'low-altitude' && this.sweepsLaunchBox(a, b)) return true;
+
       if (!this.onRunway(b.x, b.z) && b.y <= challengeTerrainHeight(this.challenge, b.x, b.z)) return true;
       for (let axis = 0; axis < 3; axis++) {
         const start = axis === 0 ? a.x : axis === 1 ? a.z : a.x + a.z;
@@ -2084,9 +2155,10 @@ export class FlightSimulation {
   }
 
   /** 椭球世界最低点：安装位置与scene共用，不以CG或旧机头碰撞代理决定入水。 */
-  private lowestBodyPoint(shape: typeof BODY_GEOMETRY['nose' | 'shell' | 'canopy'], centerX: number, position: Vector3, orientation: Quaternion, out: Vector3) {
+  private lowestBodyPoint(shape: typeof BODY_GEOMETRY['nose' | 'shell' | 'canopy'], centerX: number, position: Vector3, orientation: Quaternion, out: Vector3, normal?: Vector3) {
     this.inverse.copy(orientation).invert();
-    this.waterAxis.set(0, 1, 0).applyQuaternion(this.inverse);
+    if (normal) this.waterAxis.copy(normal); else this.waterAxis.set(0, 1, 0);
+    this.waterAxis.applyQuaternion(this.inverse);
     const x = shape.xRadius ** 2 * this.waterAxis.x;
     const y = shape === BODY_GEOMETRY.canopy && this.waterAxis.y > 0 ? 0 : shape.yRadius ** 2 * this.waterAxis.y;
     const z = shape.zRadius ** 2 * this.waterAxis.z;
@@ -2124,21 +2196,61 @@ export class FlightSimulation {
     return deepest >= 0;
   }
 
+  private hardGroundAt(point: Vector3, tolerance=0) {
+    return (this.challenge !== 'birdman' && !this.onRunway(point.x,point.z) && point.y <= challengeTerrainHeight(this.challenge,point.x,point.z)+tolerance)
+      || hitsChallengeRuin(this.challenge,point) || this.sweepsLaunchBox(point,point);
+  }
+
+  private criticalGroundContact(position: Vector3, orientation: Quaternion) {
+    const h = 1e-4, x = position.x, z = position.z;
+    this.contactNormal.set(
+      -(challengeTerrainHeight(this.challenge,x+h,z)-challengeTerrainHeight(this.challenge,x-h,z))/(2*h), 1,
+      -(challengeTerrainHeight(this.challenge,x,z+h)-challengeTerrainHeight(this.challenge,x,z-h))/(2*h)).normalize();
+    for (const key of ['nose', 'canopy'] as const) {
+      const shape = BODY_GEOMETRY[key];
+      const centerX = key === 'nose' ? this.definition.fuselage.center+this.definition.fuselage.length/2+shape.x : this.definition.cockpit.position+shape.x;
+      // Ground-normal support plus all six extrema catch slopes, inverted
+      // cockpits and frontal/side impacts with the finite launcher or ruins.
+      for (let face = -1; face < RUNWAY_NORMALS.length; face++) {
+        this.lowestBodyPoint(shape, centerX, position, orientation, this.cross, face < 0 ? this.contactNormal : RUNWAY_NORMALS[face]);
+        if (this.hardGroundAt(this.cross)) { this.groundImpactPoint.copy(this.cross); return true; }
+      }
+    }
+    return false;
+  }
+
   private sweepsNose() {
     this.noseAt(this.position, this.quaternion, this.platformStart);
     this.noseAt(this.candidatePosition, this.candidateQuaternion, this.platformEnd);
     if (this.challenge === 'birdman') return Math.min(this.platformStart.y, this.platformEnd.y) <= 0;
-    return this.sweepsRiver(this.platformStart, this.platformEnd);
+    if (this.sweepsRiver(this.platformStart, this.platformEnd) || hitsChallengeRuin(this.challenge,this.platformStart,this.platformEnd) || this.sweepsLaunchBox(this.platformStart,this.platformEnd)) return true;
+    for (const key of ['nose', 'canopy'] as const) {
+      const shape=BODY_GEOMETRY[key];
+      const centerX=key==='nose'?this.definition.fuselage.center+this.definition.fuselage.length/2+shape.x:this.definition.cockpit.position+shape.x;
+      for (const normal of RUNWAY_NORMALS) {
+        this.lowestBodyPoint(shape,centerX,this.position,this.quaternion,this.platformStart,normal);
+        this.lowestBodyPoint(shape,centerX,this.candidatePosition,this.candidateQuaternion,this.platformEnd,normal);
+        if(hitsChallengeRuin(this.challenge,this.platformStart,this.platformEnd) || this.sweepsLaunchBox(this.platformStart,this.platformEnd)) return true;
+      }
+    }
+    return false;
   }
 
   private landingAt(position: Vector3, orientation: Quaternion, speedSquared = this.velocity.lengthSq()): FlightResult['landing'] | null {
-    // 硬河床/岸坡优先；鸟人间的Y=0不是固体地面。
-    for (const point of this.contacts) {
-      if (!this.mainContact(point)) continue;
-      this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
-      if (this.onRunway(this.cross.x, this.cross.z)) continue;
-      if (this.challenge !== 'birdman' && this.cross.y <= challengeTerrainHeight(this.challenge, this.cross.x, this.cross.z)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
-      if (hitsChallengeRuin(this.challenge, this.cross) || this.sweepsLaunchBox(this.cross, this.cross)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+    if (this.challenge !== 'birdman') {
+      // Only the visible nose/cockpit end a moving flight. Wing and fuselage
+      // contacts are supported by the impulse solver instead.
+      if (this.criticalGroundContact(position, orientation)) return 'terrain';
+      if (speedSquared < WATER.stopSpeed ** 2) {
+        const shell=BODY_GEOMETRY.shell;
+        this.lowestBodyPoint(shell, this.definition.cockpit.position+shell.x, position, orientation, this.cross);
+        if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+        // Tail beam is part of the fuselage; a stationary wingtip alone is not.
+        for (let i=2;i<5;i++) {
+          this.cross.copy(this.contacts[i]).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+          if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+        }
+      }
     }
     this.noseAt(position, orientation, this.nosePoint);
     if (this.nosePoint.y <= this.waterHeight(this.nosePoint.x, this.nosePoint.z)) return 'water';

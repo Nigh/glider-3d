@@ -60,7 +60,7 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  const fixture=await page.evaluate(async()=>{
   const {FlightSimulation}=await import('/src/physics.ts');const {presets,clone}=await import('/src/model.ts');const {exportReplay}=await import('/src/replay.ts');
   const definition=clone(presets.find(p=>p.name==='低空喷气巡航型')!);const sim=new FlightSimulation(definition,'downhill',0);
-  for(let i=0;i<4000&&!sim.ended;i++)sim.step({weight:0,elevator:0,aileron:0,rudder:0,throttle:1});
+  for(let i=0;i<4000&&!sim.ended;i++)sim.step({weight:0,elevator:0.5,aileron:0.12,rudder:0.08,throttle:1});
   if(!sim.ended)throw Error('Fixture did not finish');
   return {text:await exportReplay({definition,challenge:'downhill',recording:sim.getRecording()}),duration:sim.elapsedTime,result:sim.result};
  });
@@ -71,20 +71,43 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  await page.getByRole('button',{name:'开始试飞',exact:true}).click({trial:true});
  const timeline=page.getByRole('region',{name:'回放时间轴',exact:true});
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
- await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();
+ await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeHidden();
+ await expect(page.getByRole('button',{name:/跳至负载峰值/})).toHaveCount(0);
+ await expect(page.getByRole('region',{name:'实时杆量',exact:true})).toBeVisible();
  await expect(timeline.locator('polyline.main-load')).toHaveAttribute('points',/\d/);
  const seek=async(value:number)=>{await page.getByRole('slider',{name:'回放进度',exact:true}).evaluate((el:HTMLInputElement,value)=>{el.value=String(value);el.dispatchEvent(new Event('input',{bubbles:true}));},value);await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});};
  await seek(fixture.duration*0.7);
  const later=await page.evaluate(()=>(window as any).glider.scene.aircraft);
- await timeline.getByRole('button',{name:/跳至负载峰值/}).click();
- await expect(timeline).toHaveAttribute('aria-busy','false');
- await seek(fixture.duration*0.25);
+ await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();
+ const inputs=await page.evaluate(()=>(window as any).glider.flightControls.inputs);
+ await expect(page.locator('.replay-inputs .stick-position')).toHaveAttribute('data-pitch',String(inputs.elevator));
+ await expect(page.locator('.replay-inputs .stick-position')).toHaveAttribute('data-roll',String(inputs.aileron));
+ await expect(page.getByRole('region',{name:'实时杆量',exact:true})).toContainText(inputs.rudder.toFixed(2));
+ const sink=await page.evaluate(()=>(window as any).glider.telemetry.sink);
+ for(const [value,direction,color] of [[-0.1,'up','rgb(207, 48, 44)'],[0.1,'down','rgb(23, 136, 84)'],[-0.099,'level','rgb(119, 119, 119)'],[0.099,'level','rgb(119, 119, 119)']] as const){
+  await page.evaluate(value=>(window as any).glider.telemetry.sink=value,value);
+  await expect(page.locator('.vertical-speed')).toHaveAttribute('data-direction',direction);
+  await expect(page.locator('.vertical-arrow')).toHaveCSS('color',color);
+ }
+ await page.evaluate(value=>(window as any).glider.telemetry.sink=value,sink);
+ const hudBounds=await page.locator('.flight-hud').boundingBox(),unitBounds=await page.locator('.vertical-speed em').boundingBox();
+ expect(unitBounds!.x+unitBounds!.width).toBeLessThanOrEqual(hudBounds!.x+hudBounds!.width);
+ await page.screenshot({path:info.outputPath('replay-paused-loads.png')});
+ await page.getByRole('button',{name:'继续飞行',exact:true}).click();
+ await page.mouse.move(0,0);
+ await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeHidden();
+ if(info.project.name==='desktop-chromium'){await timeline.hover();await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();await page.mouse.move(0,0);}
+
+ await page.getByRole('slider',{name:'回放进度',exact:true}).evaluate((el:HTMLInputElement,duration)=>{for(const f of [0.5,0.2,0.25]){el.value=String(duration*f);el.dispatchEvent(new Event('input',{bubbles:true}));}},fixture.duration);
+ await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
+ const progress=await page.getByRole('slider',{name:'回放进度',exact:true}).inputValue();expect(Math.abs(Number(progress)-fixture.duration*0.25)).toBeLessThan(1/60+1e-8);
  const earlier=await page.evaluate(()=>(window as any).glider.scene.aircraft);expect(earlier).not.toEqual(later);
  await seek(fixture.duration);
  await page.getByRole('button',{name:'继续飞行',exact:true}).click();
  await expect(page.getByRole('region',{name:'飞行结算',exact:true})).toBeVisible();
  expect(await page.evaluate(()=>(window as any).glider.result)).toEqual(fixture.result);
- await expect(page.locator('.result-g')).toContainText(fixture.result!.maxG.toFixed(2));
+ await expect(page.locator('.result-statistics')).toContainText(fixture.result!.maxG.toFixed(2)+' G');
+ await expect(page.locator('.result-statistics')).not.toContainText('最低速度');
  await expect(page.getByRole('img',{name:/飞行数据曲线/}).locator('.chart-g-line')).toHaveCount(1);
  await page.screenshot({path:info.outputPath('replay-g-load.png')});
  await seek(0);
