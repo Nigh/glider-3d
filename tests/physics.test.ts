@@ -61,6 +61,10 @@ function outsidePlatform(s: FlightSimulation) {
     [-LAUNCH.length, 0, -PLATFORM.slotDepth - PLATFORM.slotFloorThickness, -PLATFORM.slotDepth, -PLATFORM.slotWidth / 2, PLATFORM.slotWidth / 2],
   ];
   for (const point of contacts(s)) {
+    const sectionId = Reflect.get(point, 'sectionId') as number | undefined;
+    // Impacts can now break wings. A detached sample follows its fragment's
+    // transform, so it no longer belongs to the main body's collision envelope.
+    if (sectionId !== undefined && s.structure.sections[sectionId].bodyId !== 0) continue;
     const p = platformLocal(world(s, point));
     for (const box of boxes) expect(Math.max(box[0] - p.x, p.x - box[1], box[2] - p.y, p.y - box[3], box[4] - p.z, p.z - box[5])).toBeGreaterThan(-3e-6);
   }

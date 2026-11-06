@@ -1,9 +1,9 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing } from './model';
+import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing, type WingKey } from './model';
 import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
-import { rotationalEnergy, setInertia, WingStructure, type StructuralBody, type WingFragment } from './structure';
+import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type WingFragment } from './structure';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.225;
@@ -750,6 +750,14 @@ export class FlightSimulation {
   private readonly waterBody: { point: Vector3; radius: number; area: number; volume: number }[];
   private readonly nosePoint = new Vector3();
   private readonly contacts: ContactPoint[];
+  /** Impulses until an accepted step converts them to average structural loads. */
+  private readonly wingContactLoads: SectionContactLoad[];
+  private readonly wingImpactLoads: SectionContactLoad[];
+  private contactLoadDuration = 1 / 60;
+  private readonly initialImpactImpulse = new Vector3();
+  private readonly initialImpactTorque = new Vector3();
+  private readonly finalImpactImpulse = new Vector3();
+  private readonly finalImpactTorque = new Vector3();
   private readonly platformFaces: Int8Array;
   private readonly platformGaps: Float64Array;
   private readonly platformImpulses: Float64Array;
@@ -822,6 +830,8 @@ export class FlightSimulation {
     this.structure = new WingStructure(this.definition, this.surfaces);
     this.aerodynamics = new AerodynamicSummary(this.surfaces);
     this.contacts = makeContacts(this.definition, this.structure);
+    this.wingContactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
+    this.wingImpactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
     const shell = BODY_GEOMETRY.shell;
     this.waterBody = Array.from({ length: WATER.bodySamples }, (_, index) => {
       const fraction = (index + 0.5) / WATER.bodySamples * 2 - 1;
@@ -881,6 +891,7 @@ export class FlightSimulation {
     this.checkpointScores.length = 0; this.heightPenalty = 0; this.aboveHeightTime = 0; this.aboveHeightStreak = 0;
     this.pilotOffset.x = 0; this.pilotOffset.z = 0;
     this.structure.reset(); this.fragments.length = 0; this.nextFragmentId = 1;
+    this.clearContactLoads();
     this.updateSurfaceExtents();
     if (this.fuelPart) {
       this.fuelPart.mass = this.fuelRemaining * FUEL_DENSITY;
@@ -1067,6 +1078,9 @@ export class FlightSimulation {
   }
 
   private integrate(input: FlightControls, dt: number) {
+    // Quasi-static impact loads use the nominal physics interval. Narrowing a
+    // swept-contact search must not turn the same impulse into infinite stress.
+    this.contactLoadDuration = dt;
     this.controlLimit = 1;
     // 比例项提供即时俯仰阻尼；慢积分仅负责配平，避免把角速度持续积成反向大舵量。
     const trimming = this.autoTrim && !this.launching && Math.abs(input.elevator) < 0.05 && this.velocity.lengthSq() >= 25;
@@ -1429,7 +1443,7 @@ export class FlightSimulation {
     const initialLanding = this.landingAt(this.position, this.quaternion);
     if (initialLanding) { this.updateTelemetry(); this.finish(initialLanding); return; }
     this.preparePlatformContacts();
-    this.resolvePlatformImpact();
+    this.resolvePlatformImpact(true);
     const mass = this.aircraft.mass;
     this.previousVelocity.copy(this.velocity); this.previousOmega.copy(this.omega);
     this.midpointVelocity.copy(this.velocity); this.midpointOmega.copy(this.omega);
@@ -1525,6 +1539,11 @@ export class FlightSimulation {
       const index = this.platformActive[i], normal = this.groundNormals[index];
       const contactSpeed = normal.dot(this.midpointVelocity) + this.platformAxes[index].dot(this.midpointOmega);
       this.telemetry.dissipatedEnergy -= 2 * this.platformImpulses[index] * contactSpeed;
+      if (!onRail) {
+        this.contactNormal.copy(normal).applyQuaternion(this.inverse.copy(this.midpointQuaternion).invert());
+        // The constraint solves a half-step velocity; its full-step impulse is 2J.
+        this.addWingContactImpulse(index, this.contactNormal, 2 * this.platformImpulses[index]);
+      }
     }
     if (onRail) {
       this.telemetry.dissipatedEnergy += this.railRollingPower * dt;
@@ -1541,9 +1560,16 @@ export class FlightSimulation {
     if (platformHit || terrainHit) { this.preparePlatformContacts(); this.resolvePlatformImpact(); }
     this.supportForce.subVectors(this.velocity, this.previousVelocity).multiplyScalar(mass / dt);
     this.supportForce.y += mass * GRAVITY;
+    // Initial impacts occur before previousVelocity/previousOmega are saved.
+    // Include them once in both the inertial load field and the local load path.
+    this.supportForce.addScaledVector(this.initialImpactImpulse, 1 / this.contactLoadDuration);
     this.supportTorque.subVectors(this.omega, this.previousOmega).applyMatrix3(this.inertiaTensor).multiplyScalar(1 / dt);
     this.angularMomentum.copy(this.midpointOmega).applyMatrix3(this.inertiaTensor);
     this.supportTorque.add(this.cross.crossVectors(this.midpointOmega, this.angularMomentum));
+    this.supportTorque.addScaledVector(this.initialImpactTorque, 1 / this.contactLoadDuration);
+    const impactScale = 1 / this.contactLoadDuration - 1 / dt;
+    this.supportForce.addScaledVector(this.finalImpactImpulse, impactScale);
+    this.supportTorque.addScaledVector(this.finalImpactTorque, impactScale);
     this.advanceStructure(dt, this.supportForce, this.supportTorque);
     this.updateTelemetry();
     if (landing) this.finish(landing);
@@ -1583,7 +1609,14 @@ export class FlightSimulation {
       this.integrateFragment(fragment, dt);
       if (!fragment.landed) this.commitFractures(fragment);
     }
-    this.structure.update(this, force, torque);
+    for (let i = 0; i < this.wingContactLoads.length; i++) {
+      const load = this.wingContactLoads[i], impact = this.wingImpactLoads[i];
+      load.force.multiplyScalar(1 / dt).addScaledVector(impact.force, 1 / this.contactLoadDuration);
+      load.moment.multiplyScalar(1 / dt).addScaledVector(impact.moment, 1 / this.contactLoadDuration);
+    }
+    this.structure.update(this, force, torque, this.wingContactLoads);
+    this.constrainWingGeometry();
+    this.clearContactLoads();
     for (const section of this.structure.sections) {
       const index = section.wingKey === 'mainWing' ? 0 : section.wingKey === 'horizontalTail' ? 1 : 2;
       this.frameLoads[index] = Math.max(this.frameLoads[index], section.stressRatio);
@@ -1608,6 +1641,35 @@ export class FlightSimulation {
       if (point.sectionId === undefined || !point.reference) continue;
       const section = this.structure.sections[point.sectionId], node = point.tip ? section.tip : section.root;
       point.copy(point.reference).sub(point.tip ? section.referenceTip : section.referenceRoot).applyQuaternion(node.quaternion).add(node.position);
+    }
+  }
+
+  private blockedWingGeometry(key: WingKey, side: number) {
+    for (let i = 0; i < this.platformCount; i++) {
+      const index = this.platformActive[i], point = this.contacts[Math.floor(index / CONTACT_SLOTS)];
+      if (point.sectionId === undefined || this.platformGaps[index] >= -CONTACT_TOLERANCE) continue;
+      const s = this.structure.sections[point.sectionId];
+      if (s.bodyId === 0 && s.wingKey === key && s.side === side) return true;
+    }
+    return false;
+  }
+
+  private constrainWingGeometry() {
+    this.syncContacts(); this.preparePlatformContacts();
+    // The rigid-body sweep used the previous elastic shape. Limit only a new
+    // shape change that would enter a solid; do not teleport the mass or alter
+    // the contact energy ledger. Stress remains unbounded for real fractures.
+    for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) for (const side of [-1, 1]) {
+      if (!this.blockedWingGeometry(key, side)) continue;
+      let low = 0, high = 1;
+      for (let iteration = 0; iteration < 20; iteration++) {
+        const fraction = (low + high) / 2;
+        this.structure.blendContactGeometry(key, side, fraction);
+        this.syncContacts(); this.preparePlatformContacts();
+        if (this.blockedWingGeometry(key, side)) high = fraction; else low = fraction;
+      }
+      this.structure.blendContactGeometry(key, side, low);
+      this.syncContacts(); this.preparePlatformContacts();
     }
   }
 
@@ -1891,8 +1953,25 @@ export class FlightSimulation {
     }
   }
 
+  private clearContactLoads() {
+    for (const load of this.wingContactLoads) { load.force.set(0, 0, 0); load.moment.set(0, 0, 0); }
+    for (const load of this.wingImpactLoads) { load.force.set(0, 0, 0); load.moment.set(0, 0, 0); }
+    this.initialImpactImpulse.set(0, 0, 0); this.initialImpactTorque.set(0, 0, 0);
+    this.finalImpactImpulse.set(0, 0, 0); this.finalImpactTorque.set(0, 0, 0);
+  }
+
+  private addWingContactImpulse(index: number, localNormal: Vector3, impulse: number, impact = false) {
+    const point = this.contacts[Math.floor(index / CONTACT_SLOTS)];
+    if (point.sectionId === undefined || impulse === 0) return;
+    const load = (impact ? this.wingImpactLoads : this.wingContactLoads)[point.sectionId];
+    load.force.addScaledVector(localNormal, impulse);
+    // Store the moment before geometry changes, rather than moving the force to
+    // the strip centre or the CG. Rejected midpoint trials never reach this path.
+    load.moment.addScaledVector(this.localDrag.crossVectors(point, localNormal), impulse);
+  }
+
   /** 无摩擦、完全非弹性冲量；每次冲量的动能损失直接进入耗散账本。 */
-  private resolvePlatformImpact() {
+  private resolvePlatformImpact(initial = false) {
     const mass = this.aircraft.mass;
     this.inverse.copy(this.quaternion).invert();
     for (let iteration = 0; iteration < 32; iteration++) {
@@ -1909,6 +1988,14 @@ export class FlightSimulation {
         const impulse = -speed / inverseMass;
         this.velocity.addScaledVector(normal, impulse / mass);
         this.omega.addScaledVector(this.angularAcceleration, impulse);
+        this.addWingContactImpulse(index, this.contactNormal, impulse, true);
+        if (initial) {
+          this.initialImpactImpulse.addScaledVector(normal, impulse);
+          this.initialImpactTorque.addScaledVector(this.cross, impulse);
+        } else {
+          this.finalImpactImpulse.addScaledVector(normal, impulse);
+          this.finalImpactTorque.addScaledVector(this.cross, impulse);
+        }
         this.telemetry.dissipatedEnergy += -(impulse * speed + 0.5 * impulse ** 2 * inverseMass);
         closing = true;
       }
