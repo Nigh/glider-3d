@@ -51,7 +51,7 @@
  function selectCamera(value:string){flightCamera=value;scene.cameraView(value);try{localStorage.setItem(cameraKey,value);}catch{/* Keep the session preference when storage is blocked. */}}
  let activeReplay=$state.raw<Replay|null>(null),seeking=$state(false),replayPosition=$state(0);let seekVersion=0;
  let seekFrame=0;
- function seekTo(seconds:number){cancelAnimationFrame(seekFrame);seekVersion++;seeking=true;const source=activeReplay;seekFrame=requestAnimationFrame(()=>{if(activeReplay===source&&(screen==='flight'||screen==='result'))void seekNow(seconds);});}
+ function seekTo(seconds:number){cancelAnimationFrame(seekFrame);const version=++seekVersion;seeking=true;const source=activeReplay;seekFrame=requestAnimationFrame(()=>{seekFrame=requestAnimationFrame(()=>{if(version===seekVersion&&activeReplay===source&&(screen==='flight'||screen==='result'))void seekNow(seconds);});});}
  const replaySamples=new WeakMap<object,Map<number,FlightSample>>();
  async function seekNow(seconds:number){
   if(!activeReplay)return;const source=activeReplay,version=++seekVersion;paused=true;seeking=true;clearControls();
@@ -431,7 +431,8 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  <details class="advanced-hud"><summary>{t("姿态与结构 ·")} {(hud.fractureCount??0)>0?t("已断裂 {p0} 次",{p0:hud.fractureCount}):t("结构完整")} {t("· 极限")} {((hud.maxStressRatio??0)*100).toFixed(0)}%</summary><div class="structure-status" aria-label={t("结构载荷与断裂状态")}><p>{t("结构极限利用率")} <output aria-label={t("结构极限利用率")}>{((hud.maxStressRatio??0)*100).toFixed(1)}%</output> {t("· 弹性限利用率")} {((hud.maxYieldRatio??0)*100).toFixed(1)}%</p>{#each hud.wings??[] as wing}<p class="wing-structure" data-wing={wing.key}><strong>{t(wing.name)}</strong> · {t('结构极限')} <output aria-label={t('{name}结构极限利用率',{name:t(wing.name)})}>{(wing.stress*100).toFixed(1)}%</output> · {t('弹性限')} {(wing.yieldRatio*100).toFixed(1)}% · {t('连接 {attached} 段 / 脱离 {detached} 段',{attached:wing.attached,detached:wing.detached})}</p>{/each}<p>{t("最大形变")} <output aria-label={t("最大结构形变")}>{((hud.maxDeflection??0)*1000).toFixed(1)}</output> {t("mm · 独立断片")} <output aria-label={t("独立断片数量")}>{hud.fragmentCount??0}</output> {t("片")}</p>{#if (hud.fractureCount??0)>0}<p role="status"><strong>{t("承力梁已断裂")} {hud.fractureCount} {t("次。")}</strong>{t("主体继续飞行；断片独立运动，断片落地不结束主体。")}</p>{:else if (hud.maxStressRatio??0)>=0.8}<p role="status"><strong>{t("接近结构极限，减小载荷。")}</strong></p>{/if}{#if (hud.maxYieldRatio??0)>1}<p>{t("超过等效弹性限。当前仍为线弹性近似，不模拟塑性或真实颤振。")}</p>{/if}</div></details>
  </div>
  {#if isReplay}<section class="replay-inputs" aria-label={t("实时杆量")}>
- <svg viewBox="0 0 120 120" aria-label={t("操纵杆")} role="img"><circle class="stick-rim" cx="60" cy="60" r="56"/><path class="stick-cross" d="M60 8V112 M8 60H112"/><circle class="stick-position" cx={60+actualRoll*35} cy={60-actualPitch*35} r="6" data-pitch={actualPitch} data-roll={actualRoll}/></svg>
+ <div class="replay-input-body"><svg viewBox="0 0 120 120" aria-label={t("操纵杆")} role="img"><circle class="stick-rim" cx="60" cy="60" r="56"/><path class="stick-cross" d="M60 8V112 M8 60H112"/><circle class="stick-position" cx={60+actualRoll*35} cy={60-actualPitch*35} r="6" data-pitch={actualPitch} data-roll={actualRoll}/></svg>
+ <div class="replay-throttle"><span>{t("油门")}</span><meter aria-label={t("油门")} min="0" max="1" value={hud.throttle??0}></meter><output>{((hud.throttle??0)*100).toFixed(0)}%</output></div></div>
  <span>{t("俯仰")} {actualPitch.toFixed(2)} · {t("滚转")} {actualRoll.toFixed(2)}</span><span>{t("偏航")} {(hud.controlInputs?.rudder??0).toFixed(2)}</span>
  </section>{/if}
  <section class="stick-panel" class:controls-disabled={!flightReady} aria-label={t("杆量与配平")}>

@@ -4,22 +4,26 @@ import type { Replay } from './replay';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
 export interface LoadSample { time: number; main: number; tail: number; vertical: number }
-type Checkpoint = { time: number; frame: number; state: FlightSimulation; used: number };
+type Checkpoint = { time: number; frame: number; state: FlightSimulation };
 const checkpoints = new WeakMap<InputRecording, Checkpoint[]>();
 const liveCheckpoints = new WeakMap<FlightSimulation, Checkpoint[]>();
 const INTERVAL = 0.25;
 const MAX_CHECKPOINTS = 32;
-let usage = 0;
 
 function remember(list: Checkpoint[], sim: FlightSimulation, frame: number) {
-  if (list.some(point => Math.abs(point.time - sim.elapsedTime) < INTERVAL - 1e-9)) return;
-  list.push({ time: sim.elapsedTime, frame, state: sim.checkpoint(), used: ++usage });
+  const span = Math.max(sim.elapsedTime, list.at(-1)?.time ?? sim.elapsedTime) - (list[0]?.time ?? sim.elapsedTime);
+  const interval = Math.max(INTERVAL, span / (MAX_CHECKPOINTS - 1));
+  if (list.some(point => Math.abs(point.time - sim.elapsedTime) < interval - 1e-9)) return;
+  list.push({ time: sim.elapsedTime, frame, state: sim.checkpoint() });
   list.sort((a,b)=>a.time-b.time);
-  // Retain launch and recently used regions, including when dragging backwards.
+  // Keep both endpoints and thin the densest region, not the oldest region.
+  // Sampling grows with the traversed span so long flights stay broadly covered.
   if (list.length > MAX_CHECKPOINTS) {
-    let oldest = 1;
-    for (let i = 2; i < list.length; i++) if (list[i].used < list[oldest].used) oldest = i;
-    list.splice(oldest, 1);
+    let densest = 1;
+    for (let i = 2; i < list.length - 1; i++) {
+      if (list[i + 1].time - list[i - 1].time < list[densest + 1].time - list[densest - 1].time) densest = i;
+    }
+    list.splice(densest, 1);
   }
 }
 
@@ -82,7 +86,7 @@ export async function seekReplay(replay: Replay, seconds: number, cancelled: () 
   const target=Math.max(0,seconds),list=checkpoints.get(replay.recording)??[];
   const point=list.filter(point=>point.time<=target+1e-9).at(-1);
   const sim=point?point.state.checkpoint():replaySimulation(replay);
-  if(point){point.used=++usage;sim.resumeReplay(replay.recording,point.frame);}
+  if(point)sim.resumeReplay(replay.recording,point.frame);
   cacheReplay(replay,sim);onStep?.(sim);
   return await advance(sim,replay,target,cancelled,()=>onStep?.(sim))?sim:null;
 }

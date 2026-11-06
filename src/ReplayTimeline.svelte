@@ -21,11 +21,11 @@
   {#if !samples.length}<small>{t('此记录未保存负载曲线')}</small>{/if}
  </div>
  <input type="range" min="0" max={duration} step="any" value={position} aria-label={t('回放进度')} oninput={e=>onseek(e.currentTarget.valueAsNumber)}/>
- {#if seeking}<small role="status">{t('正在跳转回放…')}</small>{/if}
+ {#if seeking}<div class="seek-overlay" role="status"><span class="seek-spinner" aria-hidden="true"></span><strong>{t('正在跳转回放…')}</strong></div>{/if}
 </section>
 
 <style>
- .replay-timeline{padding:8px 14px;background:var(--paper,#fafbf6);border:1px solid #a5b7b3;border-radius:10px;color:#173e43;grid-column:1/-1}
+ .replay-timeline{position:relative;padding:8px 14px;background:var(--paper,#fafbf6);border:1px solid #a5b7b3;border-radius:10px;color:#173e43;grid-column:1/-1}
  .timeline-heading,.timeline-legend{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;font-size:12px}
  .timeline-legend{justify-content:flex-start;font-size:10px;margin-top:4px}
  .waveform{display:none}
@@ -35,4 +35,8 @@
  input{display:block;width:100%;height:44px;margin:0;cursor:ew-resize;accent-color:#173e43}
  .main-load{color:#bd4f30;stroke:#bd4f30}.tail-load{color:#258875;stroke:#258875}.vertical-load{color:#6e60ad;stroke:#6e60ad}
  small{font-size:10px}
+ .seek-overlay{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;background:#fafbf6ed;border:2px solid var(--ink,#173e43);border-radius:inherit;font-size:14px;pointer-events:none}
+ .seek-spinner{width:24px;height:24px;flex-shrink:0;border:3px solid #a5b7b3;border-top-color:var(--accent,#b84a2b);border-radius:50%;animation:seek-spin .75s linear infinite}
+ @keyframes seek-spin{to{transform:rotate(360deg)}}
+ @media(prefers-reduced-motion:reduce){.seek-spinner{animation:none;border-top-color:var(--ink,#173e43)}}
 </style>
