@@ -43,7 +43,9 @@ export function testSpaceTerrainHeight(x: number, z: number) {
 }
 export interface WindTunnelSettings { speed: number; roll: number; pitch: number; elevator: number; aileron: number; rudder: number }
 export const defaultWindTunnel: Readonly<WindTunnelSettings> = { speed: 10, roll: 0, pitch: 0, elevator: 0, aileron: 0, rudder: 0 };
-export const windTunnelRates: Readonly<WindTunnelSettings> = { speed: 30, roll: 6, pitch: 4, elevator: 1.5, aileron: 1.5, rudder: 1.5 };
+// Keep the original travel speeds; the filters below soften acceleration instead
+// of slowing the entire manoeuvre. Calibrated with the balanced preset at 10 m/s.
+export const windTunnelRates: Readonly<WindTunnelSettings> = { speed: 30, roll: 45, pitch: 30, elevator: 1.5, aileron: 1.5, rudder: 1.5 };
 interface AttitudeMotion { command: number; lag: number; value: number }
 export const windTunnelAttitudeFrequency = 1; // rad/s, two identical low-pass stages
 export const createWindTunnelMotion = () => ({ roll: { command: 0, lag: 0, value: 0 }, pitch: { command: 0, lag: 0, value: 0 } });

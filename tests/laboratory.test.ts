@@ -105,6 +105,68 @@ describe('test space', () => {
 });
 
 describe('wind tunnel', () => {
+  it('eases into the original travel speeds instead of crawling for the whole manoeuvre', () => {
+    const motion = createWindTunnelMotion(), actual = { ...defaultWindTunnel };
+    expect(windTunnelRates.roll).toBe(45); expect(windTunnelRates.pitch).toBe(30);
+    advanceWindTunnel(actual, { ...defaultWindTunnel, roll: 180, pitch: 45 }, 1 / 60, false, motion);
+    for (const key of ['roll', 'pitch'] as const) {
+      expect(windTunnelAttitudeFrequency * (motion[key].lag - actual[key])).toBeLessThan(0.01);
+      expect(actual[key]).toBeGreaterThan(0);
+    }
+    for (let frame = 1; frame < 180; frame++) advanceWindTunnel(actual, { ...defaultWindTunnel, roll: 180, pitch: 45 }, 1 / 60, false, motion);
+    expect(actual.roll).toBeGreaterThan(55); expect(actual.pitch).toBeGreaterThan(29);
+    expect(windTunnelAttitudeFrequency * (motion.roll.lag - actual.roll)).toBeGreaterThan(35);
+    let maximumRollSpeed = 0, maximumPitchSpeed = 0;
+    for (let frame = 0; frame < 600; frame++) {
+      advanceWindTunnel(actual, { ...defaultWindTunnel, roll: -180, pitch: -45 }, 1 / 60, false, motion);
+      maximumRollSpeed = Math.max(maximumRollSpeed, -windTunnelAttitudeFrequency * (motion.roll.lag - actual.roll));
+      maximumPitchSpeed = Math.max(maximumPitchSpeed, -windTunnelAttitudeFrequency * (motion.pitch.lag - actual.pitch));
+    }
+    expect(maximumRollSpeed).toBeGreaterThan(44);
+    expect(maximumPitchSpeed).toBeGreaterThan(23);
+  });
+  it.each([
+    { name: 'roll', poses: [[180, 0], [-180, 0], [0, 0]] },
+    { name: 'pitch', poses: [[0, 45], [0, -45], [0, 0]] },
+    { name: 'combined', poses: [[180, 45], [-180, -45], [0, 0]] },
+    { name: 'inverted and opposing', poses: [[180, 0], [180, -45], [-180, 45], [0, 0]] },
+  ])('keeps the balanced preset intact at 10 m/s through $name startup, travel and stops', ({ poses }) => {
+    const sim = new FlightSimulation(clone(presets.find(p => p.name === '默认均衡型')!), 'wind-tunnel', 0);
+    sim.setWindTunnelEnabled(true);
+    for (let frame = 0; frame < 120; frame++) sim.step(neutral);
+    expect(sim.windTunnel.speed).toBe(10);
+    let maximumStress = 0, maximumAcceleration = 0, previous = sim.omega.clone();
+    for (const [roll, pitch] of poses) {
+      sim.setWindTunnel({ ...defaultWindTunnel, roll, pitch });
+      for (let frame = 0; frame < 1200; frame++) {
+        sim.step(neutral);
+        maximumStress = Math.max(maximumStress, ...sim.structure.sections.map(section => section.stressRatio));
+        maximumAcceleration = Math.max(maximumAcceleration, sim.omega.clone().sub(previous).length() * 60);
+        previous.copy(sim.omega);
+        expect(sim.structure.fractureCount).toBe(0);
+      }
+      expect(sim.windTunnel.roll).toBeCloseTo(roll, 2); expect(sim.windTunnel.pitch).toBeCloseTo(pitch, 2);
+    }
+    expect(maximumStress).toBeLessThan(1);
+    expect(maximumAcceleration).toBeGreaterThan(0.15); // Exercise the real startup peak, not just a stationary fixture.
+    expect(sim.fragments).toHaveLength(0);
+  });
+  it('keeps the balanced preset intact at 10 m/s when retargeted during peak startup acceleration', () => {
+    const sim = new FlightSimulation(clone(presets.find(p => p.name === '默认均衡型')!), 'wind-tunnel', 0);
+    sim.setWindTunnelEnabled(true);
+    for (let frame = 0; frame < 120; frame++) sim.step(neutral);
+    // Each single-axis ramp peaks in acceleration after 1/frequency seconds.
+    for (const [roll, pitch] of [[180, 45], [-180, -45], [180, -45], [0, 0]]) {
+      sim.setWindTunnel({ ...defaultWindTunnel, roll, pitch });
+      for (let frame = 0; frame < 60 / windTunnelAttitudeFrequency; frame++) {
+        sim.step(neutral);
+        expect(sim.structure.fractureCount).toBe(0);
+        expect(Math.max(...sim.structure.sections.map(section => section.stressRatio))).toBeLessThan(1);
+      }
+    }
+    for (let frame = 0; frame < 1200; frame++) { sim.step(neutral); expect(sim.structure.fractureCount).toBe(0); }
+    expect(sim.windTunnel.roll).toBe(0); expect(sim.windTunnel.pitch).toBe(0);
+  });
   it('bounds angular speed and acceleration through startup, reversal, retargeting and settling', () => {
     const motion = createWindTunnelMotion(), actual = { ...defaultWindTunnel }, w = windTunnelAttitudeFrequency;
     let target = { ...defaultWindTunnel, roll: 180, pitch: 45 };
@@ -152,7 +214,7 @@ describe('wind tunnel', () => {
     expect(sim.windTunnel.speed).toBe(0);
     expect(sim.windTunnel.roll).toBe(0); expect(sim.windTunnel.pitch).toBe(0);
     expect(sim.omega.length()).toBeLessThan(1e-6);
-    expect(maximumAcceleration).toBeLessThan(0.12); // rad/s², including coupled pitch/roll
+    expect(maximumAcceleration).toBeLessThan(0.5); // rad/s², including coupled pitch/roll at restored travel speeds
   });
   it('enters with zero flow and a 10 m/s target, and reverses ramps without jumping', () => {
     const sim = new FlightSimulation(powered(), 'wind-tunnel', 0);

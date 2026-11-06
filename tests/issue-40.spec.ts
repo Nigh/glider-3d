@@ -123,6 +123,15 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.getByRole('button', { name: '开启风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(10);
  await expect(currentSpeed).toHaveText('10.0');
+ await page.getByLabel('滚转角度数值', { exact: true }).fill('90');
+ await pitch.fill('20'); await pitch.blur();
+ const motionStart = await page.evaluate(() => (window as any).glider.time);
+ await expect.poll(() => page.evaluate(() => (window as any).glider.time), { timeout: 30000 }).toBeGreaterThan(motionStart + 3);
+ const moving = await page.evaluate(() => (window as any).glider.laboratory);
+ expect(moving.wind.roll).toBeGreaterThan(45); expect(moving.wind.pitch).toBeGreaterThan(13);
+ expect(moving.fractures).toBe(0);
+ await page.screenshot({ path: info.outputPath('wind-tunnel-responsive-motion.png') });
+ await page.getByLabel('滚转角度数值', { exact: true }).fill('0'); await pitch.fill('0'); await pitch.blur();
  await page.getByRole('button', { name: '关闭风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(0);
  await page.getByLabel('气流速度数值', { exact: true }).fill('200');
