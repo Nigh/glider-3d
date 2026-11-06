@@ -446,7 +446,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
   <LaboratoryControls mode={lastChallenge} ready={flightReady} windEnabled={hud.windEnabled??false} cameraView={windCamera} {testSettings} {windSettings} actualWind={hud.wind??defaultWindTunnel} onTestSettings={configureTest} onWindSettings={configureWind} onStop={stopTest} onToggleWind={toggleWind} onRestore={restoreWindAircraft} onCamera={selectWindCamera}/>
   {#if lastChallenge==='wind-tunnel'}<button onclick={design}>{t('返回设计')}</button>{/if}
  {/if}
- <section class="flight-hud" class:compact-hud={lastChallenge!=='birdman'} aria-label={t("飞行数据")}>
+ {#if lastChallenge!=='wind-tunnel'}<section class="flight-hud" class:compact-hud={lastChallenge!=='birdman'} aria-label={t("飞行数据")}>
  {#if lastChallenge==='birdman'}<div><small>{t("滑翔距离")}</small><strong>{hud.distance.toFixed(1)}<em>m</em></strong></div>{/if}
  <div><small>{t("空速")}</small><strong>{hud.speed.toFixed(1)}<em>m/s</em></strong></div>
  {#if lastChallenge==='downhill'}
@@ -459,7 +459,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  <div><small>{t("高度")}</small><strong>{hud.altitude.toFixed(1)}<em>m</em></strong></div><div><small>{t("总计时")}</small><strong>{hud.time.toFixed(1)}<em>s</em></strong></div><div><small>{t("实时攻角")}</small><strong>{hud.alpha.toFixed(1)}<em>°</em></strong></div><div><small>{t("实时升阻比")}</small><strong>{Number.isFinite(hud.liftDragRatio)?hud.liftDragRatio.toFixed(1):'—'}<em>:1</em></strong></div>
  <div title={t("真实耗散功率除以世界水平速度；助跑或水平速度不超过0.05 m/s时无定义")}><small>{t("实时能耗")}</small><strong><output aria-label={t("实时能耗")}>{hud.energyPerDistance!=null&&Number.isFinite(hud.energyPerDistance)?hud.energyPerDistance.toFixed(1):'—'}</output><em>J/m</em></strong></div>
  {/if}
- </section>
+ </section>{/if}
  {#if isLaboratory(lastChallenge)}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {t(!flightReady?"待开始":lastChallenge==='wind-tunnel'?"测试运行中":hud.launching?(testSettings.catapult?"弹射助跑":"跑道滑跑"):"飞行中")}</span><span>{t("自由测试 · 不计成绩")}</span></div>{:else}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {!flightReady?t("待开始"):hud.launching?(lastChallenge==='low-altitude'?t("跑道滑跑"):t("弹射助跑")):t("飞行中")}</span><span>{lastChallenge==='birdman'?t("湖面最远距离"):!hud.timingStarted?(lastChallenge==='low-altitude'?t("通过出发门后开始计时与计分"):t("通过出发门后开始计时")):t("赛道进度 {p0}% · 依次穿过航线检查点",{p0:(100*(hud.challengeProgress??0)).toFixed(0)})}</span>{#if hud.stall}<b>{t("攻角过大 · 失速")}</b>{/if}</div>{/if}
  {#if lastChallenge==='low-altitude'}<section class="challenge-hud" class:over-height={(hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight} aria-label={t("贴地挑战数据")}><span>{t("离地")} <strong>{(hud.groundClearance??0).toFixed(1)} m / {LOW_ALTITUDE.scoringHeight} m</strong></span><span>{t("得分")} <strong>{(hud.score??0).toFixed(0)}</strong></span><span>{t("连续超高")} <strong>{(hud.aboveHeightTime??0).toFixed(1)} s</strong></span>{#if (hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight}<b role="status">{t("超出计分高度 · 降低高度")}</b>{/if}</section>{/if}
  {#if lastDefinition.engine.count&&lastChallenge!=='wind-tunnel'}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t(isReplay?"油门":"油门 · 1 增 / 2 减")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><input aria-label={t("油门")} disabled={isReplay} type="range" min="0" max="1" step="0.01" bind:value={throttle}/></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}{t("% · 推力")} {(hud.thrust??0).toFixed(0)} {t("N · 余油")} {(hud.fuelRemaining??0).toFixed(2)} L</p></section>{/if}
@@ -469,6 +469,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}
  {#if lastChallenge!=='wind-tunnel'}{@render structureData()}{/if}
  </div>
+ {#if lastChallenge==='wind-tunnel'}<section class="wind-speed-hud" aria-label={t('风洞风速')}><span>{t('当前风速')}</span><strong><output aria-label={t('当前风速')}>{(hud.wind?.speed??0).toFixed(1)}</output><small>m/s</small></strong></section>{/if}
  {#if isReplay}<section class="replay-inputs" aria-label={t("实时杆量")}>
  <div class="replay-input-body"><svg viewBox="0 0 120 120" aria-label={t("操纵杆")} role="img"><circle class="stick-rim" cx="60" cy="60" r="56"/><path class="stick-cross" d="M60 8V112 M8 60H112"/><circle class="stick-position" cx={60+actualRoll*35} cy={60-actualPitch*35} r="6" data-pitch={actualPitch} data-roll={actualRoll}/></svg>
  <div class="replay-throttle"><span>{t("油门")}</span><meter aria-label={t("油门")} min="0" max="1" value={hud.throttle??0}></meter><output>{((hud.throttle??0)*100).toFixed(0)}%</output></div></div>

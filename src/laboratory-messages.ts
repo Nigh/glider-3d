@@ -40,6 +40,8 @@ export const laboratoryMessages: Record<string, readonly [string, string]> = {
  '升降舵控制比例实际值': ['Actual elevator input', '実際のエレベーター入力'],
  '方向舵控制比例实际值': ['Actual rudder input', '実際のラダー入力'],
  '实际值': ['Actual', '実際値'],
+ '当前风速': ['Current wind speed', '現在の風速'],
+ '风洞风速': ['Wind tunnel speed', '風洞の風速'],
  '开启或关闭风洞以平滑调整气流；还原飞机状态可修复结构损伤。': ['Switch the wind tunnel on or off to ramp the airflow smoothly. Restore the aircraft to repair structural damage.', '風洞のオン・オフで気流を滑らかに調整。機体を復元すると構造の損傷を修復できます。'],
  '开启风洞': ['Turn on wind tunnel', '風洞をオンにする'],
  '关闭风洞': ['Turn off wind tunnel', '風洞をオフにする'],

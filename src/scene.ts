@@ -695,9 +695,7 @@ export class SceneView {
     if (this.editorTarget && !this.simulation || this.simulation && !this.simulation.ended && this.view === 'locked') return;
     const minimum = this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 0.55;
     if (this.camera.position.y >= minimum) return;
-    const correction = minimum - this.camera.position.y;
     this.camera.position.y = minimum;
-    if (this.controls.enabled) this.controls.target.y += correction;
     this.camera.lookAt(this.controls.enabled ? this.controls.target : this.target);
   }
 

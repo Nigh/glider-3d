@@ -4,7 +4,7 @@ import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type WingFragment } from './structure';
-import { advanceWindTunnel, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
+import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.225;
@@ -697,6 +697,7 @@ export class FlightSimulation {
     launchConfig: null as ReturnType<typeof challengeLaunch>,
     testPlatformBoxes: [[new Vector3(-50, -0.8, -20), new Vector3(0, 0, 20)]] as [Vector3, Vector3][],
     windTunnel: { ...defaultWindTunnel, speed: 0 }, windTarget: { ...defaultWindTunnel }, windEnabled: false, windVelocity: new Vector3(),
+    windMotion: null as ReturnType<typeof createWindTunnelMotion> | null,
     takeoffHeight: 0, takeoffSpeed: 0,
   };
   get testSpace(): Readonly<TestSpaceSettings> { return this.laboratoryState.testSpaceConfig; }
@@ -954,6 +955,7 @@ export class FlightSimulation {
     if (this.challenge === 'wind-tunnel') {
       Object.assign(this.laboratoryState.windTunnel, defaultWindTunnel, { speed: 0 }); Object.assign(this.laboratoryState.windTarget, defaultWindTunnel);
       this.laboratoryState.windEnabled = false; this.laboratoryState.windVelocity.set(0, 0, 0);
+      this.laboratoryState.windMotion = createWindTunnelMotion();
       this.position.set(0, windTunnelRoom(this.definition).centerY, 0); this.quaternion.identity(); this.launching = false;
     }
     this.laboratoryState.takeoffHeight = 0; this.laboratoryState.takeoffSpeed = 0;
@@ -988,10 +990,11 @@ export class FlightSimulation {
   restoreWindTunnelAircraft() {
     if (this.challenge !== 'wind-tunnel') return;
     const actual = { ...this.windTunnel }, target = { ...this.laboratoryState.windTarget }, enabled = this.windTunnelEnabled;
-    const time = this.time, elapsed = this.elapsed, omega = this.omega.clone();
+    const time = this.time, elapsed = this.elapsed, omega = this.omega.clone(), motion = this.laboratoryState.windMotion;
     this.reset(this.launchRoll);
     Object.assign(this.laboratoryState.windTunnel, actual); this.laboratoryState.windTarget = target; this.laboratoryState.windEnabled = enabled;
     this.time = time; this.elapsed = elapsed; this.omega.copy(omega); this.previousOmega.copy(omega);
+    this.laboratoryState.windMotion = motion;
     this.applyWindTunnelFixture(0);
     this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
     this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
@@ -1030,7 +1033,7 @@ export class FlightSimulation {
   }
 
   private integrateWindTunnel(dt: number) {
-    advanceWindTunnel(this.laboratoryState.windTunnel, this.laboratoryState.windTarget, dt, this.windTunnelEnabled);
+    advanceWindTunnel(this.laboratoryState.windTunnel, this.laboratoryState.windTarget, dt, this.windTunnelEnabled, this.laboratoryState.windMotion!);
     this.applyWindTunnelFixture(dt);
     this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
     this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);

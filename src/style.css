@@ -220,3 +220,5 @@ html:not([lang=zh]) .aero-preview table{min-width:560px}html:not([lang=zh]) .fli
 .laboratory-flight.awaiting-flight .stick-panel{display:none}
 @media(max-width:700px){.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-hud,.laboratory-flight.awaiting-flight:not(.wind-tunnel) .advanced-hud,.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-status{display:none}}
 .lab-cameras button.active{background:var(--accent);border-color:var(--accent);color:white;font-weight:600}
+.wind-speed-hud{position:absolute;z-index:4;left:50%;bottom:16px;transform:translateX(-50%);min-width:150px;display:flex;align-items:center;gap:14px;padding:10px 16px;border:1px solid var(--line);border-radius:6px;background:var(--panel);pointer-events:none}.wind-speed-hud>span{font-size:11px;color:var(--muted)}.wind-speed-hud strong{font-size:24px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}.wind-speed-hud small{font-size:11px;margin-left:5px}
+@media(max-width:700px){.app.wind-tunnel .flight-sidebar{bottom:76px;max-height:37dvh}.wind-speed-hud{bottom:8px;padding:8px 14px}}

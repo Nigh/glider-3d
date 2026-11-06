@@ -443,8 +443,14 @@ test('飞行视角拖动回正，锁定禁止拖动，自由视角保持环绕�
     expect(distance(before, dragged)).toBeGreaterThan(1);
     expect(name === '驾驶员' ? dragged[1].y : dragged[0].y).toBeGreaterThan(name === '驾驶员' ? before[1].y : before[0].y);
     if (name === '自由') {
-      await page.waitForTimeout(4_000);
-      const settled = await snapshot();
+      let settled = dragged;
+      // Orbit damping advances per rendered frame; wait for convergence on slow hosts.
+      await expect.poll(async () => {
+        const previous = settled;
+        await page.waitForTimeout(1_000);
+        settled = await snapshot();
+        return distance(previous, settled);
+      }, { timeout: 25_000, intervals: [100] }).toBeLessThan(0.005);
       expect(distance(before, settled)).toBeGreaterThan(1);
       await page.waitForTimeout(4_000);
       expect(distance(settled, await snapshot())).toBeLessThan(0.05);

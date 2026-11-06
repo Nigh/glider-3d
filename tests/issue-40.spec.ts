@@ -69,6 +69,15 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await expect(page.getByRole('switch', { name: '气动图层', exact: true })).toHaveAttribute('aria-checked', 'true');
  await expect(page.getByRole('complementary', { name: '实时气动数据', exact: true })).toBeVisible();
  await expect(page.locator('.advanced-hud')).toHaveAttribute('open', '');
+ const speedHud = page.getByRole('region', { name: '风洞风速', exact: true });
+ const currentSpeed = speedHud.getByLabel('当前风速', { exact: true });
+ await expect(speedHud).toBeVisible(); await expect(currentSpeed).toHaveText('0.0');
+ await expect(page.getByRole('region', { name: '飞行数据', exact: true })).toHaveCount(0);
+ await expect(speedHud.locator('output')).toHaveCount(1);
+ const speedBox = (await speedHud.boundingBox())!, viewport = page.viewportSize()!;
+ expect(Math.abs(speedBox.x + speedBox.width / 2 - viewport.width / 2)).toBeLessThan(1);
+ expect(viewport.height - speedBox.y - speedBox.height).toBeGreaterThanOrEqual(0);
+ expect(viewport.height - speedBox.y - speedBox.height).toBeLessThanOrEqual(20);
  const room = await page.evaluate(() => (window as any).glider.scene.laboratory);
  expect(room.walls).toHaveLength(6); expect(room.walls.every((wall: any) => wall.gridMeters === 1 && wall.tickMeters === 0.1 && wall.finish === 'dark-concrete')).toBe(true);
  expect(await page.evaluate(() => (window as any).glider.laboratory)).toMatchObject({ wind: { speed: 0 }, windEnabled: false });
@@ -86,6 +95,17 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  }
  await page.keyboard.press('c');
  await expect(cameras.getByRole('button', { name: '俯视', exact: true })).toHaveAttribute('aria-pressed', 'true');
+ await cameras.getByRole('button', { name: '自由', exact: true }).click();
+ const cameraTarget = await page.evaluate(() => (window as any).glider.scene.target);
+ await page.mouse.move(viewport.width / 2, viewport.height * 0.48); await page.mouse.down();
+ await page.mouse.move(viewport.width / 2, viewport.height * 0.18, { steps: 15 }); await page.mouse.up();
+ await expect.poll(() => page.evaluate(() => { const scene = (window as any).glider.scene; return scene.camera.y - scene.groundHeight; })).toBeLessThan(0.551);
+ const collisionTime = await page.evaluate(() => (window as any).glider.time);
+ await expect.poll(() => page.evaluate(() => (window as any).glider.time)).toBeGreaterThan(collisionTime + 0.5);
+ const afterPush = await page.evaluate(() => (window as any).glider.scene);
+ expect(afterPush.camera.y).toBeGreaterThanOrEqual(afterPush.groundHeight + 0.55 - 1e-8);
+ for (const axis of ['x', 'y', 'z'] as const) expect(afterPush.target[axis]).toBeCloseTo(cameraTarget[axis], 8);
+ await page.screenshot({ path: info.outputPath('wind-camera-clearance.png') });
  await cameras.getByRole('button', { name: '侧视', exact: true }).click();
  const pitch = page.getByLabel('俯仰角度数值', { exact: true });
  await expect(pitch).toHaveAttribute('min', '-45'); await expect(pitch).toHaveAttribute('max', '45'); await expect(pitch).toHaveAttribute('step', '0.1');
@@ -102,6 +122,7 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.screenshot({ path: info.outputPath('wind-tunnel-room.png') });
  await page.getByRole('button', { name: '开启风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(10);
+ await expect(currentSpeed).toHaveText('10.0');
  await page.getByRole('button', { name: '关闭风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(0);
  await page.getByLabel('气流速度数值', { exact: true }).fill('200');
@@ -111,17 +132,20 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.getByLabel('升降舵控制比例数值', { exact: true }).fill('30');
  await page.getByLabel('方向舵控制比例数值', { exact: true }).fill('-25');
  expect(await page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(0);
+ await expect(currentSpeed).toHaveText('0.0'); // Configured target is 200; show actual flow.
  await page.getByRole('button', { name: '开启风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBeGreaterThan(0);
  await page.getByLabel('滚转角度数值', { exact: true }).fill('-30');
- await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.roll)).toBe(-30);
+ await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.roll), { timeout: 90000 }).toBe(-30);
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.fractures), { timeout: 90000 }).toBeGreaterThan(0);
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed), { timeout: 90000 }).toBe(200);
+ await expect(currentSpeed).toHaveText('200.0');
  expect(await page.evaluate(() => (window as any).glider.state)).toBe('flight');
  expect(await page.evaluate(() => (window as any).glider.result)).toBeNull();
  expect(await page.evaluate(() => (window as any).glider.laboratory)).toMatchObject({ recordingBytes: 0, curveSamples: 0 });
  await page.getByRole('button', { name: '关闭风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed), { timeout: 90000 }).toBe(0);
+ await expect(currentSpeed).toHaveText('0.0');
  const beforeRestore = await page.evaluate(() => ({ time: (window as any).glider.time, wind: (window as any).glider.laboratory.wind }));
  await page.getByRole('button', { name: '还原飞机状态', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.fractures)).toBe(0);

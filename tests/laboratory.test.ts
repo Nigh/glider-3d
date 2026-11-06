@@ -3,7 +3,7 @@ import { Vector3 } from 'three';
 import { clone, defaultAircraft, presets } from '../src/model';
 import { FlightSimulation, GRAVITY } from '../src/physics';
 import { challengeCollisionHeight, challengeTerrainHeight } from '../src/challenges';
-import { TEST_SPACE, defaultTestSpace, defaultWindTunnel, testCatapultSample, testSpaceLaunch, testSpaceTerrainHeight, windTunnelRates } from '../src/laboratory';
+import { TEST_SPACE, advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, testCatapultSample, testSpaceLaunch, testSpaceTerrainHeight, windTunnelAttitudeFrequency, windTunnelRates } from '../src/laboratory';
 import { exportReplay } from '../src/replay';
 import { readBest, writeBest } from '../src/storage';
 
@@ -105,6 +105,55 @@ describe('test space', () => {
 });
 
 describe('wind tunnel', () => {
+  it('bounds angular speed and acceleration through startup, reversal, retargeting and settling', () => {
+    const motion = createWindTunnelMotion(), actual = { ...defaultWindTunnel }, w = windTunnelAttitudeFrequency;
+    let target = { ...defaultWindTunnel, roll: 180, pitch: 45 };
+    const previousAcceleration = { roll: 0, pitch: 0 };
+    for (let frame = 0; frame < 2400; frame++) {
+      if (frame === 300) target = { ...target, roll: -180, pitch: -45 };
+      if (frame === 600) target = { ...target, roll: 12, pitch: -4 };
+      const dt = frame % 2 ? 1 / 120 : 1 / 40;
+      advanceWindTunnel(actual, target, dt, true, motion);
+      for (const key of ['roll', 'pitch'] as const) {
+        const velocity = w * (motion[key].lag - actual[key]);
+        const acceleration = w * w * (motion[key].command - 2 * motion[key].lag + actual[key]);
+        expect(Math.abs(velocity)).toBeLessThanOrEqual(windTunnelRates[key] + 1e-6);
+        expect(Math.abs(acceleration)).toBeLessThanOrEqual(2 * windTunnelRates[key] * w / Math.E + 1e-6);
+        expect(Math.abs(acceleration - previousAcceleration[key])).toBeLessThanOrEqual(4 * windTunnelRates[key] * w * w * dt + 1e-4);
+        previousAcceleration[key] = acceleration;
+      }
+      expect(Math.abs(actual.pitch)).toBeLessThanOrEqual(45 + 1e-8);
+    }
+    expect(actual.roll).toBe(12); expect(actual.pitch).toBe(-4);
+  });
+  it('gives the same attitude trajectory with split steps, including command arrival', () => {
+    const a = { ...defaultWindTunnel }, b = { ...defaultWindTunnel }, ma = createWindTunnelMotion(), mb = createWindTunnelMotion();
+    for (let frame = 0; frame < 240; frame++) {
+      const target = { ...defaultWindTunnel, roll: frame < 120 ? 3.1 : -2.7, pitch: frame < 120 ? -1.3 : 2.1 };
+      advanceWindTunnel(a, target, 1 / 60, false, ma);
+      for (let i = 0; i < 2; i++) advanceWindTunnel(b, target, 1 / 120, false, mb);
+      expect(a.roll).toBeCloseTo(b.roll, 10); expect(a.pitch).toBeCloseTo(b.pitch, 10);
+    }
+  });
+  it('gently reorients a light, unreinforced aircraft without motion-induced breakup', () => {
+    const definition = clone(defaultAircraft); definition.mainWing.materialAmount = 0.5;
+    const sim = new FlightSimulation(definition, 'wind-tunnel', 0);
+    sim.step(neutral); expect(sim.structure.fractureCount).toBe(0);
+    let maximumAcceleration = 0, previous = sim.omega.clone();
+    for (let frame = 0; frame < 1800; frame++) {
+      if (frame === 0) sim.setWindTunnel({ ...defaultWindTunnel, roll: 30, pitch: 15 });
+      if (frame === 240) sim.setWindTunnel({ ...defaultWindTunnel, roll: -30, pitch: -15 });
+      if (frame === 480) sim.setWindTunnel({ ...defaultWindTunnel, roll: 0, pitch: 0 });
+      sim.step(neutral);
+      maximumAcceleration = Math.max(maximumAcceleration, sim.omega.clone().sub(previous).length() * 60);
+      previous.copy(sim.omega);
+      expect(sim.structure.fractureCount).toBe(0);
+    }
+    expect(sim.windTunnel.speed).toBe(0);
+    expect(sim.windTunnel.roll).toBe(0); expect(sim.windTunnel.pitch).toBe(0);
+    expect(sim.omega.length()).toBeLessThan(1e-6);
+    expect(maximumAcceleration).toBeLessThan(0.12); // rad/s², including coupled pitch/roll
+  });
   it('enters with zero flow and a 10 m/s target, and reverses ramps without jumping', () => {
     const sim = new FlightSimulation(powered(), 'wind-tunnel', 0);
     expect(defaultWindTunnel.speed).toBe(10); expect(sim.windTunnel.speed).toBe(0); expect(sim.windTunnelEnabled).toBe(false);
@@ -140,14 +189,19 @@ describe('wind tunnel', () => {
     expect(sim.recording.byteLength).toBe(0); expect(sim.recordingLength).toBe(0);
   });
   it('preserves targets and angular motion when restoring during an input transition', () => {
-    const sim = new FlightSimulation(powered(), 'wind-tunnel', 0);
+    const sim = new FlightSimulation(powered(), 'wind-tunnel', 0), reference = new FlightSimulation(powered(), 'wind-tunnel', 0);
     const target = { speed: 25, roll: 10, pitch: 4.1, elevator: 0.2, aileron: -0.3, rudder: 0.1 };
-    sim.setWindTunnel(target); sim.setWindTunnelEnabled(true);
-    for (let i = 0; i < 3; i++) sim.step(neutral);
+    for (const flight of [sim, reference]) { flight.setWindTunnel(target); flight.setWindTunnelEnabled(true); }
+    for (let i = 0; i < 3; i++) { sim.step(neutral); reference.step(neutral); }
     const actual = { ...sim.windTunnel }, omega = sim.omega.clone();
     sim.restoreWindTunnelAircraft();
     expect(sim.windTunnel).toEqual(actual); expect(sim.omega.equals(omega)).toBe(true);
-    for (let i = 0; i < 90; i++) sim.step(neutral);
+    for (let i = 0; i < 60; i++) {
+      sim.step(neutral); reference.step(neutral);
+      expect(sim.windTunnel).toEqual(reference.windTunnel);
+      expect(sim.omega.distanceTo(reference.omega)).toBeLessThan(1e-10);
+    }
+    for (let i = 0; i < 1500; i++) sim.step(neutral);
     expect(sim.windTunnel).toEqual(target);
   });
   it('keeps testing after breakup and restores the intact aircraft without resetting the running wind or clock', () => {
@@ -188,6 +242,9 @@ describe('wind tunnel', () => {
     sim.setWindTunnelEnabled(true);
     for (let i = 0; i < 30; i++) sim.step(neutral);
     expect(sim.velocity.lengthSq()).toBe(0);
+    expect(sim.telemetry.alpha * 180 / Math.PI).toBeCloseTo(sim.windTunnel.pitch + sim.definition.assembly.mainIncidence, 7);
+    for (let i = 0; i < 1500; i++) sim.step(neutral);
+    expect(sim.windTunnel.pitch).toBe(5);
     expect(sim.telemetry.alpha * 180 / Math.PI).toBeCloseTo(5 + sim.definition.assembly.mainIncidence, 7);
     expect(sim.telemetry.sink).toBeCloseTo(0, 12);
   });

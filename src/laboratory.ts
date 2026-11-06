@@ -43,14 +43,42 @@ export function testSpaceTerrainHeight(x: number, z: number) {
 }
 export interface WindTunnelSettings { speed: number; roll: number; pitch: number; elevator: number; aileron: number; rudder: number }
 export const defaultWindTunnel: Readonly<WindTunnelSettings> = { speed: 10, roll: 0, pitch: 0, elevator: 0, aileron: 0, rudder: 0 };
-export const windTunnelRates: Readonly<WindTunnelSettings> = { speed: 30, roll: 45, pitch: 30, elevator: 1.5, aileron: 1.5, rudder: 1.5 };
+export const windTunnelRates: Readonly<WindTunnelSettings> = { speed: 30, roll: 6, pitch: 4, elevator: 1.5, aileron: 1.5, rudder: 1.5 };
+interface AttitudeMotion { command: number; lag: number; value: number }
+export const windTunnelAttitudeFrequency = 1; // rad/s, two identical low-pass stages
+export const createWindTunnelMotion = () => ({ roll: { command: 0, lag: 0, value: 0 }, pitch: { command: 0, lag: 0, value: 0 } });
+
+function integrateAttitude(motion: AttitudeMotion, slope: number, time: number) {
+  if (time <= 0) return;
+  const w = windTunnelAttitudeFrequency, decay = Math.exp(-w * time), command = motion.command;
+  const transient = motion.lag - command + slope / w;
+  motion.lag = command + slope * (time - 1 / w) + transient * decay;
+  motion.value = command + slope * (time - 2 / w)
+    + (motion.value - command + 2 * slope / w + w * time * transient) * decay;
+  motion.command += slope * time;
+}
+
+/** Exact response of two cascaded filters to a ramp, including its final stop.
+ * A continuous, rate-limited command gives continuous angular velocity and
+ * acceleration, even on retarget/reversal. Acceleration is bounded by 2*rate*w/e.
+ */
+function advanceAttitude(motion: AttitudeMotion, target: number, rate: number, dt: number) {
+  const difference = target - motion.command, rampTime = Math.min(dt, Math.abs(difference) / rate);
+  integrateAttitude(motion, Math.sign(difference) * rate, rampTime);
+  if (rampTime < dt) { motion.command = target; integrateAttitude(motion, 0, dt - rampTime); }
+  // Snap only below a microdegree, where the residual motion is negligible.
+  if (Math.abs(target - motion.command) < 1e-9 && Math.abs(target - motion.lag) < 1e-6 && Math.abs(target - motion.value) < 1e-6) motion.command = motion.lag = motion.value = target;
+}
 export function windTunnelSettings(value: WindTunnelSettings): WindTunnelSettings {
   const limits = { speed: [1, 200], roll: [-180, 180], pitch: [-45, 45], elevator: [-1, 1], aileron: [-1, 1], rudder: [-1, 1] };
   for (const key of Object.keys(limits) as (keyof WindTunnelSettings)[]) if (!Number.isFinite(value[key]) || value[key] < limits[key][0] || value[key] > limits[key][1]) throw Error('风洞参数无效');
   return { ...value };
 }
-export function advanceWindTunnel(actual: WindTunnelSettings, target: WindTunnelSettings, dt: number, enabled: boolean) {
+export function advanceWindTunnel(actual: WindTunnelSettings, target: WindTunnelSettings, dt: number, enabled: boolean, motion: ReturnType<typeof createWindTunnelMotion>) {
   for (const key of Object.keys(windTunnelRates) as (keyof WindTunnelSettings)[]) {
+    if (key === 'roll' || key === 'pitch') {
+      advanceAttitude(motion[key], target[key], windTunnelRates[key], dt); actual[key] = motion[key].value; continue;
+    }
     const difference = (key === 'speed' && !enabled ? 0 : target[key]) - actual[key];
     actual[key] += Math.sign(difference) * Math.min(Math.abs(difference), windTunnelRates[key] * dt);
   }
