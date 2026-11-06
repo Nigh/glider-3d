@@ -92,12 +92,17 @@ it('retains older regions of a long recording for deterministic forward and back
  for(let i=0;i<320;i++){
   sim.step({...neutral,throttle:0,elevator:Math.sin(i/20)*0.2},i%2?0.25:0.125);
   cacheFlight(sim);
+  // Let the worker answer runner messages during the expensive setup too.
+  if(i%16===15)await new Promise(resolve=>setTimeout(resolve,0));
  }
  expect(sim.ended).toBe(false);expect(sim.elapsedTime).toBe(60);
  const recording=sim.getRecording(),replay={definition,challenge:'low-altitude' as const,recording};
  cacheRecording(sim,recording);
  const linear=replaySimulation(replay),states=new Map([[0,state(linear)]]);
- while(!linear.replayFinished){linear.step(neutral);states.set(linear.replayFrame,state(linear));}
+ while(!linear.replayFinished){
+  linear.step(neutral);states.set(linear.replayFrame,state(linear));
+  if(linear.replayFrame%16===0)await new Promise(resolve=>setTimeout(resolve,0));
+ }
  const steps=vi.spyOn(FlightSimulation.prototype,'step');
  for(const source of [replay,{...replay,recording:{...recording,frames:recording.frames.slice()}}]){
   // A distinct recording has no live cache; a first traversal must populate it.
@@ -110,4 +115,4 @@ it('retains older regions of a long recording for deterministic forward and back
    expect(state(restored!)).toEqual(states.get(restored!.replayFrame));
   }
  }
-},90_000);
+},180_000);
