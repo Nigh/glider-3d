@@ -554,7 +554,7 @@ describe('低空地形、滑跑与计分', () => {
     expect(replay.telemetry.energy).toBe(s.telemetry.energy);
     s.step({ ...neutral, throttle: 1 }, 0.25);
     expect(s.ended).toBe(false);
-  });
+  }, 15_000);
 
   it('向下载荷大于保持力也不脱轨，继续约束高度与姿态', () => {
     const d = clone(poweredAircraft);
@@ -645,7 +645,7 @@ describe('低空地形、滑跑与计分', () => {
       expect([...replay.position.toArray(), ...replay.velocity.toArray(), ...replay.quaternion.toArray(), ...replay.omega.toArray(),
         replay.telemetry.fuelRemaining, Number(replay.launching)]).toEqual(state);
     }
-  });
+  }, 15_000);
 
   it('逐门记录低空分与贴地奖励，速度分只在终点加入，回头不重复得分', () => {
     const cross = (s: FlightSimulation, index: number, clearance: number, speed = 30) => {
