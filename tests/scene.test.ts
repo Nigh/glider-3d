@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Box3, BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
 import { SceneView } from '../src/scene';
+import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
 import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
 
@@ -18,6 +19,20 @@ function svgElement() {
 }
 
 describe('场景编辑与推力中心', () => {
+  it('a visible vertex handle over a chord never selects the chord underneath', () => {
+    const group=()=>({style:{display:'',cursor:''},focus(){}});
+    const view=Object.assign(Object.create(SceneView.prototype),{
+      definition:clone(defaultAircraft),editorTarget:'mainWing',simulation:null,editorPointerId:-1,
+      renderer:{domElement:{getBoundingClientRect:()=>({left:0,top:0})}},
+      editorHandles:[{x:108,y:100,group:group()}],
+      editorSegments:[{x:200,y:200,x1:0,y1:100,x2:200,y2:100,group:group()}],
+      body:new Group(),editOrigin:new Vector3(),vector:new Vector3(),editPlane:new Plane(),editPoint:new Vector3(),editStart:new Vector3(),
+      intersectEditor:()=>true,resetSnap(){},controls:{enabled:true},editorOverlay:{setPointerCapture(){}},
+    });
+    view.beginEditorDrag({button:0,pointerId:7,clientX:100,clientY:100,ctrlKey:false,preventDefault(){},stopPropagation(){}},0);
+    expect(view.editorDrag).toBe(0);
+    expect(view.editorSegmentDrag).toBe(-1);
+  });
   it('投影锚点反复跨过52px边界时复用避让位置，不在两处跳动', () => {
     const anchors = [{ x: 300, y: 300 }, { x: 351.99, y: 300 }];
     const projection = new Vector3();

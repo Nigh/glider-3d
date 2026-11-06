@@ -712,12 +712,12 @@ export class SceneView {
       group.setAttribute('role', 'button');
       group.setAttribute('tabindex', '0');
       group.classList.add('editor-control', 'editor-chord', i === 0 ? 'editor-root-chord' : 'editor-tip-chord');
-      group.style.cssText = 'pointer-events:all;cursor:grab';
+      group.style.cssText = 'pointer-events:none;cursor:grab';
       for (const hit of [true, false]) {
         const line = document.createElementNS(SVG_NS, 'line');
         line.setAttribute('stroke', hit ? 'transparent' : 'currentColor');
         line.setAttribute('stroke-width', hit ? '18' : '3');
-        if (!hit) line.style.pointerEvents = 'none';
+        line.style.pointerEvents = 'none';
         group.appendChild(line);
       }
       const leader = document.createElementNS(SVG_NS, 'line');
@@ -737,6 +737,8 @@ export class SceneView {
       hit.setAttribute('r', '22');
       hit.setAttribute('fill', 'transparent');
       hit.setAttribute('stroke', 'none');
+      hit.style.pointerEvents = 'all';
+      knob.style.pointerEvents = 'all';
       const text = document.createElementNS(SVG_NS, 'text');
       text.classList.add('editor-control-label');
       text.textContent = t(i === 0 ? '根弦 1–4' : '梢弦 2–3');
@@ -977,7 +979,7 @@ export class SceneView {
       // Resolve overlapping 44px touch targets by visible geometry, not SVG paint order.
       const rect = this.renderer.domElement.getBoundingClientRect();
       const x = event.clientX - rect.left, y = event.clientY - rect.top;
-      let nearest = Infinity, vertex = -1, edge = -1, edgeDistance = 81;
+      let nearest = 22 ** 2, vertex = -1, edge = -1;
       for (let i = 0; i < this.editorHandles.length; i++) {
         const handle = this.editorHandles[i];
         if (handle.group.style.display === 'none') continue;
@@ -989,17 +991,12 @@ export class SceneView {
         if (line.group.style.display === 'none') continue;
         const knobDistance = (line.x - x) ** 2 + (line.y - y) ** 2;
         if (knobDistance < nearest && knobDistance <= 22 ** 2) {
-          nearest = knobDistance; vertex = -1; edge = i; edgeDistance = -1;
+          nearest = knobDistance; vertex = -1; edge = i;
         }
-        const dx = line.x2 - line.x1, dy = line.y2 - line.y1, squared = dx * dx + dy * dy;
-        if (squared < 1e-6) continue;
-        const t = ((x - line.x1) * dx + (y - line.y1) * dy) / squared;
-        if (t <= 0 || t >= 1) continue;
-        const distance = (x - line.x1 - t * dx) ** 2 + (y - line.y1 - t * dy) ** 2;
-        if (distance < edgeDistance) { edgeDistance = distance; edge = i; }
       }
-      if (edgeDistance < 0 || nearest > 36 && edge >= 0) { segment = true; index = edge; }
+      if (edge >= 0) { segment = true; index = edge; }
       else if (vertex >= 0) { segment = false; index = vertex; }
+      else return;
     }
     this.editDefinition = clone(this.definition);
     this.body.getWorldPosition(this.editOrigin);
@@ -1528,15 +1525,16 @@ export class SceneView {
     this.crashMark.visible = true;
   }
 
-  setFlight(sim: FlightSimulation | null): void {
+  setFlight(sim: FlightSimulation | null, reuseAircraft = false): void {
     this.crashMark.visible = false; this.crashAge = -1; this.crashStroke = null;
     for (const child of [...this.crashMark.children]) {const mesh=child as THREE.Mesh;mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();this.crashMark.remove(child);}
 
     this.resultOrbit = false;
     this.endEditorDrag();
     this.editorDirty = true;
-    this.applyAircraft();
     this.simulation = sim;
+    if (sim && !reuseAircraft) this.updateAircraft(sim.definition);
+    this.applyAircraft();
     this.headOffset.set(0, 0, 0);
     this.headTime = sim?.elapsedTime ?? 0;
     this.body.visible = true;

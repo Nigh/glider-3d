@@ -1,5 +1,23 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
 export const messages: Record<string, readonly [string, string]> = {
+ "垂直速度": ["Vertical velocity", "鉛直速度"],
+ "实时杆量": ["Live control inputs", "現在の操縦入力"],
+ "此记录未保存负载曲线": ["This recording has no saved load curves", "この記録には負荷曲線が保存されていません"],
+ "飞行记录包含无效负载": ["Invalid recorded wing loads", "記録の翼面負荷が無効です"],
+ "回放时间轴": ["Replay timeline","リプレイのタイムライン"],
+ "回放进度": ["Replay position","リプレイ位置"],
+ "翼面负载曲线": ["Wing load curves","翼面負荷曲線"],
+
+ "正在跳转回放…": ["Seeking replay…","リプレイ位置を移動中…"],
+
+ "G值": ["G load","G荷重"],
+ "G值曲线": ["G load curve","G荷重曲線"],
+ "最大G值": ["Maximum G load","最大G荷重"],
+ "G值为重心处比力大小，包含发射与接触载荷；静止承重为1G，自由落体为0G。": ["G load is the magnitude of proper acceleration at the CG, including launch and contact loads; supported rest is 1 G and free fall is 0 G.","G荷重は重心での比力の大きさです。発射・接触荷重を含み、静止支持時は1 G、自由落下時は0 Gです。"],
+ "仅拖动圆形手柄调整顶点或同时移动根弦、梢弦两端；翼面和线段不响应拖动。手柄过近时自动外移，虚线连接真实位置。按住 Ctrl 自由微调。数字输入可精确调整顶点。": ["Drag only circular handles to adjust vertices or both ends of the root/tip chord; wings and lines do not respond to dragging. Nearby handles move outward with dotted leaders to their true positions. Hold Ctrl for fine adjustment, or use numeric inputs.","頂点や根元・翼端の両端は円形ハンドルのみで調整します。翼面や線はドラッグに反応しません。近いハンドルは外へ移動し、点線で実位置を示します。Ctrlで微調整、数値入力で精密に編集できます。"],
+ "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增加面积降低翼载荷，但增加重量与阻力。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. More area lowers wing loading but adds weight and drag.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。面積を増やすと翼面荷重は下がりますが、重量と抗力が増えます。"],
+ "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增大尾翼或后移安装位置，通常提高俯仰稳定性。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. A larger tail or a rearward mount usually improves pitch stability.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。尾翼の拡大や後方への移動は通常ピッチ安定性を高めます。"],
+ "侧视拖动顶点或根弦、梢弦的圆形手柄。按住 Ctrl 取消吸附。垂直尾翼提供偏航恢复力矩，太小容易偏离航向。": ["In side view, drag the circular vertex or chord handles. Hold Ctrl to disable snapping. The vertical tail restores heading; too little area allows drift.","側面で頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。垂直尾翼は偏航を戻す力を生み、小さすぎると進路が乱れます。"],
  "导入回放": ["Import replay", "リプレイをインポート"],
  "导出回放": ["Export replay", "リプレイをエクスポート"],
  "回放结束": ["Replay finished", "リプレイ終了"],

@@ -30,6 +30,9 @@ export interface StructuralBody {
   id: number; position: Vector3; quaternion: Quaternion; velocity: Vector3; omega: Vector3;
   cg: Vector3; mass: number; inertiaTensor: Matrix3; inverseInertia: Matrix3;
 }
+/** Body-coordinate external force and its moment about the aircraft design origin. */
+export interface SectionContactLoad { force: Vector3; moment: Vector3 }
+interface SectionGeometry { root: Vector3; tip: Vector3; rootRotation: Quaternion; tipRotation: Quaternion }
 export interface WingFragment extends StructuralBody {
   landed: boolean; force: Vector3; torque: Vector3; drag: Vector3; aeroPower: number;
   midpointVelocity: Vector3; midpointOmega: Vector3; midpointPosition: Vector3; midpointQuaternion: Quaternion;
@@ -79,6 +82,8 @@ export class WingStructure {
   private readonly inverse = new Quaternion();
   private readonly identity = new Quaternion();
   private readonly candidates: StructureSection[] = [];
+  private readonly geometryBefore: SectionGeometry[];
+  private readonly geometryAfter: SectionGeometry[];
 
   constructor(readonly definition: AircraftDefinition, surfaces: StructuralSurface[]) {
     this.sections = surfaces.map((surface, id) => {
@@ -130,6 +135,8 @@ export class WingStructure {
         sectionArea: section.area,
         torsionModulus: 2 * innerWidth * innerHeight * section.wallThickness };
     });
+    const geometry = () => this.sections.map(() => ({ root: new Vector3(), tip: new Vector3(), rootRotation: new Quaternion(), tipRotation: new Quaternion() }));
+    this.geometryBefore = geometry(); this.geometryAfter = geometry();
   }
 
   reset() {
@@ -152,7 +159,7 @@ export class WingStructure {
    * 质量和惯量保留参考几何，不把无质量气动形状偏移伪装成弹性动能/势能，也不登记虚构结构耗散。
    * 需真实弹性能/振型时，应整体替换为含节点质量的能量一致梁积分，而不是修补耗散账本。
    */
-  private measureStress(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3, commit: boolean) {
+  private measureStress(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3, commit: boolean, contacts?: readonly SectionContactLoad[]) {
     let maximum = 0;
     this.inverse.copy(body.quaternion).invert();
     this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
@@ -167,6 +174,7 @@ export class WingStructure {
       this.cross.crossVectors(body.omega, this.arm);
       this.force.add(this.moment.crossVectors(body.omega, this.cross)).add(this.acceleration);
       if (commit) s.load.copy(s.surface.force).applyQuaternion(this.inverse).addScaledVector(this.gravity, s.mass).addScaledVector(this.force, -s.mass);
+      if (commit && contacts) s.load.add(contacts[s.id].force);
       this.sectionMoment.set(0, 0, 0);
       this.totalLoad.set(0, 0, 0);
       // 全部外侧段累计；气动力在变形四分之一弦，质量惯性在参考质量中心，各自保留力臂。
@@ -187,6 +195,14 @@ export class WingStructure {
         this.totalLoad.add(this.force);
         this.arm.copy(outer.surface.point).sub(s.root.position);
         this.sectionMoment.add(this.moment.crossVectors(this.arm, this.force));
+        // A contact belongs to its actual strip: transmit it only through that strip
+        // and its inboard joints, retaining the chordwise lever arm (torsion too).
+        // The inertial terms above already use the full rigid-body contact response.
+        if (contacts) {
+          const contact = contacts[outer.id];
+          this.totalLoad.add(contact.force);
+          this.sectionMoment.add(contact.moment).sub(this.moment.crossVectors(s.root.position, contact.force));
+        }
       }
       const bending = Math.abs(this.sectionMoment.dot(s.chordAxis)) / s.normalModulus + Math.abs(this.sectionMoment.dot(s.normalAxis)) / s.lateralModulus
         + Math.abs(this.totalLoad.dot(s.beamAxis)) / s.sectionArea;
@@ -212,8 +228,9 @@ export class WingStructure {
     return this.measureStress(body, totalForce, totalTorque, false);
   }
 
-  update(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3) {
-    this.measureStress(body, totalForce, totalTorque, true);
+  update(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3, contacts?: readonly SectionContactLoad[]) {
+    for (const s of this.sections) if (s.bodyId === body.id) this.saveGeometry(s, this.geometryBefore[s.id]);
+    this.measureStress(body, totalForce, totalTorque, true, contacts);
     // 按每个连续拥有者从内到外积分，不跨断口。自由片首端保留断裂形状，但不把自由端作为断裂连接。
     for (const first of this.sections) {
       if (first.bodyId !== body.id || this.hasInnerSection(first)) continue;
@@ -234,15 +251,38 @@ export class WingStructure {
         this.rotationVector.addScaledVector(this.cross, length);
         s.tip.position.copy(s.baseTip).add(this.displacement);
         this.setRotation(s.tip.quaternion, this.rotationVector, s.baseTipRotation);
-        this.rotation.copy(s.root.quaternion).slerp(s.tip.quaternion, 0.5);
-        this.arm.copy(s.referenceRoot).lerp(s.referenceTip, 0.5);
-        s.surface.point.copy(s.referencePoint).sub(this.arm).applyQuaternion(this.rotation);
-        s.surface.point.addScaledVector(s.root.position, 0.5).addScaledVector(s.tip.position, 0.5);
-        s.surface.normal.copy(s.referenceNormal).applyQuaternion(this.rotation);
-        s.surface.spanDirection.copy(s.referenceSpan).applyQuaternion(this.rotation);
-        s.surface.chordDirection.copy(s.referenceChord).applyQuaternion(this.rotation);
-        s.surface.crossflowDirection.copy(s.referenceCrossflow).applyQuaternion(this.rotation);
+        this.syncSurface(s);
+        this.saveGeometry(s, this.geometryAfter[s.id]);
       }
+    }
+  }
+
+  private saveGeometry(s: StructureSection, out: SectionGeometry) {
+    out.root.copy(s.root.position); out.tip.copy(s.tip.position);
+    out.rootRotation.copy(s.root.quaternion); out.tipRotation.copy(s.tip.quaternion);
+  }
+
+  private syncSurface(s: StructureSection) {
+    this.rotation.copy(s.root.quaternion).slerp(s.tip.quaternion, 0.5);
+    this.arm.copy(s.referenceRoot).lerp(s.referenceTip, 0.5);
+    s.surface.point.copy(s.referencePoint).sub(this.arm).applyQuaternion(this.rotation);
+    s.surface.point.addScaledVector(s.root.position, 0.5).addScaledVector(s.tip.position, 0.5);
+    s.surface.normal.copy(s.referenceNormal).applyQuaternion(this.rotation);
+    s.surface.spanDirection.copy(s.referenceSpan).applyQuaternion(this.rotation);
+    s.surface.chordDirection.copy(s.referenceChord).applyQuaternion(this.rotation);
+    s.surface.crossflowDirection.copy(s.referenceCrossflow).applyQuaternion(this.rotation);
+  }
+
+  /** Restrict a massless elastic shape change at a solid boundary, retaining
+   * joint continuity and the full measured stress used for fracture decisions. */
+  blendContactGeometry(wingKey: WingKey, side: number, fraction: number) {
+    for (const s of this.sections) {
+      if (s.bodyId !== 0 || s.wingKey !== wingKey || s.side !== side) continue;
+      const a = this.geometryBefore[s.id], b = this.geometryAfter[s.id];
+      s.root.position.copy(a.root).lerp(b.root, fraction); s.tip.position.copy(a.tip).lerp(b.tip, fraction);
+      s.root.quaternion.copy(a.rootRotation).slerp(b.rootRotation, fraction);
+      s.tip.quaternion.copy(a.tipRotation).slerp(b.tipRotation, fraction);
+      this.syncSurface(s);
     }
   }
 

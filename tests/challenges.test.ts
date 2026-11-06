@@ -741,7 +741,8 @@ describe('动力与燃油边界', () => {
     expect(fuelRatio).toBeGreaterThan(1.99); expect(fuelRatio).toBeLessThan(2.01);
     one.engine.x = -2; one.engine.y = -0.5;
     const crash = airborne(new FlightSimulation(one, 'low-altitude', 0)); crash.position.y = challengeTerrainHeight('low-altitude', crash.position.x, crash.position.z) + 0.4;
-    crash.step(neutral); expect(crash.result?.landing).toBe('terrain');
+    const before=crash.velocity.clone();crash.step(neutral);expect(crash.ended).toBe(false);expect(crash.velocity).not.toEqual(before);
+    expect((Reflect.get(crash,'platformCount') as number)).toBeGreaterThan(0);
   });
 
   it('每台引擎海平面静推力360N，转速平方积分保留1.8s响应', () => {
