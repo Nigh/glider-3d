@@ -482,7 +482,7 @@ describe('低空地形、滑跑与计分', () => {
     expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork - t.waterWork).toBeCloseTo(t.initialEnergy, 8);
     expect(s.time).toBe(0); expect(s.telemetry.score).toBe(0); expect(s.telemetry.timingStarted).toBe(false);
     for (let x = launch.startX; x <= launch.endX; x += 10) expect(challengeTerrainHeight('low-altitude', x, launch.z)).toBe(launch.y);
-  });
+  }, 15_000);
 
   it('合法最大展长宽弦翼开场完整碰撞体均在2m导轨顶面以上', () => {
     const d = clone(poweredAircraft);

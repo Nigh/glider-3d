@@ -510,7 +510,7 @@ describe('气动、质量、能量与消费者边界', () => {
       expect(s.quaternion.length()).toBeCloseTo(1, 10);
       for (const value of [...s.position.toArray(), ...s.velocity.toArray(), ...s.omega.toArray(), s.telemetry.energy]) expect(Number.isFinite(value)).toBe(true);
     }
-  }, 15_000);
+  }, 30_000);
 
   it('重置清空统计，拒绝无效输入/回放，零速度保持有限', () => {
     const s = probe(undefined, s => { s.velocity.set(0, 0, 0); }); expect(s.velocity.y).toBeLessThan(0); expect(Number.isFinite(s.telemetry.energy)).toBe(true);

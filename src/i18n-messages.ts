@@ -1,5 +1,7 @@
 // Chinese source text is the stable key; names and IDs in saved aircraft stay unchanged.
+import { laboratoryMessages } from './laboratory-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ ...laboratoryMessages,
  "垂直速度": ["Vertical velocity", "鉛直速度"],
  "实时杆量": ["Live control inputs", "現在の操縦入力"],
  "此记录未保存负载曲线": ["This recording has no saved load curves", "この記録には負荷曲線が保存されていません"],

@@ -4,6 +4,7 @@ import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type WingFragment } from './structure';
+import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.225;
@@ -180,7 +181,8 @@ export interface FlightResult {
   maxSpeed: number;
   minSpeed: number;
   maxHeight: number;
-  landing: 'water' | 'terrain' | 'boundary' | 'finish';
+  landing: 'water' | 'terrain' | 'boundary' | 'finish' | 'manual';
+  takeoffHeight?: number; takeoffSpeed?: number; platformHeight?: number;
   challenge: ChallengeMode; score: number; completed: boolean; checkpointScores: number[]; speedScore: number; heightPenalty: number;
 }
 export interface FlightTelemetry {
@@ -682,11 +684,25 @@ export class FlightSimulation {
   get mass() { return this.aircraft.mass; }
   get inertiaTensor() { return this.aircraft.inertiaTensor; }
   get inverseInertia() { return this.aircraft.inverseInertia; }
-  get railAttachmentHeight() { return lowAltitudeRailSample(this.railX, this.railStart).y; }
+  get railAttachmentHeight() { return this.sampleRail(this.railX, this.railStart).y; }
   get railPositionX() { return this.railX; }
-  private get contactBoxes() { return this.challenge === 'birdman' ? PLATFORM_BOXES : this.challenge === 'low-altitude' ? RUNWAY_BOXES : DOWNHILL_BOXES; }
+  get launch() { return this.laboratoryState.launchConfig; }
+  get railAttached() { return this.launching && (this.challenge === 'low-altitude' || this.challenge === 'test-space' && !this.testSpace.catapult); }
+  private get contactBoxes() { return this.challenge === 'test-space' ? this.laboratoryState.testPlatformBoxes : this.challenge === 'birdman' ? PLATFORM_BOXES : this.challenge === 'low-altitude' ? RUNWAY_BOXES : DOWNHILL_BOXES; }
   private get contactNormals() { return this.challenge === 'birdman' ? PLATFORM_NORMALS : RUNWAY_NORMALS; }
   readonly challenge: ChallengeMode;
+  // Keep mode-specific state together so replay snapshots retain a compact body.
+  private readonly laboratoryState = {
+    testSpaceConfig: { ...defaultTestSpace },
+    launchConfig: null as ReturnType<typeof challengeLaunch>,
+    testPlatformBoxes: [[new Vector3(-50, -0.8, -20), new Vector3(0, 0, 20)]] as [Vector3, Vector3][],
+    windTunnel: { ...defaultWindTunnel, speed: 0 }, windTarget: { ...defaultWindTunnel }, windEnabled: false, windVelocity: new Vector3(),
+    windMotion: null as ReturnType<typeof createWindTunnelMotion> | null,
+    takeoffHeight: 0, takeoffSpeed: 0,
+  };
+  get testSpace(): Readonly<TestSpaceSettings> { return this.laboratoryState.testSpaceConfig; }
+  get windTunnel(): Readonly<WindTunnelSettings> { return this.laboratoryState.windTunnel; }
+  get windTunnelEnabled() { return this.laboratoryState.windEnabled; }
   readonly controlDeflections = { aileron: 0, elevator: 0, rudder: 0 };
   readonly pilotOffset = { x: 0, z: 0 };
   readonly position = new Vector3();
@@ -697,8 +713,8 @@ export class FlightSimulation {
   readonly surfaces: AerodynamicSurface[];
   readonly aircraft: AircraftProperties;
   readonly telemetry: FlightTelemetry;
-  readonly recording = new Float64Array(MAX_FRAMES * FRAME_WIDTH);
-  readonly wingLoads = new Float64Array(MAX_FRAMES * 3);
+  readonly recording: Float64Array;
+  readonly wingLoads: Float64Array;
   private readonly frameLoads = [0, 0, 0];
   recordingLength = 0;
   time = 0;
@@ -813,11 +829,14 @@ export class FlightSimulation {
   private trimPitchInput = 0;
   private autoTrim = false;
 
-  constructor(d: AircraftDefinition, challenge: ChallengeMode = 'birdman', private readonly fixedLaunchRoll?: number) {
+  constructor(d: AircraftDefinition, challenge: ChallengeMode = 'birdman', private readonly fixedLaunchRoll?: number, testSettings: TestSpaceSettings = defaultTestSpace) {
     this.definition = validateAircraft(d);
     if (!Object.hasOwn(challengeDefinitions, challenge)) throw new Error('未知飞行挑战');
     if (challenge === 'birdman' && (!this.definition.birdman || this.definition.engine.count > 0)) throw new Error('鸟人间比赛只允许无动力鸟人间设计');
     this.challenge = challenge;
+    this.laboratoryState.testSpaceConfig = testSpaceSettings(testSettings); this.laboratoryState.launchConfig = challengeLaunch(challenge, this.laboratoryState.testSpaceConfig);
+    this.recording = new Float64Array(isLaboratory(challenge) ? 0 : MAX_FRAMES * FRAME_WIDTH);
+    this.wingLoads = new Float64Array(isLaboratory(challenge) ? 0 : MAX_FRAMES * 3);
     this.parts = massLayout(this.definition);
     this.fuelPart = this.parts.find(part => part.fuel);
     this.enginePositions = engineMounts(this.definition);
@@ -878,7 +897,7 @@ export class FlightSimulation {
     this.omega.set(0, 0, 0);
     this.time = 0; this.elapsed = 0; this.ended = false; this.result = null;
     this.launching = true; this.flightStarted = false; this.launchTime = 0; this.raceStarted = false;
-    const launch = challengeLaunch(this.challenge);
+    const launch = this.launch;
     if (launch) {
       this.position.set(launch.startX, this.launchAltitude, launch.z);
       this.quaternion.identity();
@@ -928,10 +947,18 @@ export class FlightSimulation {
     this.structure.summarize();
     this.syncContacts();
     // 发射净空取静载后的完整碰撞体，长翼下垂不能穿过导轨或平台。
-    this.launchAltitude = launch ? launch.y + (this.challenge === 'low-altitude' ? LOW_ALTITUDE_RAIL.height : 0)
+    this.launchAltitude = launch ? launch.y + (this.challenge === 'low-altitude' || this.challenge === 'test-space' ? LOW_ALTITUDE_RAIL.height : 0)
       + contactLaunchOffset(this.contacts, this.aircraft.cg) * Math.cos(LAUNCH.slope)
       : runwayHeight(LAUNCH.startX) + contactLaunchOffset(this.contacts, this.aircraft.cg);
     this.position.y = this.launchAltitude;
+    if (this.challenge === 'test-space') this.railX = this.laboratoryState.launchConfig!.startX;
+    if (this.challenge === 'wind-tunnel') {
+      Object.assign(this.laboratoryState.windTunnel, defaultWindTunnel, { speed: 0 }); Object.assign(this.laboratoryState.windTarget, defaultWindTunnel);
+      this.laboratoryState.windEnabled = false; this.laboratoryState.windVelocity.set(0, 0, 0);
+      this.laboratoryState.windMotion = createWindTunnelMotion();
+      this.position.set(0, windTunnelRoom(this.definition).centerY, 0); this.quaternion.identity(); this.launching = false;
+    }
+    this.laboratoryState.takeoffHeight = 0; this.laboratoryState.takeoffSpeed = 0;
     this.maxHeight = this.position.y;
     this.aerodynamics.update(this.aircraft.cg, this.quaternion, this.velocity);
     this.updateTelemetry();
@@ -941,6 +968,110 @@ export class FlightSimulation {
   getRecording(): InputRecording {
     if(this.replay) return { ...this.replay, frames:this.replay.frames.slice(), wingLoads:this.replay.wingLoads?.slice() };
     return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3) };
+  }
+
+  configureTestSpace(settings: TestSpaceSettings) {
+    if (this.challenge !== 'test-space' || this.elapsed > 0) throw Error('只能在开始前调整测试平台');
+    this.laboratoryState.testSpaceConfig = testSpaceSettings(settings); this.laboratoryState.launchConfig = testSpaceLaunch(this.laboratoryState.testSpaceConfig);
+    this.reset(this.launchRoll);
+  }
+
+  setWindTunnel(settings: WindTunnelSettings) {
+    if (this.challenge !== 'wind-tunnel') throw Error('风洞参数无效');
+    this.laboratoryState.windTarget = windTunnelSettings(settings);
+  }
+
+  setWindTunnelEnabled(enabled: boolean) {
+    if (this.challenge !== 'wind-tunnel') throw Error('风洞参数无效');
+    this.laboratoryState.windEnabled = enabled;
+  }
+
+  /** Restore the aircraft without interrupting the airflow or its transition. */
+  restoreWindTunnelAircraft() {
+    if (this.challenge !== 'wind-tunnel') return;
+    const actual = { ...this.windTunnel }, target = { ...this.laboratoryState.windTarget }, enabled = this.windTunnelEnabled;
+    const time = this.time, elapsed = this.elapsed, omega = this.omega.clone(), motion = this.laboratoryState.windMotion;
+    this.reset(this.launchRoll);
+    Object.assign(this.laboratoryState.windTunnel, actual); this.laboratoryState.windTarget = target; this.laboratoryState.windEnabled = enabled;
+    this.time = time; this.elapsed = elapsed; this.omega.copy(omega); this.previousOmega.copy(omega);
+    this.laboratoryState.windMotion = motion;
+    this.applyWindTunnelFixture(0);
+    this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
+    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
+    this.updateTelemetry();
+  }
+
+  stopTest() {
+    if (!isLaboratory(this.challenge) || this.ended) return;
+    this.updateTelemetry(); this.finish('manual');
+  }
+
+  sampleRail(x: number, out: LowAltitudeRailSample) {
+    if (this.challenge !== 'test-space') return lowAltitudeRailSample(x, out);
+    out.x = x; out.y = this.laboratoryState.launchConfig!.y + TEST_SPACE.railHeight;
+    out.pitch = out.slope = out.pitchDerivative = 0;
+    return out;
+  }
+
+  private applyWindTunnelFixture(dt: number) {
+    this.previousOmega.copy(this.omega); this.inverse.copy(this.quaternion).invert();
+    this.quaternion.setFromAxisAngle(this.cross.set(0, 0, 1), this.laboratoryState.windTunnel.pitch * DEG);
+    this.rotation.setFromAxisAngle(this.cross.set(1, 0, 0), this.laboratoryState.windTunnel.roll * DEG);
+    this.quaternion.multiply(this.rotation);
+    this.rotation.copy(this.inverse).multiply(this.quaternion).normalize();
+    const sine = Math.hypot(this.rotation.x, this.rotation.y, this.rotation.z);
+    if (dt > 0) this.omega.set(this.rotation.x, this.rotation.y, this.rotation.z).multiplyScalar(sine > 1e-12 ? 2 * Math.atan2(sine, this.rotation.w) / (sine * dt) : 0);
+    this.position.copy(this.cg).sub(this.launchCg).applyQuaternion(this.quaternion);
+    this.position.y += windTunnelRoom(this.definition).centerY;
+    this.velocity.set(0, 0, 0);
+    this.laboratoryState.windVelocity.set(this.laboratoryState.windTunnel.speed, 0, 0);
+    for (const axis of CONTROL_AXES) this.applied[axis] = this.laboratoryState.windTunnel[axis];
+    this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
+    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
+    this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
+    for (const s of this.structure.sections) if (s.bodyId === 0) s.controlDeflection = s.wingKey === 'mainWing' ? -this.controlDeflections.aileron : s.wingKey === 'horizontalTail' ? -s.side * this.controlDeflections.elevator : this.controlDeflections.rudder;
+  }
+
+  private integrateWindTunnel(dt: number) {
+    advanceWindTunnel(this.laboratoryState.windTunnel, this.laboratoryState.windTarget, dt, this.windTunnelEnabled, this.laboratoryState.windMotion!);
+    this.applyWindTunnelFixture(dt);
+    this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
+    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
+    // The fixture balances the net force and torque. Wings still carry their
+    // local aerodynamic/self-weight loads and the rig's imposed angular motion.
+    this.supportForce.set(0, this.mass * GRAVITY, 0);
+    this.supportTorque.subVectors(this.omega, this.previousOmega).multiplyScalar(1 / dt).applyMatrix3(this.inertiaTensor);
+    this.angularMomentum.copy(this.omega).applyMatrix3(this.inertiaTensor);
+    this.supportTorque.add(this.cross.crossVectors(this.omega, this.angularMomentum));
+    this.advanceStructure(dt, this.supportForce, this.supportTorque);
+    this.time += dt; this.maxSpeed = Math.max(this.maxSpeed, this.laboratoryState.windTunnel.speed);
+    this.updateTelemetry();
+  }
+
+  private integrateTestCatapult(input: Controls, dt: number) {
+    const oldTime = this.launchTime, oldSpeed = this.velocity.x;
+    const duration = testCatapultSample(0, this.laboratoryState.testSpaceConfig).duration;
+    const h = Math.min(dt, Math.max(0, duration - oldTime));
+    this.launchTime += h;
+    const sample = testCatapultSample(this.launchTime, this.laboratoryState.testSpaceConfig);
+    const beforeX = testCatapultSample(oldTime, this.laboratoryState.testSpaceConfig).x;
+    this.quaternion.identity(); this.omega.set(0, 0, 0);
+    this.position.copy(this.cg).sub(this.launchCg).add(this.cross.set(sample.x, this.launchAltitude, 0));
+    this.velocity.set(sample.speed, 0, 0);
+    this.time += h; this.travelled += sample.x - beforeX;
+    if (h > 0) {
+      this.evaluateForces(input, this.velocity, this.omega, this.quaternion, this.position);
+      this.supportForce.set(this.mass * (sample.speed - oldSpeed) / h, this.mass * GRAVITY, 0);
+      this.supportTorque.set(0, 0, 0);
+      this.advanceStructure(h, this.supportForce, this.supportTorque);
+    }
+    this.maxSpeed = Math.max(this.maxSpeed, sample.speed); this.maxHeight = Math.max(this.maxHeight, this.position.y);
+    if (duration - this.launchTime <= 1e-12) {
+      this.launching = false; this.laboratoryState.takeoffSpeed = this.velocity.length(); this.laboratoryState.takeoffHeight = this.position.y;
+      this.beginFlight();
+    }
+    this.updateTelemetry();
+    if (dt - h > 1e-12 && !this.launching) this.integrateFlight(input, dt - h);
   }
 
   /** Copy the complete mutable physics graph, preserving prototypes and internal aliases.
@@ -969,6 +1100,7 @@ export class FlightSimulation {
   }
 
   loadReplay(recording: InputRecording) {
+    if (isLaboratory(this.challenge)) throw Error('测试环境不支持回放');
     validateRecording(recording);
     const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length, launchRoll: recording.launchRoll, wingLoads: recording.wingLoads?.slice() };
     this.reset(copy.launchRoll);
@@ -1009,12 +1141,19 @@ export class FlightSimulation {
     }
     if (!Number.isFinite(dt) || dt <= 0 || dt > 0.25) throw new RangeError('步长须在 0 至 0.25 秒之间');
     if (!Number.isFinite(input.weight + input.rudder + input.elevator + input.aileron + input.lateral! + input.throttle! + input.trimPitch! + input.trimRoll!)) throw new RangeError('操纵输入必须为有限数');
+    if (this.challenge === 'wind-tunnel') {
+      this.elapsed += dt;
+      const steps = Math.max(1, Math.ceil(dt * 60 - 1e-10));
+      for (let i = 0; i < steps; i++) this.integrateWindTunnel(dt / steps);
+      this.telemetry.physicsMs = performance.now() - started;
+      return;
+    }
     input.weight = clamp(input.weight, -1, 1); input.rudder = clamp(input.rudder, -1, 1);
     input.elevator = clamp(input.elevator, -1, 1); input.aileron = clamp(input.aileron, -1, 1);
     input.lateral = clamp(input.lateral!, -1, 1);
     input.throttle = clamp(input.throttle!, 0, 1);
     input.trimPitch = clamp(input.trimPitch!, -1, 1); input.trimRoll = clamp(input.trimRoll!, -1, 1);
-    if (!this.replay && this.recordingLength < MAX_FRAMES) {
+    if (!isLaboratory(this.challenge) && !this.replay && this.recordingLength < MAX_FRAMES) {
       const offset = this.recordingLength++ * FRAME_WIDTH;
       this.recording[offset] = dt; this.recording[offset + 1] = input.weight;
       this.recording[offset + 2] = input.rudder; this.recording[offset + 3] = input.elevator; this.recording[offset + 4] = input.aileron;
@@ -1096,7 +1235,7 @@ export class FlightSimulation {
     this.lateral += clamp(input.lateral! - this.lateral, -dt * 1.5, dt * 1.5);
     this.pilotOffset.x = this.weight * this.definition.controls.travel;
     this.pilotOffset.z = this.lateral * this.definition.controls.lateralTravel;
-    const onRail = this.launching && this.challenge === 'low-altitude';
+    const onRail = this.railAttached;
     let railSpeed = 0;
     const oldEnergy = rotationalEnergy(this.inertiaTensor, this.omega);
     const oldKinetic = onRail ? this.mass * this.velocity.lengthSq() / 2 + oldEnergy : 0;
@@ -1147,13 +1286,16 @@ export class FlightSimulation {
       section.controlDeflection = section.wingKey === 'mainWing' ? -this.controlDeflections.aileron
         : section.wingKey === 'horizontalTail' ? -section.side * this.controlDeflections.elevator : this.controlDeflections.rudder;
     }
-    if (this.launching && this.challenge === 'low-altitude') {
+    if (this.launching && this.challenge === 'test-space' && this.testSpace.catapult) {
+      this.integrateTestCatapult(input, dt); return;
+    }
+    if (this.railAttached) {
       if (!this.flightStarted) this.beginFlight();
       this.integrateFlight(input, dt);
       return;
     }
     if (this.launching) {
-      const launch = challengeLaunch(this.challenge);
+      const launch = this.launch;
       const targetSpeed = launch?.speed ?? LAUNCH.speed, acceleration = launch?.acceleration ?? LAUNCH.acceleration;
       const slope = launch?.slope ?? LAUNCH.slope, startX = launch?.startX ?? LAUNCH.startX;
       const duration = targetSpeed / acceleration;
@@ -1241,6 +1383,8 @@ export class FlightSimulation {
   }
 
   private waterHeight(x: number, z: number) {
+    if (this.challenge === 'test-space') return z >= TEST_SPACE.beachHalfWidth ? 0 : -Infinity;
+    if (this.challenge === 'wind-tunnel') return -Infinity;
     if (this.challenge === 'birdman') return 0;
     if (this.challenge !== 'low-altitude' || this.onRunway(x, z)
       || Math.abs(z - challengeRiverCenter(x)) > CHALLENGE_RIVER.width / 2) return -Infinity;
@@ -1379,12 +1523,13 @@ export class FlightSimulation {
 
   /** 同一导轨参数同时确定CG曲线、姿态及其切线；参考连接点固定在设计坐标中。 */
   private railGeometry(x: number, sample: LowAltitudeRailSample, position: Vector3, derivative: Vector3): number {
-    lowAltitudeRailSample(x, sample);
+    this.sampleRail(x, sample);
     const c = Math.cos(sample.pitch), s = Math.sin(sample.pitch);
     const ox = this.cg.x - this.launchCg.x;
-    const oy = this.cg.y - this.launchCg.y + this.launchAltitude - LOW_RUNWAY.y - LOW_ALTITUDE_RAIL.height;
+    const launch = this.launch!;
+    const oy = this.cg.y - this.launchCg.y + this.launchAltitude - launch.y - LOW_ALTITUDE_RAIL.height;
     const rx = c * ox - s * oy, ry = s * ox + c * oy;
-    position.set(x + rx, sample.y + ry, LOW_RUNWAY.z + this.cg.z - this.launchCg.z);
+    position.set(x + rx, sample.y + ry, launch.z + this.cg.z - this.launchCg.z);
     derivative.set(1 - ry * sample.pitchDerivative, sample.slope + rx * sample.pitchDerivative, 0);
     return this.mass * derivative.lengthSq() + this.inertiaTensor.elements[8] * sample.pitchDerivative ** 2;
   }
@@ -1439,7 +1584,7 @@ export class FlightSimulation {
 
   private integrateFlight(input: Controls, dt: number) {
     if (this.ended) return;
-    const onRail = this.launching && this.challenge === 'low-altitude';
+    const onRail = this.railAttached;
     const initialLanding = this.landingAt(this.position, this.quaternion);
     if (initialLanding) { this.updateTelemetry(); this.finish(initialLanding); return; }
     this.preparePlatformContacts();
@@ -1483,8 +1628,9 @@ export class FlightSimulation {
       this.integrateFlight(input, dt / 2);
       return;
     }
-    if (onRail && (this.railX >= LOW_RUNWAY.endX || this.canLiftOffRail(dt))) {
+    if (onRail && (this.railX >= this.launch!.endX || this.canLiftOffRail(dt))) {
       this.launching = false;
+      if (this.challenge === 'test-space') { this.laboratoryState.takeoffSpeed = this.velocity.length(); this.laboratoryState.takeoffHeight = this.position.y; }
       this.integrateFlight(input, dt);
       return;
     }
@@ -1505,7 +1651,7 @@ export class FlightSimulation {
     const finalGate = challengeCheckpoints(this.challenge)[this.checkpointIndex];
     const finishCrossing = finalGate && this.checkpointIndex === challengeCheckpoints(this.challenge).length - 1
       && this.position.x < finalGate.x && this.candidatePosition.x >= finalGate.x;
-    const railEnd = onRail && this.railEnd.x >= LOW_RUNWAY.endX;
+    const railEnd = onRail && this.railEnd.x >= this.launch!.endX;
     if ((railEnd && dt > 1e-7) || (platformHit && dt > 1e-8) || (terrainHit && dt > 1e-7)
       || (noseHit && dt > 1e-7) || (finishCrossing && dt > 1e-7) || angle > 0.1) {
       // 先推进到首次接触附近；静止支撑用中点约束，不靠微小反弹消耗整帧。
@@ -1547,13 +1693,16 @@ export class FlightSimulation {
     }
     if (onRail) {
       this.telemetry.dissipatedEnergy += this.railRollingPower * dt;
-      if (railEnd) this.launching = false;
+      if (railEnd) {
+        this.launching = false;
+        if (this.challenge === 'test-space') { this.laboratoryState.takeoffSpeed = this.velocity.length(); this.laboratoryState.takeoffHeight = this.position.y; }
+      }
     }
-    const timed = this.challenge === 'birdman' || this.raceStarted ? dt : 0;
+    const timed = this.challenge === 'birdman' || this.challenge === 'test-space' || this.raceStarted ? dt : 0;
     const scoringTime = !landing ? this.advanceChallenge(dt, timed) : timed;
     this.time += scoringTime;
     const currentSpeed = this.velocity.length();
-    if (this.challenge === 'birdman' || this.raceStarted) this.travelled += (speed + currentSpeed) * 0.5 * scoringTime;
+    if (this.challenge === 'birdman' || this.challenge === 'test-space' || this.raceStarted) this.travelled += (speed + currentSpeed) * 0.5 * scoringTime;
     if (this.challenge === 'low-altitude' && this.raceStarted && scoringTime > 0) this.updateLowAltitudeScore(scoringTime);
     this.maxSpeed = Math.max(this.maxSpeed, currentSpeed); this.minSpeed = Math.min(this.minSpeed, currentSpeed);
     this.maxHeight = Math.max(this.maxHeight, this.position.y);
@@ -1615,7 +1764,7 @@ export class FlightSimulation {
       load.moment.multiplyScalar(1 / dt).addScaledVector(impact.moment, 1 / this.contactLoadDuration);
     }
     this.structure.update(this, force, torque, this.wingContactLoads);
-    this.constrainWingGeometry();
+    if (this.challenge !== 'wind-tunnel') this.constrainWingGeometry();
     this.clearContactLoads();
     for (const section of this.structure.sections) {
       const index = section.wingKey === 'mainWing' ? 0 : section.wingKey === 'horizontalTail' ? 1 : 2;
@@ -1771,7 +1920,9 @@ export class FlightSimulation {
   private evaluateFragment(fragment: WingFragment, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3) {
     // 独立连续翼段使用同一条带极曲线/局部转动来流；不模拟不同刚体之间的非定常尾流干扰。
     this.inverse.copy(orientation).invert();
-    this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
+    this.bodyVelocity.copy(velocity);
+    if (this.challenge === 'wind-tunnel') this.bodyVelocity.add(this.laboratoryState.windVelocity);
+    this.bodyVelocity.applyQuaternion(this.inverse);
     fragment.force.set(0, 0, 0); fragment.drag.set(0, 0, 0); fragment.torque.set(0, 0, 0); fragment.aeroPower = 0;
     for (const surface of this.surfaces) {
       if (surface.bodyId !== fragment.id) continue;
@@ -1793,13 +1944,17 @@ export class FlightSimulation {
   }
 
   private fragmentCollision(fragment: WingFragment, position: Vector3, orientation: Quaternion) {
+    if (this.challenge === 'wind-tunnel') {
+      const room = windTunnelRoom(this.definition);
+      return Math.abs(position.x) >= room.halfX || Math.abs(position.z) >= room.halfZ || Math.abs(position.y - room.centerY) >= room.halfY;
+    }
     for (const point of this.contacts) {
       if (point.sectionId === undefined || this.structure.sections[point.sectionId].bodyId !== fragment.id) continue;
       this.platformStart.copy(point).sub(fragment.cg).applyQuaternion(fragment.quaternion).add(fragment.position);
       this.platformEnd.copy(point).sub(fragment.cg).applyQuaternion(orientation).add(position);
       const a = this.platformStart, b = this.platformEnd;
       if (hitsChallengeRuin(this.challenge,a,b) || b.y <= challengeCollisionHeight(this.challenge, b.x, b.z) || this.sweepsLaunchBox(a, b) || this.sweepsRiver(a, b)) return true;
-      const step = challengeTerrainGrid.step;
+      const step = this.challenge === 'test-space' ? TEST_SPACE.step : challengeTerrainGrid.step;
       for (let axis = 0; axis < 3; axis++) {
         const start = axis === 0 ? a.x : axis === 1 ? a.z : a.x + a.z;
         const end = axis === 0 ? b.x : axis === 1 ? b.z : b.x + b.z, delta = end - start;
@@ -1895,7 +2050,7 @@ export class FlightSimulation {
   /** 世界坐标转为坡面坐标；两侧板和槽底共用同一有限盒接触路径。 */
   private platformPoint(point: Vector3, position: Vector3, orientation: Quaternion, out: Vector3) {
     out.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
-    if (this.challenge !== 'birdman') { const launch = challengeLaunch(this.challenge)!; out.sub(this.contactNormal.set(launch.endX, launch.y, launch.z)); return; }
+    if (this.challenge !== 'birdman') { const launch = this.launch!; out.sub(this.contactNormal.set(launch.endX, launch.y, launch.z)); return; }
     const x = out.x - LAUNCH.endX, y = out.y - LAUNCH.height;
     out.set(PLATFORM_COS * x - PLATFORM_SIN * y, PLATFORM_SIN * x + PLATFORM_COS * y, out.z);
   }
@@ -2105,6 +2260,8 @@ export class FlightSimulation {
   }
 
   private outsideChallenge() {
+    if (this.challenge === 'test-space') return Math.abs(this.position.x) >= TEST_SPACE.halfSize || Math.abs(this.position.z) >= TEST_SPACE.halfSize || this.position.y < 0 || this.position.y >= TEST_SPACE.ceiling;
+    if (this.challenge === 'wind-tunnel') return false;
     if (this.challenge === 'birdman') return Math.abs(this.position.x) >= 2000 || Math.abs(this.position.z) >= 800 || this.position.y >= 300;
     const { x, y, z } = this.position;
     const next = this.raceStarted ? challengeCheckpoints(this.challenge)[this.checkpointIndex] : challengeStartGate(this.challenge);
@@ -2119,12 +2276,13 @@ export class FlightSimulation {
   }
 
   private onRunway(x: number, z: number) {
+    if (this.challenge === 'test-space') return x >= this.laboratoryState.launchConfig!.startX && x <= this.laboratoryState.launchConfig!.endX && Math.abs(z) <= this.laboratoryState.launchConfig!.width / 2;
     return this.challenge === 'low-altitude' && x >= LOW_RUNWAY.startX && x <= LOW_RUNWAY.endX
       && Math.abs(z - LOW_RUNWAY.z) <= LOW_RUNWAY.width / 2;
   }
   /** 分片平面上，端点与X、Z、X+Z网格线交点包含线段净空的所有极小值。 */
   private sweepsTerrain() {
-    const step = challengeTerrainGrid.step;
+    const step = this.challenge === 'test-space' ? TEST_SPACE.step : challengeTerrainGrid.step;
     for (let pointIndex=2;pointIndex<this.contacts.length;pointIndex++) {
       const point=this.contacts[pointIndex];
       if (!this.mainContact(point)) continue;
@@ -2182,7 +2340,7 @@ export class FlightSimulation {
 
   /** 与场景共用的有限起飞台/跑道盒；线段裁剪也捕获高速穿过侧边和底部。 */
   private sweepsLaunchBox(a: Vector3, b: Vector3): boolean {
-    const launch = challengeLaunch(this.challenge);
+    const launch = this.launch;
     if (!launch) return false;
     let entry = 0, exit = 1;
     for (let axis = 0; axis < 3; axis++) {
@@ -2204,11 +2362,11 @@ export class FlightSimulation {
     const t = this.telemetry;
     t.speed = this.velocity.length(); t.altitude = this.position.y;
     this.waterContactAt(this.position, this.quaternion, true);
-    t.distance = this.challenge === 'birdman' ? (this.launching ? 0 : this.tailDistance()) : this.raceStarted ? this.travelled : 0;
+    t.distance = this.challenge === 'test-space' ? this.travelled : this.challenge === 'birdman' ? (this.launching ? 0 : this.tailDistance()) : this.raceStarted ? this.travelled : 0;
     t.groundClearance = this.position.y - challengeCollisionHeight(this.challenge, this.position.x, this.position.z);
-    t.challengeProgress = this.challenge !== 'birdman' ? this.checkpointIndex / challengeCheckpoints(this.challenge).length : 0;
+    t.challengeProgress = !isLaboratory(this.challenge) && this.challenge !== 'birdman' ? this.checkpointIndex / challengeCheckpoints(this.challenge).length : 0;
     t.completed = this.completed;
-    t.timingStarted = this.challenge === 'birdman' || this.raceStarted;
+    t.timingStarted = isLaboratory(this.challenge) || this.challenge === 'birdman' || this.raceStarted;
     t.score = this.challenge === 'birdman' ? t.distance : this.challenge === 'low-altitude'
       ? (this.checkpointScores.reduce((sum, score) => sum + score, 0) + (this.completed && this.time > 0 ? LOW_ALTITUDE.scoreScale * (challengeDefinitions['low-altitude'].length - challengeStartGate(this.challenge)!.x) / this.time : 0)) - this.heightPenalty : this.completed ? this.time : 0;
     t.throttle = this.definition.engine.count > 0 ? this.effective.throttle ?? 0 : 0;
@@ -2222,7 +2380,9 @@ export class FlightSimulation {
     const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     t.energyPerDistance = !this.launching && horizontalSpeed > 0.05 ? -t.aeroPower / horizontalSpeed : null;
     this.inverse.copy(this.quaternion).invert();
-    this.bodyVelocity.copy(this.velocity).applyQuaternion(this.inverse);
+    this.bodyVelocity.copy(this.velocity);
+    if (this.challenge === 'wind-tunnel') this.bodyVelocity.add(this.laboratoryState.windVelocity);
+    this.bodyVelocity.applyQuaternion(this.inverse);
     t.alpha = Math.atan2(-this.bodyVelocity.y, this.bodyVelocity.x) + this.definition.assembly.mainIncidence * DEG;
     this.cross.set(1, 0, 0).applyQuaternion(this.quaternion);
     t.pitch = Math.atan2(this.cross.y, Math.hypot(this.cross.x, this.cross.z));
@@ -2239,6 +2399,7 @@ export class FlightSimulation {
       t.kineticEnergy += fragment.mass * fragment.velocity.lengthSq() / 2 + rotationalEnergy(fragment.inertiaTensor, fragment.omega);
     }
     t.energy = t.potentialEnergy + t.kineticEnergy;
+    if (this.challenge === 'wind-tunnel') { t.speed = this.laboratoryState.windTunnel.speed; t.groundClearance = this.position.y - 2; }
   }
 
   /** 椭球世界最低点：安装位置与scene共用，不以CG或旧机头碰撞代理决定入水。 */
@@ -2359,6 +2520,7 @@ export class FlightSimulation {
   private finish(landing: FlightResult['landing']) {
     this.ended = true;
     this.result = { maxG: this.maxG, distance: this.telemetry.distance, time: this.time, averageSpeed: this.time > 0 ? this.travelled / this.time : 0,
+      takeoffHeight: this.laboratoryState.takeoffHeight, takeoffSpeed: this.laboratoryState.takeoffSpeed, platformHeight: this.challenge === 'test-space' ? this.testSpace.height : undefined,
       maxSpeed: this.maxSpeed, minSpeed: this.minSpeed, maxHeight: this.maxHeight, landing,
       challenge: this.challenge, score: this.telemetry.score, completed: this.completed,
       checkpointScores: [...this.checkpointScores], heightPenalty: this.heightPenalty,

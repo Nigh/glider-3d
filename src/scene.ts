@@ -8,6 +8,8 @@ import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
+import { isLaboratory, TEST_SPACE } from './laboratory';
+import { LaboratoryScene } from './laboratory-scene';
 import { language, t } from './i18n';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
@@ -129,6 +131,7 @@ export class SceneView {
   private readonly environment = new THREE.Group();
   private readonly mountainEnvironment = new THREE.Group();
   private environmentChallenge: ChallengeMode = 'birdman';
+  private laboratoryScene: LaboratoryScene | null = null;
   private mountainShuttle: THREE.Mesh | null = null;
   private lowAltitudeRail: THREE.Group | null = null;
   private railCarriage: THREE.Group | null = null;
@@ -477,7 +480,11 @@ export class SceneView {
       },
       environmentVisible: this.environment.visible || this.mountainEnvironment.visible,
       challenge: this.environmentChallenge,
-      terrainGrid: this.environmentChallenge === 'birdman' ? null : challengeTerrainGrid,
+      terrainGrid: this.environmentChallenge === 'test-space' ? { minX: -5000, maxX: 5000, minZ: -5000, maxZ: 5000, step: TEST_SPACE.step } : this.environmentChallenge === 'birdman' || this.environmentChallenge === 'wind-tunnel' ? null : challengeTerrainGrid,
+      laboratory: this.laboratoryScene ? { mode: this.laboratoryScene.mode, room: this.laboratoryScene.room, platformHeight: this.laboratoryScene.platform.position.y, platformX: this.laboratoryScene.platform.position.x,
+        balloons: this.laboratoryScene.platform.children.filter(child => child.name === 'platform-balloon').length,
+        walls: this.mountainEnvironment.children.filter(child => child.name.startsWith('wind-tunnel-') && child.name !== 'wind-tunnel-airflow').map(child => ({ name: child.name, ...child.userData })),
+        wind: this.simulation?.challenge === 'wind-tunnel' ? { ...this.simulation.windTunnel } : null } : null,
       lowAltitudeRail: this.lowAltitudeRail && this.railCarriage ? {
         visible: this.mountainEnvironment.visible && this.lowAltitudeRail.visible,
         height: LOW_ALTITUDE_RAIL.height, launch: challengeLaunch('low-altitude'),
@@ -671,11 +678,12 @@ export class SceneView {
     const editing = !!this.editorTarget && !this.simulation;
     this.environment.visible = !editing && this.environmentChallenge === 'birdman';
     this.mountainEnvironment.visible = !editing && this.environmentChallenge !== 'birdman';
-    this.scene.fog = editing ? null : this.environmentFog;
+    this.scene.fog = editing || this.environmentChallenge === 'wind-tunnel' ? null : this.environmentFog;
     this.debugGroup.visible = this.debug && !editing;
   }
 
   private surfaceHeight(x: number, z: number): number {
+    if (this.environmentChallenge === 'wind-tunnel') return 2;
     if (this.environmentChallenge !== 'birdman') return challengeCollisionHeight(this.environmentChallenge, x, z);
     this.groundRay.set(this.vector.set(x, 1000, z), DOWN);
     this.groundHits.length = 0;
@@ -687,9 +695,7 @@ export class SceneView {
     if (this.editorTarget && !this.simulation || this.simulation && !this.simulation.ended && this.view === 'locked') return;
     const minimum = this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 0.55;
     if (this.camera.position.y >= minimum) return;
-    const correction = minimum - this.camera.position.y;
     this.camera.position.y = minimum;
-    if (this.controls.enabled) this.controls.target.y += correction;
     this.camera.lookAt(this.controls.enabled ? this.controls.target : this.target);
   }
 
@@ -1728,8 +1734,7 @@ export class SceneView {
       this.driver.position.set(sim.pilotOffset.x, 0, sim.pilotOffset.z);
       this.updateControlSurfaces();
       this.followCamera(seconds, false);
-      this.recordTrail(seconds);
-      this.recordWingTrail();
+      if (!isLaboratory(sim.challenge)) { this.recordTrail(seconds); this.recordWingTrail(); }
       this.updateDebug();
       const inWater = sim.telemetry.waterContact || sim.result?.landing === 'water';
       if (inWater && !this.wasInWater) this.beginSplash(sim.telemetry.waterContact ? sim.telemetry.waterContactPoint : sim.position);
@@ -2163,9 +2168,10 @@ export class SceneView {
   }
 
   private setEnvironmentChallenge(challenge: ChallengeMode): void {
-    if (challenge === this.environmentChallenge) return;
+    if (challenge === this.environmentChallenge && !isLaboratory(challenge)) return;
     this.release(this.mountainEnvironment);
     this.mountainEnvironment.clear();
+    this.laboratoryScene = null;
     this.mountainShuttle = null;
     this.lowAltitudeRail = this.railCarriage = null;
     this.railCoupling = null;
@@ -2178,7 +2184,16 @@ export class SceneView {
     this.perspective.updateProjectionMatrix();
     this.orthographic.updateProjectionMatrix();
     this.controls.maxDistance = mountain ? 1400 : 700;
-    if (mountain) this.buildMountainEnvironment(challenge);
+    if (isLaboratory(challenge)) {
+      this.laboratoryScene = new LaboratoryScene(challenge, this.definition, this.mountainEnvironment);
+      if (this.simulation) this.laboratoryScene.update(this.simulation);
+      this.environmentFog.color.setHex(challenge === 'wind-tunnel' ? 0x45494b : 0xd5e4e7);
+      this.environmentFog.density = challenge === 'wind-tunnel' ? 0 : 0.000055;
+      (this.scene.background as THREE.Color).copy(this.environmentFog.color);
+      this.perspective.far = this.orthographic.far = challenge === 'wind-tunnel' ? 1000 : 18000;
+      this.perspective.updateProjectionMatrix(); this.orthographic.updateProjectionMatrix();
+      this.controls.maxDistance = challenge === 'wind-tunnel' ? 150 : 6000;
+    } else if (mountain) this.buildMountainEnvironment(challenge);
     this.metrics.memory = this.geometryMemory();
   }
 
@@ -2803,6 +2818,10 @@ export class SceneView {
   }
 
   private updateCatapult(): void {
+    if (this.laboratoryScene && this.simulation) {
+      this.steam.visible = false; this.steam.count = 0;
+      this.laboratoryScene.update(this.simulation); return;
+    }
     this.updateSteam();
     if (this.environmentChallenge !== 'birdman') {
       const launch = challengeLaunch(this.environmentChallenge);
@@ -2953,7 +2972,11 @@ export class SceneView {
     this.orthographic.bottom = -span;
     this.perspective.clearViewOffset();
     this.orthographic.clearViewOffset();
-    if (!this.simulation) {
+    if (this.simulation?.challenge === 'test-space' && this.width <= 700) {
+      const offsetY = this.height * 0.14;
+      this.perspective.setViewOffset(this.width, this.height, 0, offsetY, this.width, this.height);
+      this.orthographic.setViewOffset(this.width, this.height, 0, offsetY, this.width, this.height);
+    } else if (!this.simulation) {
       const parent = this.host.parentElement;
       const editor = parent?.querySelector('.editor');
       const welcome = parent?.querySelector('.welcome');

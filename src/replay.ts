@@ -1,6 +1,7 @@
 import { clone, validateAircraft, type AircraftDefinition } from './model';
 import { FRAME_WIDTH, MAX_FRAMES, LAUNCH, PLATFORM, validateRecording, type InputRecording } from './physics';
 import { PHYSICS_VERSION } from './storage';
+import { isLaboratory } from './laboratory';
 import { challengeDefinitions, challengeLaunch, challengeStartGate, challengeCheckpoints, challengeGateProfile, challengeTerrainGrid, challengeTerrainHeight, challengeRiverHeight, challengeRiverCenter, downhillRuins, CHALLENGE_RIVER, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 
 export const MAX_REPLAY_BYTES = 16 * 1024 * 1024;
@@ -24,6 +25,7 @@ export async function mapHash(challenge: ChallengeMode): Promise<string> {
 }
 
 function checkedReplay(replay: Replay): Replay {
+  if (isLaboratory(replay.challenge)) throw Error('测试环境不支持回放');
   if (!Object.hasOwn(challengeDefinitions, replay.challenge)) throw Error('未知飞行挑战');
   const definition = validateAircraft(replay.definition);
   if (replay.challenge === 'birdman' && (!definition.birdman || definition.engine.count > 0)) throw Error('鸟人间比赛只允许无动力鸟人间设计');

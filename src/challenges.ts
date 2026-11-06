@@ -1,9 +1,12 @@
-export type ChallengeMode = 'birdman' | 'downhill' | 'low-altitude';
+import { defaultTestSpace, testSpaceLaunch, testSpaceTerrainHeight, type TestSpaceSettings } from './laboratory';
+export type ChallengeMode = 'birdman' | 'downhill' | 'low-altitude' | 'test-space' | 'wind-tunnel';
 
 export const challengeDefinitions = {
   birdman: { name: '鸟人间', length: 0 },
   downhill: { name: '高山速降', length: 5400 },
   'low-altitude': { name: '低空挑战', length: 4800 },
+  'test-space': { name: '测试空间', length: 10000 },
+  'wind-tunnel': { name: '风洞', length: 0 },
 } as const;
 
 export const DOWNHILL_PLAIN_START = 4300;
@@ -98,6 +101,8 @@ function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
 
 /** 分片平面，而非渲染网格外的隐藏解析曲面。鸟人间保持连续水面Y=0。 */
 export function challengeTerrainHeight(challenge: ChallengeMode, x: number, z: number): number {
+  if (challenge === 'test-space') return testSpaceTerrainHeight(x, z);
+  if (challenge === 'wind-tunnel') return -Infinity;
   if (challenge === 'birdman') return 0;
   const step = challengeTerrainGrid.step;
   const x0 = Math.floor(x / step) * step, z0 = Math.floor(z / step) * step;
@@ -113,6 +118,7 @@ export function challengeTerrainHeight(challenge: ChallengeMode, x: number, z: n
 
 /** 河面与三角地形共同构成接触表面；河面沿每个10m断面线性连接。 */
 export function challengeCollisionHeight(challenge: ChallengeMode, x: number, z: number): number {
+  if (challenge === 'test-space' && z >= 25) return 0;
   const terrain = challengeTerrainHeight(challenge, x, z);
   return challenge === 'low-altitude' && Math.abs(z - challengeRiverCenter(x)) <= CHALLENGE_RIVER.width / 2
     ? Math.max(terrain, challengeRiverHeight(x)) : terrain;
@@ -128,7 +134,8 @@ const downhillLaunch: Readonly<ChallengeLaunch> = {
   kind: 'catapult', startX: -20, endX: 0, z: 0, y: downhillLaunchHeight,
   width: 40, length: 20, slope: 0, thickness: 0.8, speed: 20, acceleration: 10,
 };
-export function challengeLaunch(challenge: ChallengeMode): Readonly<ChallengeLaunch> | null {
+export function challengeLaunch(challenge: ChallengeMode, settings: TestSpaceSettings = defaultTestSpace): Readonly<ChallengeLaunch> | null {
+  if (challenge === 'test-space') return testSpaceLaunch(settings);
   return challenge === 'downhill' ? downhillLaunch : challenge === 'low-altitude' ? lowAltitudeRunway : null;
 }
 

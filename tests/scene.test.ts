@@ -7,6 +7,26 @@ import { FlightSimulation, LAUNCH } from '../src/physics';
 import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
+describe('camera clearance', () => {
+  it.each(['menu', 'design', 'birdman', 'downhill', 'low-altitude', 'test-space', 'wind-tunnel', 'result'])('keeps the observation target fixed when the camera is pushed in %s', screen => {
+    const camera = new PerspectiveCamera(), target = new Vector3(7, 3, -4), ground = 20;
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      camera, controls: { enabled: true, target: target.clone() }, target: target.clone(), editorTarget: null,
+      simulation: screen === 'menu' || screen === 'design' ? null : { ended: screen === 'result' },
+      view: screen === 'menu' || screen === 'design' ? 'orbit' : 'free', surfaceHeight: () => ground,
+    });
+    camera.position.set(-10, 0, 12);
+    for (let frame = 0; frame < 30; frame++) {
+      camera.position.y -= 1;
+      view.constrainCamera();
+      expect(camera.position.y).toBe(ground + 0.55);
+      expect(view.controls.target.equals(target)).toBe(true);
+      expect(view.target.equals(target)).toBe(true);
+      expect(camera.getWorldDirection(new Vector3()).distanceTo(target.clone().sub(camera.position).normalize())).toBeLessThan(1e-12);
+    }
+  });
+});
+
 function svgElement() {
   const attributes = new Map<string, string>();
   const text = { textContent: '', setAttribute() {} };
