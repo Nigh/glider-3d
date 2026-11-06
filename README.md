@@ -157,7 +157,7 @@ npm test
 npm run test:e2e
 ```
 
-Extreme-surface and complete-flight regressions use a 15-second per-test timeout to accommodate structural and contact integration on shared CI CPUs. Energy and finite-state assertions remain intact. Vitest's default five-second timeout is not a performance metric.
+Extreme-surface, complete-flight and rail-launch replay regressions use a 15-second per-test timeout to accommodate structural and contact integration on shared CI CPUs. The 60-second recording regression uses 90 seconds because it simulates recording, linear replay and uncached seeking. Energy, finite-state and deterministic-replay assertions remain intact. Vitest's default five-second timeout is not a performance metric.
 
 Browser tests start the development server by default. To use an existing server when CI is enabled:
 

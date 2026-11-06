@@ -110,4 +110,4 @@ it('retains older regions of a long recording for deterministic forward and back
    expect(state(restored!)).toEqual(states.get(restored!.replayFrame));
   }
  }
-},30000);
+},90_000);
