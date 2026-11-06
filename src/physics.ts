@@ -696,11 +696,12 @@ export class FlightSimulation {
     testSpaceConfig: { ...defaultTestSpace },
     launchConfig: null as ReturnType<typeof challengeLaunch>,
     testPlatformBoxes: [[new Vector3(-50, -0.8, -20), new Vector3(0, 0, 20)]] as [Vector3, Vector3][],
-    windTunnel: { ...defaultWindTunnel }, windTarget: { ...defaultWindTunnel }, windVelocity: new Vector3(),
+    windTunnel: { ...defaultWindTunnel, speed: 0 }, windTarget: { ...defaultWindTunnel }, windEnabled: false, windVelocity: new Vector3(),
     takeoffHeight: 0, takeoffSpeed: 0,
   };
   get testSpace(): Readonly<TestSpaceSettings> { return this.laboratoryState.testSpaceConfig; }
   get windTunnel(): Readonly<WindTunnelSettings> { return this.laboratoryState.windTunnel; }
+  get windTunnelEnabled() { return this.laboratoryState.windEnabled; }
   readonly controlDeflections = { aileron: 0, elevator: 0, rudder: 0 };
   readonly pilotOffset = { x: 0, z: 0 };
   readonly position = new Vector3();
@@ -951,7 +952,8 @@ export class FlightSimulation {
     this.position.y = this.launchAltitude;
     if (this.challenge === 'test-space') this.railX = this.laboratoryState.launchConfig!.startX;
     if (this.challenge === 'wind-tunnel') {
-      Object.assign(this.laboratoryState.windTunnel, defaultWindTunnel); Object.assign(this.laboratoryState.windTarget, defaultWindTunnel);
+      Object.assign(this.laboratoryState.windTunnel, defaultWindTunnel, { speed: 0 }); Object.assign(this.laboratoryState.windTarget, defaultWindTunnel);
+      this.laboratoryState.windEnabled = false; this.laboratoryState.windVelocity.set(0, 0, 0);
       this.position.set(0, windTunnelRoom(this.definition).centerY, 0); this.quaternion.identity(); this.launching = false;
     }
     this.laboratoryState.takeoffHeight = 0; this.laboratoryState.takeoffSpeed = 0;
@@ -977,6 +979,25 @@ export class FlightSimulation {
     this.laboratoryState.windTarget = windTunnelSettings(settings);
   }
 
+  setWindTunnelEnabled(enabled: boolean) {
+    if (this.challenge !== 'wind-tunnel') throw Error('风洞参数无效');
+    this.laboratoryState.windEnabled = enabled;
+  }
+
+  /** Restore the aircraft without interrupting the airflow or its transition. */
+  restoreWindTunnelAircraft() {
+    if (this.challenge !== 'wind-tunnel') return;
+    const actual = { ...this.windTunnel }, target = { ...this.laboratoryState.windTarget }, enabled = this.windTunnelEnabled;
+    const time = this.time, elapsed = this.elapsed, omega = this.omega.clone();
+    this.reset(this.launchRoll);
+    Object.assign(this.laboratoryState.windTunnel, actual); this.laboratoryState.windTarget = target; this.laboratoryState.windEnabled = enabled;
+    this.time = time; this.elapsed = elapsed; this.omega.copy(omega); this.previousOmega.copy(omega);
+    this.applyWindTunnelFixture(0);
+    this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
+    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
+    this.updateTelemetry();
+  }
+
   stopTest() {
     if (!isLaboratory(this.challenge) || this.ended) return;
     this.updateTelemetry(); this.finish('manual');
@@ -989,15 +1010,14 @@ export class FlightSimulation {
     return out;
   }
 
-  private integrateWindTunnel(dt: number) {
-    advanceWindTunnel(this.laboratoryState.windTunnel, this.laboratoryState.windTarget, dt);
+  private applyWindTunnelFixture(dt: number) {
     this.previousOmega.copy(this.omega); this.inverse.copy(this.quaternion).invert();
     this.quaternion.setFromAxisAngle(this.cross.set(0, 0, 1), this.laboratoryState.windTunnel.pitch * DEG);
     this.rotation.setFromAxisAngle(this.cross.set(1, 0, 0), this.laboratoryState.windTunnel.roll * DEG);
     this.quaternion.multiply(this.rotation);
     this.rotation.copy(this.inverse).multiply(this.quaternion).normalize();
     const sine = Math.hypot(this.rotation.x, this.rotation.y, this.rotation.z);
-    this.omega.set(this.rotation.x, this.rotation.y, this.rotation.z).multiplyScalar(sine > 1e-12 ? 2 * Math.atan2(sine, this.rotation.w) / (sine * dt) : 0);
+    if (dt > 0) this.omega.set(this.rotation.x, this.rotation.y, this.rotation.z).multiplyScalar(sine > 1e-12 ? 2 * Math.atan2(sine, this.rotation.w) / (sine * dt) : 0);
     this.position.copy(this.cg).sub(this.launchCg).applyQuaternion(this.quaternion);
     this.position.y += windTunnelRoom(this.definition).centerY;
     this.velocity.set(0, 0, 0);
@@ -1007,6 +1027,11 @@ export class FlightSimulation {
     this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
     this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
     for (const s of this.structure.sections) if (s.bodyId === 0) s.controlDeflection = s.wingKey === 'mainWing' ? -this.controlDeflections.aileron : s.wingKey === 'horizontalTail' ? -s.side * this.controlDeflections.elevator : this.controlDeflections.rudder;
+  }
+
+  private integrateWindTunnel(dt: number) {
+    advanceWindTunnel(this.laboratoryState.windTunnel, this.laboratoryState.windTarget, dt, this.windTunnelEnabled);
+    this.applyWindTunnelFixture(dt);
     this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
     this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
     // The fixture balances the net force and torque. Wings still carry their

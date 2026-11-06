@@ -1,27 +1,30 @@
 <script lang="ts">
  import { language, t as translate } from './i18n';
  import type { LaboratoryMode, TestSpaceSettings, WindTunnelSettings } from './laboratory';
- let { mode, ready, paused, testSettings, windSettings, actualWind, onTestSettings, onWindSettings, onStart, onStop, onPause, onCamera }: {
-  mode: LaboratoryMode; ready: boolean; paused: boolean; testSettings: TestSpaceSettings; windSettings: WindTunnelSettings; actualWind: WindTunnelSettings;
+ let { mode, ready, windEnabled, cameraView, testSettings, windSettings, actualWind, onTestSettings, onWindSettings, onStop, onToggleWind, onRestore, onCamera }: {
+  mode: LaboratoryMode; ready: boolean; windEnabled: boolean; cameraView: string; testSettings: TestSpaceSettings; windSettings: WindTunnelSettings; actualWind: WindTunnelSettings;
   onTestSettings: (value: TestSpaceSettings) => void; onWindSettings: (value: WindTunnelSettings) => void;
-  onStart: () => void; onStop: () => void; onPause: () => void; onCamera: (view: string) => void;
+  onStop: () => void; onToggleWind: () => void; onRestore: () => void; onCamera: (view: string) => void;
  } = $props();
  const t = $derived.by(() => { const locale = $language; return (source: string) => translate(source, undefined, locale); });
+ let editingWind = $state<keyof WindTunnelSettings | null>(null), windDraft = $state('');
  const windControls: { key: keyof WindTunnelSettings; name: string; min: number; max: number; step: number; unit: string; scale: number }[] = [
-  { key: 'speed', name: '气流速度', min: 1, max: 200, step: 1, unit: 'm/s', scale: 1 },
-  { key: 'roll', name: '滚转角度', min: -180, max: 180, step: 1, unit: '°', scale: 1 },
-  { key: 'pitch', name: '俯仰角度', min: -90, max: 90, step: 1, unit: '°', scale: 1 },
-  { key: 'aileron', name: '副翼控制比例', min: -100, max: 100, step: 1, unit: '%', scale: 100 },
-  { key: 'elevator', name: '升降舵控制比例', min: -100, max: 100, step: 1, unit: '%', scale: 100 },
-  { key: 'rudder', name: '方向舵控制比例', min: -100, max: 100, step: 1, unit: '%', scale: 100 },
+  { key: 'speed', name: '气流速度', min: 1, max: 200, step: 0.1, unit: 'm/s', scale: 1 },
+  { key: 'roll', name: '滚转角度', min: -180, max: 180, step: 0.1, unit: '°', scale: 1 },
+  { key: 'pitch', name: '俯仰角度', min: -45, max: 45, step: 0.1, unit: '°', scale: 1 },
+  { key: 'aileron', name: '副翼控制比例', min: -100, max: 100, step: 0.1, unit: '%', scale: 100 },
+  { key: 'elevator', name: '升降舵控制比例', min: -100, max: 100, step: 0.1, unit: '%', scale: 100 },
+  { key: 'rudder', name: '方向舵控制比例', min: -100, max: 100, step: 0.1, unit: '%', scale: 100 },
  ];
  function testValue(key: 'height' | 'speed', input: HTMLInputElement) {
   const value = input.valueAsNumber;
   if (Number.isFinite(value)) onTestSettings({ ...testSettings, [key]: Math.max(key === 'height' ? 0 : 10, Math.min(key === 'height' ? 5000 : 150, value)) });
  }
  function windValue(key: keyof WindTunnelSettings, scale: number, input: HTMLInputElement) {
+  // Preserve partial decimal/negative input; normalize its display on blur.
+  if (editingWind === key) windDraft = input.value;
   const control = windControls.find(c => c.key === key)!, value = input.valueAsNumber;
-  if (Number.isFinite(value)) onWindSettings({ ...windSettings, [key]: Math.max(control.min, Math.min(control.max, value)) / scale });
+  if (Number.isFinite(value)) onWindSettings({ ...windSettings, [key]: Math.round(Math.max(control.min, Math.min(control.max, value)) * 10) / 10 / scale });
  }
 </script>
 
@@ -44,16 +47,18 @@
   <p class="wind-direction">← {t('气流从右向左')} <small>{t('网格 1 m · 小刻度 0.1 m')}</small></p>
   {#each windControls as control}
    <div class="wind-control">
-    <label for={`wind-${control.key}`}>{t(control.name)}<span><input aria-label={t(control.name + '数值')} type="number" min={control.min} max={control.max} step={control.step} value={windSettings[control.key] * control.scale} oninput={e => windValue(control.key, control.scale, e.currentTarget)}/>{control.unit}</span></label>
+    <label for={`wind-${control.key}`}>{t(control.name)}<span><input aria-label={t(control.name + '数值')} type="number" min={control.min} max={control.max} step={control.step} value={editingWind === control.key ? windDraft : (windSettings[control.key] * control.scale).toFixed(1)} onfocus={e => { editingWind = control.key; windDraft = e.currentTarget.value; }} oninput={e => windValue(control.key, control.scale, e.currentTarget)} onblur={e => { editingWind = null; e.currentTarget.value = (windSettings[control.key] * control.scale).toFixed(1); }}/>{control.unit}</span></label>
     <input id={`wind-${control.key}`} aria-label={t(control.name)} type="range" min={control.min} max={control.max} step={control.step} value={windSettings[control.key] * control.scale} oninput={e => windValue(control.key, control.scale, e.currentTarget)}/>
     <small>{t('实际值')} <output aria-label={t(control.name + '实际值')}>{(actualWind[control.key] * control.scale).toFixed(1)}</output> {control.unit}</small>
    </div>
   {/each}
-  <p>{t('所有调整平滑过渡；气动解体后继续测试，手动停止后结束。')}</p>
-  <div class="lab-cameras" aria-label={t('观察视角')}>{#each ['侧视', '俯视', '正视', '自由'] as camera}<button onclick={() => onCamera(camera)}>{t(camera)}</button>{/each}</div>
+  <p>{t('开启或关闭风洞以平滑调整气流；还原飞机状态可修复结构损伤。')}</p>
+  <div class="lab-cameras" aria-label={t('观察视角')}>{#each ['侧视', '俯视', '正视', '自由'] as camera}<button class:active={cameraView === camera} aria-pressed={cameraView === camera} onclick={() => onCamera(camera)}>{t(camera)}</button>{/each}</div>
  {/if}
  <div class="lab-actions">
-  {#if mode === 'wind-tunnel'}{#if !ready}<button class="primary flight-start" onclick={onStart}>{t('开始测试')}</button>{:else}<button onclick={onPause}>{t(paused ? '继续测试' : '暂停测试')}</button>{/if}{/if}
-  {#if ready}<button onclick={onStop}>{t('停止测试')}</button>{/if}
+  {#if mode === 'wind-tunnel'}
+   <button class="primary" aria-pressed={windEnabled} onclick={onToggleWind}>{t(windEnabled ? '关闭风洞' : '开启风洞')}</button>
+   <button onclick={onRestore}>{t('还原飞机状态')}</button>
+  {:else if ready}<button onclick={onStop}>{t('停止测试')}</button>{/if}
  </div>
 </section>

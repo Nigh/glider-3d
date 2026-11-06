@@ -616,9 +616,11 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await name.press('Space');
   await name.press('c');
   await expect(name).toHaveValue('测试 c');
+  // Issue #39 keeps the selected flight camera across new flights.
+  expect(await page.evaluate(() => localStorage.getItem('aero-formula.flight-camera'))).toBe('自由');
   await page.getByRole('navigation', { name: '游戏流程' }).getByRole('button', { name: '试飞', exact: true }).click();
   await expectWaiting(page);
-  await expect(camera).toHaveValue('追尾');
+  await expect(camera).toHaveValue('自由');
 });
 
 test('主视图持续展示三翼结果，安装角滑条实时改变气动数值', async ({ page }) => {

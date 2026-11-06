@@ -481,7 +481,7 @@ export class SceneView {
       environmentVisible: this.environment.visible || this.mountainEnvironment.visible,
       challenge: this.environmentChallenge,
       terrainGrid: this.environmentChallenge === 'test-space' ? { minX: -5000, maxX: 5000, minZ: -5000, maxZ: 5000, step: TEST_SPACE.step } : this.environmentChallenge === 'birdman' || this.environmentChallenge === 'wind-tunnel' ? null : challengeTerrainGrid,
-      laboratory: this.laboratoryScene ? { mode: this.laboratoryScene.mode, room: this.laboratoryScene.room, platformHeight: this.laboratoryScene.platform.position.y,
+      laboratory: this.laboratoryScene ? { mode: this.laboratoryScene.mode, room: this.laboratoryScene.room, platformHeight: this.laboratoryScene.platform.position.y, platformX: this.laboratoryScene.platform.position.x,
         balloons: this.laboratoryScene.platform.children.filter(child => child.name === 'platform-balloon').length,
         walls: this.mountainEnvironment.children.filter(child => child.name.startsWith('wind-tunnel-') && child.name !== 'wind-tunnel-airflow').map(child => ({ name: child.name, ...child.userData })),
         wind: this.simulation?.challenge === 'wind-tunnel' ? { ...this.simulation.windTunnel } : null } : null,
@@ -2189,7 +2189,7 @@ export class SceneView {
     if (isLaboratory(challenge)) {
       this.laboratoryScene = new LaboratoryScene(challenge, this.definition, this.mountainEnvironment);
       if (this.simulation) this.laboratoryScene.update(this.simulation);
-      this.environmentFog.color.setHex(challenge === 'wind-tunnel' ? 0xf1f4f2 : 0xd5e4e7);
+      this.environmentFog.color.setHex(challenge === 'wind-tunnel' ? 0x45494b : 0xd5e4e7);
       this.environmentFog.density = challenge === 'wind-tunnel' ? 0 : 0.000055;
       (this.scene.background as THREE.Color).copy(this.environmentFog.color);
       this.perspective.far = this.orthographic.far = challenge === 'wind-tunnel' ? 1000 : 18000;

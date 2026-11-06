@@ -219,3 +219,4 @@ html:not([lang=zh]) .aero-preview table{min-width:560px}html:not([lang=zh]) .fli
 
 .laboratory-flight.awaiting-flight .stick-panel{display:none}
 @media(max-width:700px){.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-hud,.laboratory-flight.awaiting-flight:not(.wind-tunnel) .advanced-hud,.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-status{display:none}}
+.lab-cameras button.active{background:var(--accent);border-color:var(--accent);color:white;font-weight:600}

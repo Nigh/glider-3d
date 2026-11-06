@@ -52,6 +52,9 @@
  const cameraKey='aero-formula.flight-camera';
  function savedCamera(){try{const value=localStorage.getItem(cameraKey);return value&&flightViews.includes(value)?value:'追尾';}catch{return '追尾';}}
  let flightCamera=$state(savedCamera());
+ let windCamera=$state('侧视');
+ const windViews=['侧视','俯视','正视','自由'];
+ function selectWindCamera(value:string){windCamera=value;scene.cameraView(value);}
  function selectCamera(value:string){flightCamera=value;scene.cameraView(value);try{localStorage.setItem(cameraKey,value);}catch{/* Keep the session preference when storage is blocked. */}}
  let activeReplay=$state.raw<Replay|null>(null),seeking=$state(false),replayPosition=$state(0);let seekVersion=0;
  let seekFrame=0;
@@ -101,7 +104,7 @@
  $effect(()=>{const target=screen==='design'?(tab==='组装'?'assembly':tab==='动力'?'propulsion':tab==='机身'?null:wingKey):null;if(sceneReady)scene.setEditor(target,d=>change(out=>Object.assign(out,d)),commit);});
  function flightSample(sim:FlightSimulation):FlightSample{const t=sim.telemetry;return {time:sim.elapsedTime,distance:t.distance,height:t.altitude,speed:t.speed,scoringHeight:t.altitude-t.groundClearance+LOW_ALTITUDE.scoringHeight,energyRatio:t.initialEnergy>0?(t.kineticEnergy+t.potentialEnergy)/t.initialEnergy:0,energyPerDistance:t.energyPerDistance,waterContact:t.waterContact,gForce:t.gForce};}
  function sampleFlight(final=false){if(!simulation||isLaboratory(lastChallenge)||(lastChallenge==='birdman'&&simulation.launching))return;if(final||flightElapsed-lastSampleTime>=0.1){const point=flightSample(simulation);samples.push(point);if(isReplay&&activeReplay){let saved=replaySamples.get(activeReplay.recording);if(!saved){saved=new Map();replaySamples.set(activeReplay.recording,saved);}saved.set(point.time,point);}lastSampleTime=flightElapsed;}}
- function refreshHud(){if(!simulation)return;const t=simulation.telemetry,s=simulation.structure;hud={...t,wind:{...simulation.windTunnel},alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching,maxStressRatio:s.maxStressRatio,maxYieldRatio:s.maxYieldRatio,maxDeflection:s.maxDeflection,fractureCount:s.fractureCount,fragmentCount:simulation.fragments.length,peakWings:s.peakWings,wings:summarizeWingStructure(s.sections,structureWings)};}
+ function refreshHud(){if(!simulation)return;const t=simulation.telemetry,s=simulation.structure;hud={...t,wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching,maxStressRatio:s.maxStressRatio,maxYieldRatio:s.maxYieldRatio,maxDeflection:s.maxDeflection,fractureCount:s.fractureCount,fragmentCount:simulation.fragments.length,peakWings:s.peakWings,wings:summarizeWingStructure(s.sections,structureWings)};}
  function refreshTrajectory(){if(trajectory.length!==samples.length)trajectory=samples.slice();}
  const hints:Record<Tab,string>={
   '机身':'驾驶舱的位置改变重心。过度靠后可能让飞机俯仰失稳。',
@@ -151,15 +154,17 @@
    simulation=next;if(!replay&&!isLaboratory(selectedChallenge))cacheFlight(next);
    lastDefinition=clone(definition);lastChallenge=selectedChallenge;
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
-   samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=false;clearControls();
+   samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
    scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);
-   if(selectedChallenge==='wind-tunnel')aero=true;
+   if(selectedChallenge==='wind-tunnel'){aero=true;windCamera='侧视';}
    scene.setDebug(aero);scene.cameraView(selectedChallenge==='wind-tunnel'?'侧视':flightCamera);
    activeReplay=replay?{definition:clone(lastDefinition),challenge:lastChallenge,recording:imported?.recording??recording!}:null;replayPosition=0;
   }catch(e){notify((e as Error).message);}
  }
  function configureTest(value:TestSpaceSettings){if(flightReady||!simulation)return;try{simulation.configureTestSpace(value);testSettings={...value};scene.captureFlightState();refreshHud();}catch(e){notify((e as Error).message);}}
  function configureWind(value:WindTunnelSettings){try{simulation?.setWindTunnel(value);windSettings={...value};}catch(e){notify((e as Error).message);}}
+ function toggleWind(){if(!simulation)return;simulation.setWindTunnelEnabled(!simulation.windTunnelEnabled);refreshHud();}
+ function restoreWindAircraft(){if(!simulation)return;simulation.restoreWindTunnelAircraft();scene.captureFlightState();refreshHud();}
  function stopTest(){if(!simulation||!flightReady)return;simulation.stopTest();finish();}
  async function replayExport(){
   if(!recording||replayBusy)return;
@@ -187,7 +192,7 @@
   finally{input.value='';replayBusy=false;}
  }
  function beginFlight(){if(screen!=='flight'||!simulation||flightReady||seeking)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='wind-tunnel'&&(lastChallenge!=='test-space'||testSettings.catapult)&&lastChallenge!=='low-altitude')audio.launch();}
- function togglePause(){if(screen==='flight'&&flightReady&&!seeking){paused=!paused;clearControls();}}
+ function togglePause(){if(screen==='flight'&&lastChallenge!=='wind-tunnel'&&flightReady&&!seeking){paused=!paused;clearControls();}}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;if(result?.landing==='terrain'){audio.crash();scene.markCrash(()=>audio.stroke());}clearControls();recordedLength=simulation.recordingLength;screen='result';scene.cameraView('轨道');if(!isReplay&&!isLaboratory(lastChallenge)){recording=simulation.getRecording();cacheRecording(simulation,recording);replaySamples.set(recording,new Map(samples.map(p=>[p.time,p])));try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
  function design(){seekVersion++;seeking=false;activeReplay=null;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);scene?.cameraView('轨道');clearControls();}
  function challengeAircraft(){return challenge==='birdman'?defaultAircraft:presets.find(p=>p.name===(challenge==='downhill'?'高山速降机动型':'低空喷气巡航型'))!;}
@@ -216,6 +221,7 @@
  e.preventDefault();
  if(down&&!e.repeat){
  if(e.code==='Space'){if(flightReady)togglePause();else beginFlight();}
+ else if(lastChallenge==='wind-tunnel'){selectWindCamera(windViews[(windViews.indexOf(windCamera)+1)%windViews.length]);}
  else{selectCamera(flightViews[(flightViews.indexOf(flightCamera)+1)%flightViews.length]);}
  }
  return;
@@ -286,7 +292,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  try{saved=listAircraft();best=readBest(challenge);}catch(e){notify((e as Error).message);}
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get flightControls(){return {trimPitch:displayedPitch,trimRoll:displayedRoll,autoTrim:isReplay?hud.autoTrim:autoTrim,adaptiveControls:isReplay?hud.adaptiveControls:adaptiveControls,controlLimit:hud.controlLimit??1,inputs:simulation?.telemetry.controlInputs}},get result(){return result}}});
- Object.defineProperty((window as any).glider,'laboratory',{get:()=>simulation&&isLaboratory(simulation.challenge)?{mode:simulation.challenge,settings:{...simulation.testSpace},wind:{...simulation.windTunnel},recordingBytes:simulation.recording.byteLength,curveSamples:samples.length,fractures:simulation.structure.fractureCount,fragments:simulation.fragments.length}:null});
+ Object.defineProperty((window as any).glider,'laboratory',{get:()=>simulation&&isLaboratory(simulation.challenge)?{mode:simulation.challenge,settings:{...simulation.testSpace},wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,recordingBytes:simulation.recording.byteLength,curveSamples:samples.length,fractures:simulation.structure.fractureCount,fragments:simulation.fragments.length}:null});
  return()=>{window.removeEventListener('pointermove',mouse);clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};});
 
 </script>
@@ -437,7 +443,7 @@ const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,
  </svg>{/if}
  <div class="flight-sidebar">
  {#if isLaboratory(lastChallenge)}
-  <LaboratoryControls mode={lastChallenge} ready={flightReady} {paused} {testSettings} {windSettings} actualWind={hud.wind??defaultWindTunnel} onTestSettings={configureTest} onWindSettings={configureWind} onStart={beginFlight} onStop={stopTest} onPause={togglePause} onCamera={view=>scene.cameraView(view)}/>
+  <LaboratoryControls mode={lastChallenge} ready={flightReady} windEnabled={hud.windEnabled??false} cameraView={windCamera} {testSettings} {windSettings} actualWind={hud.wind??defaultWindTunnel} onTestSettings={configureTest} onWindSettings={configureWind} onStop={stopTest} onToggleWind={toggleWind} onRestore={restoreWindAircraft} onCamera={selectWindCamera}/>
   {#if lastChallenge==='wind-tunnel'}<button onclick={design}>{t('返回设计')}</button>{/if}
  {/if}
  <section class="flight-hud" class:compact-hud={lastChallenge!=='birdman'} aria-label={t("飞行数据")}>
