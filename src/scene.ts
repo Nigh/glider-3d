@@ -232,6 +232,7 @@ export class SceneView {
   private readonly desiredPosition = new THREE.Vector3();
   private readonly desiredTarget = new THREE.Vector3();
   private readonly vector = new THREE.Vector3();
+  private readonly spherical = new THREE.Spherical();
   private cameraDragging = false;
   private cameraReleasedAt = -Infinity;
   private cameraPointer = -1;
@@ -1609,6 +1610,26 @@ export class SceneView {
     this.updateCatapult();
     this.updateCenters();
     this.metrics.memory = this.geometryMemory();
+  }
+
+  /** Controller look shares the drag offsets and idle return of the flight camera. */
+  lookInput(horizontal: number, vertical: number, dt: number): void {
+    if (!this.simulation || (!horizontal && !vertical)) return;
+    const yaw = horizontal * dt * 1.8, pitch = vertical * dt * 1.8;
+    this.cameraReleasedAt = this.elapsed;
+    if (this.controls.enabled) {
+      this.vector.subVectors(this.camera.position, this.controls.target);
+      const radius = this.vector.length();
+      this.spherical.setFromVector3(this.vector);
+      this.spherical.theta -= yaw;
+      this.spherical.phi = clamp(this.spherical.phi + pitch, 0.05, Math.PI * 0.94);
+      this.vector.setFromSpherical(this.spherical).setLength(radius);
+      this.camera.position.copy(this.controls.target).add(this.vector);
+      this.controls.update();
+    } else {
+      this.cameraYaw -= yaw;
+      this.cameraPitch = clamp(this.cameraPitch - pitch, -1.35, 1.35);
+    }
   }
 
   cameraView(name: string): void {
