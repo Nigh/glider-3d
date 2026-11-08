@@ -14,6 +14,7 @@
  import { GameAudio } from './audio';
  import AudioSettings from './AudioSettings.svelte';
  import InputSettings from './InputSettings.svelte';
+ import InputReadout from './InputReadout.svelte';
  import { InputManager } from './input';
  import { trimStep, trimFromPointer } from './trim';
  import { energyCostScale } from './flight-chart';
@@ -230,7 +231,7 @@
    if(lastChallenge==='wind-tunnel')selectWindCamera(windViews[(windViews.indexOf(windCamera)+1)%windViews.length]);
    else selectCamera(flightViews[(flightViews.indexOf(flightCamera)+1)%flightViews.length]);
   }
-  scene.lookInput(input.value('lookRight')-input.value('lookLeft'),input.value('lookDown')-input.value('lookUp'),elapsed);
+  scene.lookInput(input.value('lookX'),input.value('lookY'),elapsed);
   if(flightInputDisabled)return;
   if(input.pressed('autoTrim'))toggleAutoTrim();
   if(input.pressed('adaptive'))toggleAdaptiveControls();
@@ -265,11 +266,11 @@ const tick=(now:number)=>{
       accumulator+=elapsed;
       let steps=0;
       while(accumulator>=fixedDt&&steps<5){
-        const pitchInput=stickPointer!==null||stick?stickY:input.value('pitchUp')-input.value('pitchDown');
-        const rollInput=stickPointer!==null||stick?stickX:input.value('rollRight')-input.value('rollLeft');
+        const pitchInput=stickPointer!==null||stick?stickY:input.value('pitch');
+        const rollInput=stickPointer!==null||stick?stickX:input.value('roll');
         controls.weight=lastDefinition.birdman?clamp(trimPitch+pitchInput,-1,1):0;
         controls.lateral=lastDefinition.birdman?clamp(trimRoll+rollInput,-1,1):0;
-        controls.rudder=yawPointer!==null||yawInput!==0?yawInput:input.value('yawRight')-input.value('yawLeft');
+        controls.rudder=yawPointer!==null||yawInput!==0?yawInput:input.value('yaw');
         controls.elevator=lastDefinition.birdman?0:clamp(pitchInput,-1,1);
         controls.aileron=lastDefinition.birdman?0:clamp(rollInput,-1,1);
         controls.throttle=throttle;controls.trimPitch=trimPitch;controls.trimRoll=trimRoll;
@@ -486,9 +487,7 @@ window.addEventListener('pointermove',mouse);
  </div>
  {#if lastChallenge==='wind-tunnel'}<section class="wind-speed-hud" aria-label={t('风洞风速')}><span>{t('当前风速')}</span><strong><output aria-label={t('当前风速')}>{(hud.wind?.speed??0).toFixed(1)}</output><small>m/s</small></strong></section>{/if}
  {#if isReplay}<section class="replay-inputs" aria-label={t("实时杆量")}>
- <div class="replay-input-body"><svg viewBox="0 0 120 120" aria-label={t("操纵杆")} role="img"><circle class="stick-rim" cx="60" cy="60" r="56"/><path class="stick-cross" d="M60 8V112 M8 60H112"/><circle class="stick-position" cx={60+actualRoll*35} cy={60-actualPitch*35} r="6" data-pitch={actualPitch} data-roll={actualRoll}/></svg>
- <div class="replay-throttle"><span>{t("油门")}</span><meter aria-label={t("油门")} min="0" max="1" value={hud.throttle??0}></meter><output>{((hud.throttle??0)*100).toFixed(0)}%</output></div></div>
- <span>{t("俯仰")} {actualPitch.toFixed(2)} · {t("滚转")} {actualRoll.toFixed(2)}</span><span>{t("偏航")} {(hud.controlInputs?.rudder??0).toFixed(2)}</span>
+ <InputReadout pitch={actualPitch} roll={actualRoll} yaw={hud.controlInputs?.rudder??0} throttle={hud.throttle??0}/>
  </section>{/if}
  {#if lastChallenge!=='wind-tunnel'}<section class="stick-panel" class:controls-disabled={!flightReady} aria-label={t("杆量与配平")}>
  <div class="stick-heading"><strong>{t("杆量与配平")}</strong>{#if isReplay}<span>{t("飞行重放")}</span>{:else}<span>{t("自定义映射见输入设置")}</span>{/if}</div>

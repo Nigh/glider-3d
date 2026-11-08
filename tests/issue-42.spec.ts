@@ -58,7 +58,7 @@ test('keyboard remapping persists, affects flight and restores individual defaul
  await page.getByRole('button', { name: '添加绑定：开始／暂停', exact: true }).click();
  await page.keyboard.press('b');
  await expect(page.locator('.actions > li').filter({ has: page.getByText('开始／暂停', { exact: true }) })).toContainText('KeyB');
- await page.keyboard.press('Escape');
+ await page.getByRole('button', { name: '保存', exact: true }).first().click();
  await page.reload();
  await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
@@ -70,8 +70,86 @@ test('keyboard remapping persists, affects flight and restores individual defaul
  await expect.poll(() => page.evaluate(() => window.glider.flightReady)).toBe(true);
  await page.getByRole('button', { name: '输入设置', exact: true }).click();
  await page.getByRole('button', { name: '恢复默认：开始／暂停', exact: true }).click();
- await page.keyboard.press('Escape');
+ await page.getByRole('button', { name: '保存', exact: true }).first().click();
  await page.locator('.flight-hud').click();
  await page.keyboard.press('Space');
  await expect(page.locator('.pause-banner')).toBeVisible();
+});
+
+async function installController(page: Page) {
+ await page.addInitScript(() => {
+  localStorage.setItem('aero-formula.language', 'zh');
+  window.testPad = { id: 'Settings controller', index: 0, connected: true, mapping: 'standard', timestamp: 1,
+   axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ value: 0, pressed: false, touched: false })) };
+  Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => window.testPad ? [window.testPad] : [] });
+ });
+}
+
+test('settings shows full axes, reversed live values and latest duplicate ownership', async ({ page }) => {
+ await installController(page);
+ await page.goto('/');
+ await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
+ await page.getByRole('button', { name: '输入设置', exact: true }).click();
+ await page.getByRole('combobox', { name: '编辑输入配置', exact: true }).selectOption('gamepad');
+ const roll = page.locator('[data-action="roll"]'), pitch = page.locator('[data-action="pitch"]');
+ await expect(roll).toBeVisible();
+ await expect(page.locator('[data-action="rollLeft"]')).toHaveCount(0);
+ await expect(page.locator('[data-action="pitchUp"]')).toHaveCount(0);
+ await page.evaluate(() => { if (window.testPad) window.testPad.axes[0] = 0.8; });
+ await expect.poll(() => roll.locator('meter').first().evaluate((meter: HTMLMeterElement) => meter.value)).toBeGreaterThan(0.7);
+ await roll.locator('input[type="checkbox"]').first().check();
+ await expect.poll(() => roll.locator('meter').first().evaluate((meter: HTMLMeterElement) => meter.value)).toBeLessThan(-0.7);
+ await expect.poll(() => page.locator('.input-readout .stick-position').getAttribute('data-roll').then(Number)).toBeLessThan(-0.7);
+ await page.evaluate(() => { if (window.testPad) window.testPad.axes[0] = 0; });
+ await pitch.getByRole('button', { name: /添加绑定/ }).click();
+ await page.evaluate(() => { if (window.testPad) window.testPad.axes[0] = 0.9; });
+ await expect(pitch.locator('[data-kind="axis"][data-index="0"]')).toHaveCount(1);
+ await expect(roll.locator('[data-kind="axis"]')).toHaveCount(0);
+ await expect(roll.locator('meter').first()).toHaveAttribute('aria-valuetext', '未绑定');
+ await expect(page.getByRole('status').filter({ hasText: '滚转轴' })).toContainText('未绑定');
+ const pause = page.locator('[data-action="pause"]'), restart = page.locator('[data-action="restart"]');
+ const releasedBackground = await pause.locator('[data-kind="button"][data-index="0"]').evaluate(element => getComputedStyle(element).backgroundColor);
+ await button(page, 0, 1);
+ await expect(pause.locator('[data-kind="button"][data-index="0"]')).toHaveAttribute('data-pressed', 'true');
+ await expect.poll(() => pause.locator('[data-kind="button"][data-index="0"]').evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(releasedBackground);
+ await pause.getByRole('button', { name: /清除绑定/ }).click();
+ await expect(pause.locator('[data-kind="button"]')).toHaveCount(0);
+ await pause.getByRole('button', { name: /添加绑定/ }).click();
+ await button(page, 3, 1);
+ await expect(pause.locator('[data-kind="button"][data-index="3"]')).toHaveAttribute('data-pressed', 'true');
+ await expect(restart.locator('[data-kind="button"]')).toHaveCount(0);
+ const pressedBackground = await pause.locator('[data-kind="button"][data-index="3"]').evaluate(element => getComputedStyle(element).backgroundColor);
+ await button(page, 3, 0.009);
+ await expect(pause.locator('.binding-live output')).toHaveText('0.01');
+ await button(page, 3, 0);
+ await expect(pause.locator('[data-kind="button"][data-index="3"]')).toHaveAttribute('data-pressed', 'false');
+ await expect.poll(() => pause.locator('[data-kind="button"][data-index="3"]').evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(pressedBackground);
+ await page.evaluate(() => { window.testPad = null; });
+ await expect.poll(() => pitch.locator('meter').first().evaluate((meter: HTMLMeterElement) => meter.value)).toBe(0);
+});
+
+test('outside exit offers save discard and cancel without writing drafts', async ({ page }) => {
+ await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
+ await page.goto('/');
+ await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
+ await page.getByRole('button', { name: '输入设置', exact: true }).click();
+ await page.getByRole('button', { name: '清除绑定：开始／暂停', exact: true }).click();
+ expect(await page.evaluate(() => localStorage.getItem('glider-3d.input.v1'))).toBeNull();
+ await page.mouse.click(1, 1);
+ const prompt = page.getByRole('alertdialog');
+ await expect(prompt).toBeVisible();
+ await prompt.getByRole('button', { name: '取消', exact: true }).click();
+ await expect(page.locator('[data-action="pause"]')).toContainText('未绑定');
+ await page.mouse.click(1, 1);
+ await prompt.getByRole('button', { name: '不保存', exact: true }).click();
+ await expect(page.locator('dialog[open]')).toHaveCount(0);
+ await page.getByRole('button', { name: '输入设置', exact: true }).click();
+ await expect(page.locator('[data-action="pause"]')).toContainText('Space');
+ await page.getByRole('button', { name: '清除绑定：开始／暂停', exact: true }).click();
+ await page.mouse.click(1, 1);
+ await prompt.getByRole('button', { name: '保存', exact: true }).click();
+ await expect(page.locator('dialog[open]')).toHaveCount(0);
+ await page.reload();
+ await page.getByRole('button', { name: '输入设置', exact: true }).click();
+ await expect(page.locator('[data-action="pause"]')).toContainText('未绑定');
 });
