@@ -116,6 +116,17 @@ it('preserves short keyboard taps, rejects repeat edges and clears queued and he
   input.key('Space', false); input.key('KeyR', true); input.key('KeyR', false); input.clear(); input.poll([]); expect(input.pressed('restart')).toBe(false);
 });
 
+it('repeats held trim steps without repeating pause or toggle actions', () => {
+  const input = new InputManager();
+  for (const code of ['KeyJ', 'Space', 'KeyT']) input.key(code, true);
+  input.poll([]);
+  for (const code of ['KeyJ', 'Space', 'KeyT']) input.key(code, true);
+  input.poll([]);
+  expect(input.pressed('trimPitchDown')).toBe(true);
+  expect(input.pressed('pause')).toBe(false);
+  expect(input.pressed('autoTrim')).toBe(false);
+});
+
 it('suppresses initially held and cleared buttons until release, including reconnects', () => {
   const input = new InputManager(), device = pad(); button(device, 0, 1);
   input.poll([device]); expect(input.pressed('pause')).toBe(false); expect(input.value('pause')).toBe(0);

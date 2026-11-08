@@ -206,7 +206,7 @@ export class InputManager {
       const row = this.settings.bindings.keyboard[action];
       if (!row.some(binding => binding.code === code)) continue;
       mapped = true;
-      if (down && !this.paused && !this.blockedKeys.has(code) && !row.some(binding => binding.code && this.heldKeys.has(binding.code))) this.pendingKeys.add(action);
+      if (down && !this.paused && !this.blockedKeys.has(code) && (action.startsWith('trim') || !row.some(binding => binding.code && this.heldKeys.has(binding.code)))) this.pendingKeys.add(action);
     }
     if (!down) { this.heldKeys.delete(code); this.blockedKeys.delete(code); }
     else if (mapped) {
