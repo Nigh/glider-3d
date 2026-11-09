@@ -58,6 +58,20 @@ describe('shared translations', () => {
   expect(t('覆盖“{name}”？原设计将被替换。', { name: 'My aircraft $&' }, 'en')).toBe('Overwrite “My aircraft $&”? Its saved design will be replaced.');
   expect(t('检查点 {index} · {distance} m', { index: 3, distance: '123.4' }, 'ja')).toBe('チェックポイント 3 · 123.4 m');
  });
+ it('translates workshop aircraft types, immutable system entries and compatibility errors', () => {
+  for (const source of [
+   '飞机类型', '鸟人间飞机', '普通飞机', '系统飞机',
+   '系统飞机不可修改或删除，请先复制。',
+   '当前挑战不可使用鸟人间飞机，请选择普通飞机。',
+   '已导入机库，但当前挑战不可使用鸟人间飞机，未加载。',
+   '比赛仅允许对应类型的飞机；测试空间和风洞可切换类型。重置设计载入当前类型的默认飞机。',
+   '系统飞机可复制和导出，不可修改或删除。个人设计保存在当前浏览器，同名保存需确认覆盖。',
+   '端点以机身局部 X 为准。移动一端，另一端不动；在机身编辑中也可直接拖动。驾驶舱及尾翼必须留在机身支撑范围内。',
+  ]) {
+   expect(t(source, undefined, 'zh')).toBe(source);
+   for (const locale of ['en', 'ja'] as const) expect(t(source, undefined, locale), `${locale}: ${source}`).not.toBe(source);
+  }
+ });
  it('translates validation and import errors without changing persisted design names or IDs', () => {
   language.set('en');
   const invalid = clone(defaultAircraft); invalid.fuselage.length = 99;

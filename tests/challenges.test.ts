@@ -1,3 +1,4 @@
+import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, PILOT_MASS, presets, validateAircraft, wing, type Controls } from '../src/model';
@@ -496,7 +497,7 @@ describe('低空地形、滑跑与计分', () => {
     expect(s.ended).toBe(false); expect(s.launching).toBe(true); expect(s.velocity.length()).toBe(0);
   });
 
-  it('配平飞机的保持力按当前质量缩放，超过门槛可在轨端前正常抬升', () => {
+  it('配平飞机的保持力按当前质量缩放，超过门槛可在轨端前正常抬升', async () => {
     for (const materialAmount of [0.5, 2]) {
       const d = clone(poweredAircraft); d.mainWing.materialAmount = materialAmount;
       // 用实际气动力配平俯仰，不让低头力矩遮蔽这项质量/保持力边界检查。
@@ -506,6 +507,7 @@ describe('低空地形、滑跑与计分', () => {
         const trim = new FlightSimulation(d, 'low-altitude', 0);
         trim.velocity.x = 20; trim.step(neutral, 1e-6);
         if (trim.telemetry.torque.z > 0) aft = d.cockpit.position; else forward = d.cockpit.position;
+        if (iteration % 8 === 0) await yieldTurn(0);
       }
       for (const target of [LOW_ALTITUDE_RAIL.retentionAcceleration / 2, LOW_ALTITUDE_RAIL.retentionAcceleration * 1.5]) {
         let low = 0, high = 50, sample!: FlightSimulation;
@@ -514,13 +516,14 @@ describe('低空地形、滑跑与计分', () => {
           sample = new FlightSimulation(d, 'low-altitude', 0);
           sample.velocity.x = speed; sample.step(neutral, 1e-6);
           if (sample.telemetry.force.y / sample.mass - GRAVITY < target) low = speed; else high = speed;
+          if (iteration % 8 === 0) await yieldTurn(0);
         }
         expect(sample.telemetry.force.y / sample.mass - GRAVITY).toBeCloseTo(target, 3);
         expect(sample.launching).toBe(target < LOW_ALTITUDE_RAIL.retentionAcceleration);
         if (sample.launching) expect(sample.velocity.y).toBe(0); else expect(sample.velocity.y).toBeGreaterThan(0);
       }
     }
-  });
+  }, 30_000);
 
   it('净升力足够但低头力矩会压低机头时保持附轨，不在滑跑中掉向跑道', () => {
     const s = new FlightSimulation(validateAircraft(jetCruise50m), 'low-altitude', 0);

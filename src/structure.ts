@@ -1,5 +1,5 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, DEG, planform, wingOrigin, type AircraftDefinition, type WingKey } from './model';
+import { AIRFRAME_MASS, planform, wingLocalPoint, wingOrigin, type AircraftDefinition, type WingKey } from './model';
 import { beamSection, materialCatalog } from './materials';
 
 export interface StructuralSurface {
@@ -94,11 +94,14 @@ export class WingStructure {
       const reference = (span: number) => {
         const fraction = span / wing.points[1].y;
         const quarter = wing.points[0].x + (wing.points[1].x - wing.points[0].x) * fraction + (p.root + (p.tip - p.root) * fraction) / 4;
-        return new Vector3(origin.x - quarter * Math.cos(incidence), vertical ? origin.y + span : origin.y - quarter * Math.sin(incidence) + span * Math.tan(wing.dihedral * DEG), vertical ? 0 : surface.side * span);
+        if (vertical) return new Vector3(origin.x - quarter, origin.y + span, 0);
+        const point = wingLocalPoint(wing, incidence, surface.side, -quarter, 0, span, new Vector3());
+        point.x += origin.x; point.y += origin.y;
+        return point;
       };
       const referenceRoot = reference(surface.spanStart), referenceTip = reference(surface.spanEnd);
       const beamAxis = referenceTip.clone().sub(referenceRoot).normalize();
-      const chordAxis = new Vector3(Math.cos(incidence), vertical ? 0 : Math.sin(incidence), 0);
+      const chordAxis = surface.chordDirection.clone();
       chordAxis.addScaledVector(beamAxis, -chordAxis.dot(beamAxis)).normalize();
       const normalAxis = new Vector3().crossVectors(beamAxis, chordAxis).normalize();
       const length = referenceRoot.distanceTo(referenceTip);

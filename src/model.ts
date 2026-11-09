@@ -119,6 +119,15 @@ export function wingOrigin(d: AircraftDefinition, key: WingKey) {
  return { x: d.assembly[key] + (key === 'mainWing' ? 0 : middle * Math.cos(angle)),
   y: (key === 'mainWing' ? d.assembly.mainWingHeight : 0) + middle * Math.sin(angle) };
 }
+/** Rigid horizontal-wing rotation: dihedral about the chord, then incidence; x forward, y thickness, span outboard. */
+export function wingLocalPoint<T extends { x: number; y: number; z: number }>(wing: Wing, incidence: number, side: number, x: number, y: number, span: number, out: T): T {
+ const angle = wing.dihedral * DEG, c = Math.cos(incidence), s = Math.sin(incidence), cd = Math.cos(angle), sd = Math.sin(angle);
+ const height = y * cd + span * sd;
+ out.x = x * c - height * s;
+ out.y = x * s + height * c;
+ out.z = side * (span * cd - y * sd);
+ return out;
+}
 export function mainWingMountLimits(d: AircraftDefinition) {
  const ends = fuselageEnds(d), w = d.mainWing;
  const offset = (w.points[0].x + w.points[3].x) / 2 * Math.cos(d.assembly.mainIncidence * DEG);
@@ -187,7 +196,7 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  if (d.fuselage.center === undefined) d.fuselage.center = 0;
  finite(d.fuselage.center,-12,12);
  d.pilot.mass = PILOT_MASS;
- for(const key of ['mainWing','horizontalTail','verticalTail'] as const){const w=d[key];if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p.x,-3,6);finite(p.y,0,12);} finite(w.dihedral,0,25);
+ for(const key of ['mainWing','horizontalTail','verticalTail'] as const){const w=d[key];if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p.x,-3,6);finite(p.y,0,12);} finite(w.dihedral,-25,25);
  if(w.controlSurface===undefined)w.controlSurface=key==='verticalTail'?1:0;
  finite(w.controlSurface,0,1);
  if(w.materialId===undefined)w.materialId='carbon-epoxy';

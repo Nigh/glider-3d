@@ -68,3 +68,33 @@ it('hashes actual map geometry and detects terrain edits', async () => {
   vi.spyOn(challenges, 'challengeTerrainHeight').mockImplementation((...args) => original(...args) + 0.01);
   expect(await mapHash('downhill')).not.toBe(downhill);
 });
+
+it('rejects unsafe keyframe references, field names and mismatched state bindings at import', async () => {
+  const source = sample(), envelope = JSON.parse(await exportReplay(source));
+  delete envelope.recording.keyframeData;
+  delete envelope.recording.keyframeEncoding;
+  const invalid = [
+    (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.binding = 'different-aircraft'; },
+    (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.changes = [[0, ['constructor', 1]]]; },
+    (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.changes = [[0, ['position', [999999]]]]; },
+    (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.extra.push(['o', ['__proto__'], [null]]); },
+  ];
+  for (const mutate of invalid) {
+    const data = structuredClone(envelope);
+    data.recording.keyframes = structuredClone(source.recording.keyframes);
+    mutate(data.recording.keyframes[0].state);
+    await expect(importReplay(JSON.stringify(data))).rejects.toThrow('关键帧');
+  }
+});
+
+it('upgrades input-only files and rejects aircraft types forbidden by the recorded competition', async () => {
+  const source = sample(), data = JSON.parse(await exportReplay(source));
+  delete data.recording.keyframeData;
+  delete data.recording.keyframeEncoding;
+  const imported = await importReplay(JSON.stringify(data));
+  expect(imported.recording.frames).toEqual(source.recording.frames);
+  expect(imported.recording.keyframes?.at(-1)?.frame).toBe(source.recording.length);
+  data.challenge = 'downhill';
+  data.mapHash = await mapHash('downhill');
+  await expect(importReplay(JSON.stringify(data))).rejects.toThrow('当前挑战不可使用鸟人间飞机');
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
-import { clone, defaultAircraft, DEG, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
+import { clone, defaultAircraft, DEG, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
 import { coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
@@ -39,7 +39,7 @@ function keelPoints(d: AircraftDefinition) {
   const points = [new Vector3(nose, -0.12, 0), new Vector3(tail, -0.12, 0), new Vector3(d.cockpit.position - 0.75, -0.495, 0)];
   for (const key of ['mainWing', 'horizontalTail'] as const) {
     const origin = wingOrigin(d, key), angle = (key === 'mainWing' ? d.assembly.mainIncidence : d.assembly.tailIncidence) * DEG;
-    for (const point of d[key].points) for (const side of [-1, 1]) points.push(new Vector3(origin.x - point.x * Math.cos(angle), origin.y - point.x * Math.sin(angle) + point.y * Math.tan(d[key].dihedral * DEG), side * point.y));
+    for (const point of d[key].points) for (const side of [-1, 1]) points.push(wingLocalPoint(d[key], angle, side, -point.x, 0, point.y, new Vector3()).add(new Vector3(origin.x, origin.y, 0)));
   }
   return points;
 }
@@ -229,7 +229,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
   });
 
   it('最后尾而非CG计距，横向飞行与偏航使用同一径向几何标准，距离非负', () => {
-    const d = definition(d => { d.fuselage.length = 8; d.horizontalTail = wing(2, 0.4, 0.4); d.verticalTail = wing(2, 0.4, 0.4); d.assembly.horizontalTail = -2.5; d.assembly.verticalTail = -2.5; });
+    const d = definition(d => { d.fuselage.length = 8; d.mainWing.dihedral = 0; d.horizontalTail = wing(2, 0.4, 0.4); d.verticalTail = wing(2, 0.4, 0.4); d.assembly.horizontalTail = -2.5; d.assembly.verticalTail = -2.5; });
     for (const yaw of [0, 0.7, -1.2]) {
       const s = probe(d, s => { s.quaternion.setFromAxisAngle(axisY, yaw); s.position.set(50 * Math.cos(yaw), 80, -50 * Math.sin(yaw)); s.velocity.set(0, 0, 0); }, 1e-8);
       expect(s.telemetry.distance).toBeCloseTo(50 - 4 - s.aircraft.cg.x, 6);

@@ -1,7 +1,8 @@
 import { describe,it,expect } from 'vitest';
-import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions,engineLateralOffset,engineHeightRanges,normalizeEngineHeight,fuelTankLimits,fuelTankPosition,BODY_GEOMETRY } from '../src/model';
+import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
+import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingLocalPoint,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions,engineLateralOffset,engineHeightRanges,normalizeEngineHeight,fuelTankLimits,fuelTankPosition,BODY_GEOMETRY } from '../src/model';
 import { beamSection, defaultStructures, materialCatalog, type MaterialId } from '../src/materials';
-import { derive } from '../src/physics';
+import { derive, FlightSimulation } from '../src/physics';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
@@ -32,6 +33,58 @@ describe('参数化几何与信任边界',()=>{
  it('主翼高度边界允许负安装，拒绝新范围外的数值',()=>{
   for(const height of [-0.5,0,1]){const d=clone(defaultAircraft);d.assembly.mainWingHeight=height;expect(validateAircraft(d).assembly.mainWingHeight).toBe(height);}
   for(const height of [-0.5001,1.0001,NaN,Infinity]){const d=clone(defaultAircraft);d.assembly.mainWingHeight=height;expect(()=>validateAircraft(d)).toThrow();}
+ });
+ it('上反角接受正负25度，拒绝越界和非有限输入',()=>{
+  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
+   for(const angle of [-25,-12.5,0,12.5,25]){const d=clone(defaultAircraft);d[key].dihedral=angle;expect(validateAircraft(d)[key].dihedral).toBe(angle);}
+   for(const angle of [-25.0001,25.0001,NaN,Infinity,-Infinity]){const d=clone(defaultAircraft);d[key].dihedral=angle;expect(()=>validateAircraft(d)).toThrow();}
+  }
+ });
+ it('正负上反角刚性旋转保留真实翼长、翼型厚度和面积',()=>{
+  for(const incidence of [-12,0,18])for(const side of [-1,1]){
+   const w=wing(14,1.5,0.8,0.7);
+   const points=w.points.map(p=>new Vector3(-p.x,0,p.y)).concat([new Vector3(-0.8,0.08,3),new Vector3(-0.8,-0.04,3)]);
+   for(const angle of [-25,-10,0,10,25]){
+    w.dihedral=angle;
+    const rotated=points.map(p=>wingLocalPoint(w,incidence*DEG,side,p.x,p.y,p.z,new Vector3()));
+    for(let a=0;a<points.length;a++)for(let b=a+1;b<points.length;b++)expect(rotated[a].distanceTo(rotated[b])).toBeCloseTo(points[a].distanceTo(points[b]),12);
+    const edge1=rotated[1].clone().sub(rotated[0]),edge2=rotated[3].clone().sub(rotated[0]);
+    const edge3=rotated[2].clone().sub(rotated[1]),edge4=rotated[3].clone().sub(rotated[1]);
+    const area=(edge1.cross(edge2).length()+edge3.cross(edge4).length())/2;
+    expect(area).toBeCloseTo(planform(w,false).area,12);
+   }
+  }
+ });
+ it('正负上反角保持真实梁长、面积与质量，并刚性旋转惯量',()=>{
+  const d=clone(defaultAircraft);d.mainWing.dihedral=d.horizontalTail.dihedral=0;
+  d.assembly.mainIncidence=18;d.assembly.tailIncidence=-12;
+  const base=new FlightSimulation(d,'birdman',0);
+  for(const angle of [-25,-8,8,25]){
+   const changed=clone(d);changed.mainWing.dihedral=changed.horizontalTail.dihedral=angle;
+   const simulation=new FlightSimulation(changed,'birdman',0);
+   expect(simulation.aircraft.mass).toBeCloseTo(base.aircraft.mass,12);
+   expect(simulation.aircraft.wingArea).toBe(base.aircraft.wingArea);
+   for(const section of simulation.structure.sections){
+    const original=base.structure.sections[section.id];
+    const incidence=section.wingKey==='mainWing'?d.assembly.mainIncidence:d.assembly.tailIncidence;
+    const rotation=section.wingKey==='verticalTail'?new Quaternion():new Quaternion().setFromAxisAngle(new Vector3(Math.cos(incidence*DEG),Math.sin(incidence*DEG),0),-section.side*angle*DEG);
+    const origin=wingOrigin(d,section.wingKey),pivot=new Vector3(origin.x,origin.y,0);
+    const rotate=(point:Vector3)=>point.clone().sub(pivot).applyQuaternion(rotation).add(pivot);
+    expect(section.referenceRoot.distanceTo(rotate(original.referenceRoot))).toBeLessThan(1e-11);
+    expect(section.referenceTip.distanceTo(rotate(original.referenceTip))).toBeLessThan(1e-11);
+    expect(section.center.distanceTo(rotate(original.center))).toBeLessThan(1e-11);
+    expect(section.referenceRoot.distanceTo(section.referenceTip)).toBeCloseTo(original.referenceRoot.distanceTo(original.referenceTip),12);
+    expect(section.mass).toBeCloseTo(original.mass,12);expect(section.surface.area).toBe(original.surface.area);
+    for(const key of ['normal','spanDirection','chordDirection','crossflowDirection'] as const){
+     expect(section.surface[key].length()).toBeCloseTo(1,12);
+    }
+    expect(section.surface.normal.dot(section.surface.chordDirection)).toBeCloseTo(0,12);
+    expect(section.surface.normal.dot(section.surface.spanDirection)).toBeCloseTo(0,12);
+    const matrix=new Matrix3().setFromMatrix4(new Matrix4().makeRotationFromQuaternion(rotation));
+    const inertia=matrix.clone().multiply(original.inertia).multiply(matrix.clone().transpose());
+    for(let i=0;i<9;i++)expect(section.inertia.elements[i]).toBeCloseTo(inertia.elements[i],12);
+   }
+  }
  });
  it('各翼根中心随安装角保持在安装高度，尾翼中心固定梁上',()=>{
   const d=clone(defaultAircraft);d.assembly.mainIncidence=18;d.assembly.tailIncidence=-12;d.assembly.mainWingHeight=-0.5;
@@ -207,8 +260,7 @@ describe('材料目录与独立梁截面',()=>{
   for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
    const d=clone(defaultAircraft),baseline=derive(d).mass,w=d[key],section=beamSection(w.structure),p=w.points;
    const quarterDelta=p[1].x-p[0].x+((p[2].x-p[1].x)-(p[3].x-p[0].x))/4;
-   const incidence=(key==='mainWing'?d.assembly.mainIncidence:key==='horizontalTail'?d.assembly.tailIncidence:0)*DEG;
-   const beamLength=Math.hypot(quarterDelta*Math.cos(incidence),key==='verticalTail'?p[1].y:-quarterDelta*Math.sin(incidence)+p[1].y*Math.tan(w.dihedral*DEG),key==='verticalTail'?0:p[1].y)*(key==='verticalTail'?1:2);
+   const beamLength=Math.hypot(quarterDelta,p[1].y)*(key==='verticalTail'?1:2);
    for(const id of Object.keys(materialCatalog) as MaterialId[]){
     d[key].materialId=id;expect(validateAircraft(d)[key].structure).toEqual(defaultAircraft[key].structure);
     expect(derive(d).mass-baseline).toBeCloseTo((materialCatalog[id].density-materialCatalog['carbon-epoxy'].density)*section.area*beamLength,8);

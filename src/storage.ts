@@ -1,4 +1,4 @@
-import { clone, validateAircraft, type AircraftDefinition } from './model';
+import { clone, presets, validateAircraft, type AircraftDefinition } from './model';
 import type { ChallengeMode } from './challenges';
 import { isLaboratory } from './laboratory';
 import { t } from './i18n';
@@ -8,12 +8,25 @@ export interface SavedAircraft {
   name: string;
   definition: AircraftDefinition;
   updatedAt: number;
+  builtIn?: true;
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 接触点结构载荷改变形变、断裂和飞行结果，保留旧成绩但不混榜。
-export const PHYSICS_VERSION = 'adaptive-damped-v10';
+// 刚性上反角旋转统一翼面、结构、惯量与接触几何，保留旧成绩但不混榜。
+export const PHYSICS_VERSION = 'adaptive-damped-v11';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
+
+function systemAircraft(): SavedAircraft[] {
+  return presets.map(definition => ({ id: `system:${definition.name}`, name: definition.name, definition: clone(definition), updatedAt: 0, builtIn: true }));
+}
+
+function writableAircraft(id: string): void {
+  if (id.startsWith('system:')) throw new Error('系统飞机不可修改或删除，请先复制。');
+}
+
+export function isAircraftCompatible(definition: AircraftDefinition, challenge: ChallengeMode): boolean {
+  return isLaboratory(challenge) || definition.birdman === (challenge === 'birdman');
+}
 
 function storageCall<T>(operation: (storage: Storage) => T): T {
   try {
@@ -55,6 +68,11 @@ function readRecord(id: string, raw: string): SavedAircraft {
 }
 
 export function loadAircraft(id: string): SavedAircraft {
+  if (id.startsWith('system:')) {
+    const definition = presets.find(aircraft => `system:${aircraft.name}` === id);
+    if (!definition) throw new Error('未找到这架飞机，可能已被删除。');
+    return { id, name: definition.name, definition: clone(definition), updatedAt: 0, builtIn: true };
+  }
   const raw = storageCall(storage => storage.getItem(AIRCRAFT_PREFIX + id));
   if (raw === null) throw new Error('未找到这架飞机，可能已被删除。');
   try {
@@ -70,6 +88,7 @@ export function listAircraft(): SavedAircraft[] {
     for (let index = 0; index < storage.length; index++) {
       const key = storage.key(index);
       if (!key?.startsWith(AIRCRAFT_PREFIX)) continue;
+      if (key.slice(AIRCRAFT_PREFIX.length).startsWith('system:')) continue;
       const raw = storage.getItem(key);
       if (raw !== null) result.push([key.slice(AIRCRAFT_PREFIX.length), raw]);
     }
@@ -83,10 +102,11 @@ export function listAircraft(): SavedAircraft[] {
       // Keep damaged entries untouched; one damaged aircraft must not hide the others.
     }
   }
-  return aircraft.sort((a, b) => b.updatedAt - a.updatedAt);
+  return [...aircraft.sort((a, b) => b.updatedAt - a.updatedAt), ...systemAircraft()];
 }
 
 export function saveAircraft(definition: AircraftDefinition, id?: string): SavedAircraft {
+  if (id !== undefined) writableAircraft(id);
   const checked = checkedDefinition(definition);
   if (id !== undefined) loadAircraft(id);
   const saved: SavedAircraft = {
@@ -101,6 +121,7 @@ export function saveAircraft(definition: AircraftDefinition, id?: string): Saved
 }
 
 export function deleteAircraft(id: string): void {
+  writableAircraft(id);
   storageCall(storage => storage.removeItem(AIRCRAFT_PREFIX + id));
 }
 

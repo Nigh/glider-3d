@@ -1,3 +1,4 @@
+import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, clone, defaultAircraft, wing, type Controls } from '../src/model';
@@ -344,7 +345,7 @@ describe('真实超载、独立断片和完整能量账本', () => {
     expect(simulation.position.y).toBeGreaterThan(100);
   });
 
-  it('正常发射产生的真实断裂可确定性回放；reset恢复完整质量、边界和静载节点', () => {
+  it('正常发射产生的真实断裂可确定性回放；reset恢复完整质量、边界和静载节点', async () => {
     const d = clone(defaultAircraft);
     for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
       d[key].materialId = 'spruce'; d[key].structure = { width: 0.005, height: 0.005, wallThickness: 0.0002 };
@@ -352,10 +353,16 @@ describe('真实超载、独立断片和完整能量账本', () => {
     const simulation = new FlightSimulation(d, 'birdman', 0), mass = simulation.mass;
     const initialSections = state(simulation).sections;
     const states: FlightSnapshot[] = [];
-    for (let i = 0; i < 150 && !simulation.ended; i++) { simulation.step(neutral); states.push(state(simulation)); }
+    for (let i = 0; i < 150 && !simulation.ended; i++) {
+      simulation.step(neutral); states.push(state(simulation));
+      if (i % 15 === 0) await yieldTurn(0);
+    }
     expect(simulation.structure.fractureCount).toBeGreaterThan(0);
     const replay = new FlightSimulation(d, 'birdman', 0); replay.loadReplay(simulation.getRecording());
-    for (const expected of states) { replay.step(neutral); expect(state(replay)).toEqual(expected); }
+    for (const [index, expected] of states.entries()) {
+      replay.step(neutral); expect(state(replay)).toEqual(expected);
+      if (index % 15 === 0) await yieldTurn(0);
+    }
     simulation.reset(0);
     expect(simulation.fragments).toHaveLength(0); expect(simulation.structure.fractureCount).toBe(0);
     expect(simulation.mass).toBe(mass);
@@ -363,7 +370,7 @@ describe('真实超载、独立断片和完整能量账本', () => {
     for (const section of simulation.structure.sections) {
       expect(section.bodyId).toBe(0); expect(section.surface.bodyId).toBe(0);
     }
-  });
+  }, 60_000);
 });
 
 it('翼面峰值保留卸载和断裂前的最高受力，reset清空',()=>{

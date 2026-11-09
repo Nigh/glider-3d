@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, SphereGeometry, Spherical, Vector3 } from 'three';
-import { clone, defaultAircraft, DEG, engineMounts } from '../src/model';
+import { BackSide, Box3, Box3Helper, BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
+import type { Material } from 'three';
+import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin } from '../src/model';
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
@@ -8,22 +9,48 @@ import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, c
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 describe('camera clearance', () => {
-  it.each(['menu', 'design', 'birdman', 'downhill', 'low-altitude', 'test-space', 'wind-tunnel', 'result'])('keeps the observation target fixed when the camera is pushed in %s', screen => {
-    const camera = new PerspectiveCamera(), target = new Vector3(7, 3, -4), ground = 20;
+  it.each(['menu', 'design', 'birdman', 'downhill', 'low-altitude', 'test-space', 'wind-tunnel', 'result'])('bounds push and restores the original camera in %s', screen => {
+    const camera = new PerspectiveCamera(), target = new Vector3(7, 3, -4);
+    let ground = 1000;
     const view = Object.assign(Object.create(SceneView.prototype), {
       camera, controls: { enabled: true, target: target.clone() }, target: target.clone(), editorTarget: null,
       simulation: screen === 'menu' || screen === 'design' ? null : { ended: screen === 'result' },
-      view: screen === 'menu' || screen === 'design' ? 'orbit' : 'free', surfaceHeight: () => ground,
+      view: 'free', surfaceHeight: () => ground,
+      cameraClearanceOffset: new Vector3(), cameraClearanceOrigin: new Vector3(), cameraClearancePoint: new Vector3(),
     });
-    camera.position.set(-10, 0, 12);
+    const original = new Vector3(-10, 10, 12);
+    camera.position.copy(original);
     for (let frame = 0; frame < 30; frame++) {
-      camera.position.y -= 1;
+      view.restoreCameraClearance();
       view.constrainCamera();
-      expect(camera.position.y).toBe(ground + 0.55);
+      expect(camera.position.distanceTo(original)).toBeLessThanOrEqual(8 + 1e-12);
+      expect(camera.position.y).toBe(original.y + 8);
       expect(view.controls.target.equals(target)).toBe(true);
       expect(view.target.equals(target)).toBe(true);
-      expect(camera.getWorldDirection(new Vector3()).distanceTo(target.clone().sub(camera.position).normalize())).toBeLessThan(1e-12);
     }
+    ground = 0;
+    view.restoreCameraClearance();
+    view.constrainCamera();
+    expect(camera.position.distanceTo(original)).toBeLessThan(1e-12);
+    expect(camera.getWorldDirection(new Vector3()).distanceTo(target.clone().sub(camera.position).normalize())).toBeLessThan(1e-12);
+  });
+
+  it.each(['chase', 'locked', 'pilot', 'legacy-chase', 'flight-side', 'free', 'orbit'])('shortens before pushing upward in %s and restores original distance', mode => {
+    const view = flightCameraView();
+    view.view = mode;
+    view.controls.enabled = mode === 'free' || mode === 'orbit';
+    view.target.set(0, 10, 0); view.controls.target.copy(view.target);
+    view.camera.position.set(500, 10, 0);
+    let obstacle = true;
+    view.surfaceHeight = (x: number) => obstacle && x > 496 ? 20 : 0;
+    view.constrainCamera();
+    expect(view.camera.position.x).toBeLessThanOrEqual(496);
+    expect(view.camera.position.x).toBeGreaterThanOrEqual(492);
+    expect(view.camera.position.y).toBe(10);
+    obstacle = false;
+    view.restoreCameraClearance();
+    view.constrainCamera();
+    expect(view.camera.position.toArray()).toEqual([500, 10, 0]);
   });
 });
 
@@ -44,9 +71,10 @@ describe('场景编辑与推力中心', () => {
     const view=Object.assign(Object.create(SceneView.prototype),{
       definition:clone(defaultAircraft),editorTarget:'mainWing',simulation:null,editorPointerId:-1,
       renderer:{domElement:{getBoundingClientRect:()=>({left:0,top:0})}},
-      editorHandles:[{x:108,y:100,group:group()}],
+      editorHandles:[{index:0,side:1,x:108,y:100,group:group()}],
       editorSegments:[{x:200,y:200,x1:0,y1:100,x2:200,y2:100,group:group()}],
       body:new Group(),editOrigin:new Vector3(),vector:new Vector3(),editPlane:new Plane(),editPoint:new Vector3(),editStart:new Vector3(),
+      camera:new PerspectiveCamera(),vector2:new Vector3(),deformationRotation:new Quaternion(),
       intersectEditor:()=>true,resetSnap(){},controls:{enabled:true},editorOverlay:{setPointerCapture(){}},
     });
     view.beginEditorDrag({button:0,pointerId:7,clientX:100,clientY:100,ctrlKey:false,preventDefault(){},stopPropagation(){}},0);
@@ -116,13 +144,14 @@ describe('场景编辑与推力中心', () => {
       editorSegmentDrag: -1, editorDrag: 0,
       editorHandles: [{ index: 1, side: 1, x: 300, y: 248 }],
       editorSnap: { active: false, kind: null, value: null, disabled: false },
-      editStart: new Vector3(10, 0, 20), editPoint: new Vector3(10.2, 0, 20.3),
+      editStart: new Vector3(10, 0, 20),
+      editPoint: wingLocalPoint(base.mainWing, 12 * DEG, 1, 0.2, 0, 0.3, new Vector3()).add(new Vector3(10, 0, 20)),
       intersectEditor() { return true; },
       editorChange(next: typeof definition) { this.definition = next; },
     });
     const event = { pointerId: 7, ctrlKey: true, preventDefault() {} };
     view.moveEditorDrag(event);
-    expect(view.definition.mainWing.points[1].x).toBeCloseTo(base.mainWing.points[1].x - 0.2 / Math.cos(12 * DEG), 10);
+    expect(view.definition.mainWing.points[1].x).toBeCloseTo(base.mainWing.points[1].x - 0.2, 10);
     expect(view.definition.mainWing.points[1].y).toBeCloseTo(base.mainWing.points[1].y + 0.3, 10);
     expect(view.definition.mainWing.points[2].x).toBe(base.mainWing.points[2].x);
     const changed = clone(view.definition);
@@ -215,11 +244,13 @@ function flightCameraView() {
     followPosition: new Vector3(), followTarget: new Vector3(), followInitialized: false,
     cameraYaw: 0, cameraPitch: 0, cameraPointer: -1, cameraDragging: false, cameraReleasedAt: -Infinity,
     view: 'chase', width: 1440, height: 900, editorPointerId: -1, elapsed: 10, resultOrbit: false,
-    resize() {}, surfaceHeight() { return 0; },
+    cameraClearanceOffset: new Vector3(), cameraClearanceOrigin: new Vector3(), cameraClearancePoint: new Vector3(),
+    designOrbitRotation: new Quaternion(), renderCG: new Vector3(), headOffset: new Vector3(), headInverse: new Quaternion(),
+    resize() {}, refreshControlsUp() {}, surfaceHeight() { return 0; },
   });
 }
 
-it('锁定与追尾初始位置相同，平移、竖直俯仰和滚转均严格跟随，不响应拖动或地表回避', () => {
+it('锁定与追尾初始位置相同，严格跟随且不响应拖动，碰撞推挤仍有界', () => {
   const view = flightCameraView();
   view.cameraView('追尾');
   const position = view.camera.position.clone(), rotation = view.camera.quaternion.clone();
@@ -237,13 +268,14 @@ it('锁定与追尾初始位置相同，平移、竖直俯仰和滚转均严格�
     expect(view.camera.position.distanceTo(view.desiredPosition)).toBeLessThan(1e-10);
     expect(view.target.distanceTo(view.desiredTarget)).toBeLessThan(1e-10);
     expect(view.camera.up.distanceTo(new Vector3(0, 1, 0).applyQuaternion(view.aircraft.quaternion))).toBeLessThan(1e-10);
-    const lockedPosition = view.camera.position.clone(), lockedRotation = view.camera.quaternion.clone();
+    const lockedPosition = view.camera.position.clone();
     view.cameraYaw = 0.8; view.cameraPitch = 0.4;
     view.updateCameraInteraction(1);
     view.surfaceHeight = () => 1000;
     view.constrainCamera();
-    expect(view.camera.position.toArray()).toEqual(lockedPosition.toArray());
-    expect(view.camera.quaternion.toArray()).toEqual(lockedRotation.toArray());
+    expect(view.camera.position.distanceTo(lockedPosition)).toBeCloseTo(8, 10);
+    view.restoreCameraClearance();
+    expect(view.camera.position.distanceTo(lockedPosition)).toBeLessThan(1e-10);
   }
   view.surfaceHeight = () => 0;
   view.cameraView('自由');
@@ -523,5 +555,214 @@ describe('弹射蒸汽与门框边界', () => {
       const warning = gate.children[0] as Mesh<BoxGeometry, ShaderMaterial>;
       warning.geometry.dispose(); warning.material.dispose();
     }
+  });
+});
+
+function designSceneView() {
+  const view = flightCameraView();
+  const body = new Group();
+  view.aircraft.add(body);
+  Object.assign(view, {
+    simulation: null, editorTarget: 'mainWing', body, scene: new Scene(), designCG: new Vector3(),
+    editorHandles: [], editorSegments: [], editorPolygons: [svgElement(), svgElement()], editorOverlay: svgElement(),
+    workshop: new Group(), environment: new Group(), mountainEnvironment: new Group(),
+    environmentChallenge: 'birdman', environmentFog: null, debugGroup: new Group(), debug: false,
+    hoverBox: new Box3(), hoverOutline: new Box3Helper(new Box3()), hoverTarget: null,
+    renderer: { domElement: { style: { cursor: '' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 700 }) } },
+    partRay: new Raycaster(), partHits: [], partPointer: new Vector2(),
+    selectionPointer: -1, selectionTarget: null, selectionMoved: false,
+    editProjection: new Vector3(), propulsionBounds: new Box3(new Vector3(-3, -1, -1), new Vector3(3, 1, 1)),
+    updateEditorOverlay() {},
+  });
+  view.cameraView('orbit');
+  return view;
+}
+
+describe('工坊场景与直接选取', () => {
+  it('所有设计目标使用深蓝风洞房间、米制网格与刻度，并随场景统一释放资源', () => {
+    const view = designSceneView();
+    view.label = () => new Mesh(new BoxGeometry(1, 1, 0.01), new MeshBasicMaterial());
+    view.buildWorkshop();
+    const wall = view.workshop.getObjectByName('workshop-deep-blue-walls') as Mesh<BoxGeometry, MeshBasicMaterial>;
+    expect(wall.material.color.getHex()).toBe(0x102b4d);
+    expect(wall.material.side).toBe(BackSide);
+    expect(view.workshop.children.filter((child: Object3D) => child.name.endsWith('metre-grid'))).toHaveLength(5);
+    expect(view.workshop.children.filter((child: Object3D) => child.name === 'workshop-metre-label')).toHaveLength(15);
+    for (const target of ['fuselage', 'mainWing', 'horizontalTail', 'verticalTail', 'propulsion']) {
+      view.editorTarget = target;
+      view.updateEnvironment();
+      expect(view.workshop.visible).toBe(true);
+      expect(view.environment.visible).toBe(false);
+      expect(view.scene.background.getHex()).toBe(0x07182d);
+    }
+    view.editorTarget = null;
+    view.updateEnvironment();
+    expect(view.workshop.visible).toBe(false);
+    expect(view.environment.visible).toBe(true);
+    const resources = new Set<BufferGeometry | Material>();
+    view.workshop.traverse((object: Object3D) => {
+      const mesh = object as Mesh;
+      if (mesh.geometry) resources.add(mesh.geometry);
+      if (mesh.material) for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) resources.add(material);
+    });
+    let disposed = 0;
+    for (const resource of resources) resource.addEventListener('dispose', () => disposed++);
+    view.release(view.workshop);
+    expect(disposed).toBe(resources.size);
+  });
+
+  it('默认透视，切编辑目标保留用户镜头，所有设计视角空闲后不回中', () => {
+    const view = designSceneView();
+    expect(view.camera).toBe(view.perspective);
+    for (const name of ['orbit', 'top', 'side', 'front', 'rear']) {
+      view.cameraView(name);
+      view.camera.position.add(new Vector3(2, 3, 4));
+      view.controls.target.add(new Vector3(1, 2, 3));
+      const position = view.camera.position.clone(), target = view.controls.target.clone();
+      view.cameraReleasedAt = -Infinity;
+      for (const editor of ['fuselage', 'propulsion', 'mainWing', 'horizontalTail', 'verticalTail']) {
+        view.setEditor(editor, () => {}, () => {});
+        view.updateCameraInteraction(10);
+        expect(view.camera.position.distanceTo(position)).toBe(0);
+        expect(view.controls.target.distanceTo(target)).toBe(0);
+        expect(view.view).toBe(name);
+      }
+    }
+  });
+
+  it.each(['top', 'side', 'front', 'rear'])('正交%s平移缩放不切投影，旋转自动透视且保留取景与目标', name => {
+    const view = designSceneView(), changed: string[] = [];
+    view.onDesignViewChange = (value: string) => changed.push(value);
+    view.cameraView(name);
+    view.cameraDragging = true;
+    view.orthographic.zoom = 2;
+    view.orthographic.position.add(new Vector3(1, 2, 3));
+    view.controls.target.add(new Vector3(1, 2, 3));
+    view.promoteDesignPerspective();
+    expect(view.camera).toBe(view.orthographic);
+    view.orthographic.rotateY(0.1);
+    const rotation = view.orthographic.quaternion.clone(), target = view.controls.target.clone();
+    const height = (view.orthographic.top - view.orthographic.bottom) / view.orthographic.zoom;
+    view.promoteDesignPerspective();
+    expect(view.camera).toBe(view.perspective);
+    expect(view.camera.quaternion.angleTo(rotation)).toBeLessThan(1e-7);
+    expect(view.controls.target.distanceTo(target)).toBe(0);
+    expect(2 * view.camera.position.distanceTo(target) * Math.tan(view.perspective.fov * DEG / 2)).toBeCloseTo(height, 10);
+    expect(changed).toEqual([name, 'orbit']);
+  });
+
+  it('拾取实际可见部件，hover强反馈，点击与菜单双向同步；旋转和取消不误选', () => {
+    const view = designSceneView(), selected: string[] = [];
+    view.body.userData.editorTarget = 'fuselage';
+    const wing = new Mesh(new BoxGeometry(2, 1, 1), new MeshBasicMaterial());
+    wing.userData.editorTarget = 'horizontalTail';
+    view.body.add(wing);
+    const hidden = new Mesh(new BoxGeometry(3, 3, 1), new MeshBasicMaterial());
+    hidden.position.z = 2; hidden.visible = false; hidden.userData.editorTarget = 'propulsion';
+    view.body.add(hidden);
+    view.aircraft.position.set(0, 0, 0);
+    view.camera.position.set(0, 0, 10); view.camera.lookAt(0, 0, 0);
+    view.onEditorSelect = (target: string) => selected.push(target);
+    view.editorChange = () => {}; view.editorCommit = () => {};
+    const event = { button: 0, pointerId: 1, clientX: 500, clientY: 350 };
+    expect(view.pickPart(event)).toBe('horizontalTail');
+    view.movePartSelection(event);
+    expect(view.hoverOutline.visible).toBe(true);
+    expect(view.hoverBox.containsPoint(new Vector3(1, 0.5, 0.5))).toBe(true);
+    expect(view.renderer.domElement.style.cursor).toBe('pointer');
+    view.beginPartSelection(event); view.endPartSelection(event);
+    expect(view.editorTarget).toBe('horizontalTail');
+    expect(selected).toEqual(['horizontalTail']);
+    view.setEditor('fuselage', () => {}, () => {});
+    view.beginPartSelection(event);
+    view.movePartSelection({ ...event, clientX: 506 });
+    view.endPartSelection(event);
+    expect(view.editorTarget).toBe('fuselage');
+    view.beginPartSelection(event); view.cancelPartSelection(event); view.endPartSelection(event);
+    expect(selected).toHaveLength(1);
+    view.editorPointerId = 9;
+    expect(view.pickPart(event)).toBeNull();
+    view.leavePartSelection();
+    expect(view.hoverOutline.visible).toBe(false);
+    view.release(view.body);
+  });
+
+  it('机身仅提供驾驶舱与端点，动力仅提供引擎和油箱，各翼保留安装拖动', () => {
+    const view = designSceneView();
+    view.definition = clone(defaultAircraft);
+    view.definition.engine.count = 1; view.definition.fuelTank.capacity = 1;
+    view.editorHandles = Array.from({ length: 8 }, (_, index) => ({
+      group: svgElement(), leader: svgElement(), index: index < 4 ? index : index - 3,
+      side: index < 4 ? 1 : -1, x: 0, y: 0, ax: 0, ay: 0,
+    }));
+    delete view.updateEditorOverlay;
+    const shown = () => view.editorHandles.flatMap((handle: { group: { style: { display: string } } }, index: number) => handle.group.style.display === 'none' ? [] : [index]);
+    view.editorTarget = 'fuselage'; view.editorDirty = true; view.updateEditorOverlay();
+    expect(shown()).toEqual([3, 4, 5]);
+    view.editorTarget = 'propulsion'; view.editorDirty = true; view.updateEditorOverlay();
+    expect(shown()).toEqual([6, 7]);
+    for (const [key, index] of [['mainWing', 0], ['horizontalTail', 1], ['verticalTail', 2]]) {
+      view.editorTarget = key; view.editorDirty = true; view.updateEditorOverlay();
+      expect(shown()).toContain(6);
+      expect(view.editorAssemblyIndex(6)).toBe(index);
+    }
+    view.definition.engine.count = 0;
+    view.editorTarget = 'propulsion'; view.editorDirty = true; view.updateEditorOverlay();
+    expect(shown()).toEqual([]);
+  });
+
+  it.each([
+    ['fuselage', 3], ['fuselage', 4], ['fuselage', 5],
+    ['mainWing', 6], ['horizontalTail', 6], ['verticalTail', 6], ['propulsion', 6], ['propulsion', 7],
+  ])('%s手柄%d实际拖动更新对应部件，取消恢复原设计且不提交', (target, index) => {
+    const view = designSceneView(), original = clone(defaultAircraft);
+    original.engine.count = 1; original.fuelTank.capacity = 1;
+    let commits = 0;
+    const group = { style: { cursor: 'grabbing' } };
+    Object.assign(view, {
+      definition: clone(original), editDefinition: clone(original), editorTarget: target,
+      editorPointerId: 7, editorDrag: index, editorSegmentDrag: -1, editorChanged: false,
+      editorHandles: Array.from({ length: 8 }, () => ({ group })),
+      editStart: new Vector3(), editPoint: new Vector3(0.2, 0.1, 0),
+      editorSnap: { active: false, kind: null, value: null, disabled: false },
+      intersectEditor: () => true,
+      editorChange(next: typeof original) { this.definition = next; },
+      editorCommit() { commits++; },
+      editorOverlay: { hasPointerCapture: () => true, releasePointerCapture() {} },
+    });
+    view.moveEditorDrag({ pointerId: 7, ctrlKey: true, preventDefault() {} });
+    expect(view.definition).not.toEqual(original);
+    expect(view.editorChanged).toBe(true);
+    view.endEditorDrag(true);
+    expect(view.definition).toEqual(original);
+    expect(commits).toBe(0);
+    expect(view.editorPointerId).toBe(-1);
+    expect(group.style.cursor).toBe('grab');
+  });
+
+  it('上反角与安装角使用同一刚体旋转，真实翼长、渲染锚点和结构参考点一致', () => {
+    const definition = clone(defaultAircraft);
+    definition.mainWing.dihedral = 25; definition.assembly.mainIncidence = 12;
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      definition, editorTarget: 'mainWing', wingSections: [[], [], []], wingNormalGeometry: [],
+      wingNeutral: [], wingHinges: [], wingMovable: [], wingAxes: [],
+      hingeLines: [{ geometry: new BufferGeometry() }],
+    });
+    const origin = wingOrigin(definition, 'mainWing'), wing = definition.mainWing;
+    const geometry = view.wingGeometry(wing, origin.x, origin.y, 12, 0) as BufferGeometry;
+    for (const side of [-1, 1]) {
+      const point = view.wingEditorPoint(1, side, new Vector3());
+      const expected = wingLocalPoint(wing, 12 * DEG, side, -wing.points[1].x, 0, wing.points[1].y, new Vector3());
+      expected.x += origin.x; expected.y += origin.y;
+      expect(point.distanceTo(expected)).toBeLessThan(1e-12);
+      const sections = view.wingSections[0].filter((section: { side: number }) => section.side === side);
+      const first = sections[0], last = sections[sections.length - 1];
+      const rendered = new Vector3().fromBufferAttribute(geometry.getAttribute('position'), last.vertexStart + last.rows * 32);
+      expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
+      const rootQuarter = wing.points[0].x + (wing.points[3].x - wing.points[0].x) / 4;
+      const tipQuarter = wing.points[1].x + (wing.points[2].x - wing.points[1].x) / 4;
+      expect(last.referenceTip.distanceTo(first.referenceRoot)).toBeCloseTo(Math.hypot(wing.points[1].y, tipQuarter - rootQuarter), 10);
+    }
+    geometry.dispose(); view.wingNormalGeometry[0].dispose(); view.hingeLines[0].geometry.dispose();
   });
 });
