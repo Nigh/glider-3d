@@ -3,7 +3,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
@@ -20,7 +20,8 @@ const PARTICLES = 64;
 const STEAM_CAPACITY = 384;
 const STEAM_PAIRS_PER_SECOND = 120;
 const STEAM_LIFETIME = 1.6;
-type EditorTarget = 'mainWing' | 'horizontalTail' | 'verticalTail' | 'assembly' | 'propulsion' | null;
+type EditorTarget = 'fuselage' | 'mainWing' | 'horizontalTail' | 'verticalTail' | 'propulsion' | null;
+const CAMERA_MAX_PUSH = 8;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -52,6 +53,8 @@ type FragmentRender = {
 /** 湖区常驻；山谷按挑战切换释放，动态飞机与轨迹缓冲区重复使用。 */
 export class SceneView {
   readonly metrics = { fps: 60, mean: 16.7, p95: 16.7, p99: 16.7, renderMs: 0, geometryMs: 0, drawCalls: 0, triangles: 0, memory: 0, quality: 'Medium', geometries: 0, textures: 0, programs: 0 };
+  onEditorSelect: ((target: Exclude<EditorTarget, null>) => void) | null = null;
+  onDesignViewChange: ((view: string) => void) | null = null;
   private readonly crashMark = new THREE.Group();
   private crashAge = -1;
   private crashStroke: (() => void) | null = null;
@@ -61,7 +64,8 @@ export class SceneView {
   private readonly perspective = new THREE.PerspectiveCamera(43, 1, 0.1, 3000);
   private readonly orthographic = new THREE.OrthographicCamera(-15, 15, 15, -15, 0.1, 3000);
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.perspective;
-  private readonly controls: OrbitControls;
+  private controls: OrbitControls;
+  private readonly controlsUp = UP.clone();
   private readonly aircraft = new THREE.Group();
   private readonly previousPosition = new THREE.Vector3();
   private readonly previousQuaternion = new THREE.Quaternion();
@@ -130,6 +134,7 @@ export class SceneView {
   private readonly debugGroup = new THREE.Group();
   private readonly environment = new THREE.Group();
   private readonly mountainEnvironment = new THREE.Group();
+  private readonly workshop = new THREE.Group();
   private environmentChallenge: ChallengeMode = 'birdman';
   private laboratoryScene: LaboratoryScene | null = null;
   private mountainShuttle: THREE.Mesh | null = null;
@@ -194,12 +199,28 @@ export class SceneView {
   private editorTarget: EditorTarget = null;
   private editorChange: ((definition: AircraftDefinition) => void) | null = null;
   private editorCommit: (() => void) | null = null;
-  private readonly cancelEditorDrag = () => this.endEditorDrag(true);
+  private readonly cancelEditorDrag = () => {
+    this.endEditorDrag(true);
+    this.selectionPointer = -1; this.selectionTarget = null;
+    this.setHoveredPart(null);
+  };
   private editorDrag = -1;
   private editorPointerId = -1;
   private editorChanged = false;
   private editDefinition: AircraftDefinition | null = null;
   private editorDirty = true;
+  private readonly partRay = new THREE.Raycaster();
+  private readonly partHits: THREE.Intersection[] = [];
+  private readonly partPointer = new THREE.Vector2();
+  private readonly hoverBox = new THREE.Box3();
+  private readonly hoverOutline = new THREE.Box3Helper(this.hoverBox, 0x75e5ff);
+  private hoverTarget: EditorTarget = null;
+  private selectionPointer = -1;
+  private selectionX = 0;
+  private selectionY = 0;
+  private selectionMoved = false;
+  private selectionTarget: EditorTarget = null;
+  private designOrbitRotation = new THREE.Quaternion();
   private readonly trailArray = new Float32Array(TRAIL_CAPACITY * 6);
   private readonly trailGeometry = new THREE.BufferGeometry();
   private readonly trail: THREE.LineSegments;
@@ -248,6 +269,9 @@ export class SceneView {
   private readonly followPosition = new THREE.Vector3();
   private readonly followTarget = new THREE.Vector3();
   private followInitialized = false;
+  private readonly cameraClearanceOffset = new THREE.Vector3();
+  private readonly cameraClearanceOrigin = new THREE.Vector3();
+  private readonly cameraClearancePoint = new THREE.Vector3();
   private readonly vector2 = new THREE.Vector3();
   private wingTrailTime = -1;
   private readonly designCG = new THREE.Vector3();
@@ -307,6 +331,14 @@ export class SceneView {
     this.environment.add(this.detail);
     for (const marker of this.centerMarkers) marker.renderOrder = 20;
     this.buildEnvironment();
+    this.buildWorkshop();
+    this.scene.add(this.workshop, this.hoverOutline);
+    this.workshop.visible = false;
+    this.hoverOutline.visible = false;
+    this.hoverOutline.renderOrder = 110;
+    const outlineMaterial = this.hoverOutline.material as THREE.LineBasicMaterial;
+    outlineMaterial.depthTest = outlineMaterial.depthWrite = false;
+    outlineMaterial.toneMapped = outlineMaterial.fog = false;
     this.buildFuelCgRange();
     this.wingTrailGeometry.setAttribute('position', new THREE.BufferAttribute(this.wingTrailArray, 3).setUsage(THREE.DynamicDrawUsage));
     this.wingTrailGeometry.setAttribute('color', new THREE.BufferAttribute(this.wingTrailColors, 4).setUsage(THREE.DynamicDrawUsage));
@@ -343,17 +375,7 @@ export class SceneView {
     this.ring.rotation.x = -Math.PI / 2;
     this.ring.visible = false;
     this.scene.add(this.splash, this.ring);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.09;
-    this.controls.minDistance = 3;
-    this.controls.maxDistance = 700;
-    this.controls.maxPolarAngle = Math.PI * 0.94;
-    this.controls.minZoom = 0.1;
-    this.controls.maxZoom = 10;
-    this.controls.addEventListener('change', () => { this.editorDirty = true; });
-    this.controls.addEventListener('start', () => { this.cameraDragging = true; });
-    this.controls.addEventListener('end', () => { this.cameraDragging = false; this.cameraReleasedAt = this.elapsed; });
+    this.controls = this.createControls();
     this.renderer.domElement.addEventListener('pointerdown', event => {
       if (this.controls.enabled || this.view === 'locked' && !this.resultOrbit || event.button !== 0) return;
       this.cameraPointer = event.pointerId;
@@ -375,6 +397,17 @@ export class SceneView {
     };
     this.renderer.domElement.addEventListener('pointerup', releaseCamera);
     this.renderer.domElement.addEventListener('pointercancel', releaseCamera);
+    this.beginPartSelection = this.beginPartSelection.bind(this);
+    this.movePartSelection = this.movePartSelection.bind(this);
+    this.endPartSelection = this.endPartSelection.bind(this);
+    this.cancelPartSelection = this.cancelPartSelection.bind(this);
+    this.leavePartSelection = this.leavePartSelection.bind(this);
+    this.renderer.domElement.addEventListener('pointerdown', this.beginPartSelection, true);
+    this.renderer.domElement.addEventListener('pointermove', this.movePartSelection);
+    this.renderer.domElement.addEventListener('pointerup', this.endPartSelection, true);
+    this.renderer.domElement.addEventListener('pointercancel', this.cancelPartSelection);
+    this.renderer.domElement.addEventListener('lostpointercapture', this.cancelPartSelection);
+    this.renderer.domElement.addEventListener('pointerleave', this.leavePartSelection);
     this.level = 0;
     this.applyQuality();
     this.buildAircraft();
@@ -397,21 +430,50 @@ export class SceneView {
     });
   }
 
+  private createControls(): OrbitControls {
+    this.controlsUp.copy(this.camera.up);
+    const controls = new OrbitControls(this.camera, this.renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.09;
+    controls.minDistance = 3;
+    controls.maxDistance = 700;
+    controls.maxPolarAngle = Math.PI * 0.94;
+    controls.minZoom = 0.1;
+    controls.maxZoom = 10;
+    controls.addEventListener('change', () => { this.editorDirty = true; this.promoteDesignPerspective(); });
+    controls.addEventListener('start', () => { this.cameraDragging = true; });
+    controls.addEventListener('end', () => { this.cameraDragging = false; this.cameraReleasedAt = this.elapsed; });
+    return controls;
+  }
+
+  private refreshControlsUp(): void {
+    if (this.controlsUp.equals(this.camera.up)) return;
+    // OrbitControls caches the up-axis transform at construction, not when object.up changes.
+    const previous = this.controls;
+    previous.dispose();
+    this.controls = this.createControls();
+    this.controls.target.copy(previous.target);
+    this.controls.enabled = previous.enabled;
+    this.controls.enableDamping = previous.enableDamping;
+  }
+
   private readonly unsubscribeLanguage: () => void;
 
   setEditor(target: EditorTarget, onchange: (definition: AircraftDefinition) => void, oncommit: () => void): void {
     this.editorChange = onchange;
     this.editorCommit = oncommit;
     if (this.editorTarget === target) return;
+    const wasEditing = !!this.editorTarget;
     this.endEditorDrag();
     this.editorTarget = target;
+    if (!this.simulation && !!target !== wasEditing) this.positionAtLaunch();
     for (const handle of this.editorHandles) handle.x = handle.y = handle.ax = handle.ay = 0;
     for (const segment of this.editorSegments) segment.x = segment.y = segment.ax = segment.ay = 0;
     this.editorDirty = true;
     this.updateEnvironment();
     if (!this.simulation) {
       this.aircraft.rotation.set(0, 0, target ? 0 : -LAUNCH.slope);
-      this.cameraView(!target ? 'orbit' : target === 'mainWing' || target === 'horizontalTail' ? 'top' : 'side');
+      if (!!target !== wasEditing) this.cameraView('orbit');
     }
     this.updateEditorOverlay();
   }
@@ -429,8 +491,16 @@ export class SceneView {
       camera: position(this.camera.position), target: position(this.controls.enabled ? this.controls.target : this.target),
       groundHeight: this.surfaceHeight(this.camera.position.x, this.camera.position.z),
       editing: this.editorTarget, shadowVisible: this.renderer.shadowMap.enabled,
+      workshopVisible: this.workshop.visible,
+      cameraClearance: { maximumPush: CAMERA_MAX_PUSH, offset: position(this.cameraClearanceOffset) },
       editor: {
         target: this.editorTarget, dragging: this.editorDrag, segment: this.editorSegmentDrag < 0 ? null : this.editorSegments[this.editorSegmentDrag].index === 0 ? '14' : '23',
+        hover: this.hoverTarget,
+        parts: [this.beam, ...this.wingMeshes, ...this.engines.filter(engine => engine.visible)].map(object => {
+          const point = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
+          point.project(this.camera);
+          return { target: this.partTarget(object), x: (point.x + 1) * this.width / 2, y: (1 - point.y) * this.height / 2 };
+        }),
         snap: { ...this.editorSnap },
         fuselageEnds: fuselageEnds(this.definition),
         mainWingMountLimits: mainWingMountLimits(this.definition), mountSnapTolerance: this.mountSnapTolerance(),
@@ -570,7 +640,8 @@ export class SceneView {
   }
 
   private positionAtLaunch(): void {
-    this.aircraft.position.set(LAUNCH.startX, launchHeight(this.definition, this.designCG), 0);
+    if (this.editorTarget) this.aircraft.position.set(LAUNCH.startX + this.designCG.x, LAUNCH.height + 1 + this.designCG.y, this.designCG.z);
+    else this.aircraft.position.set(LAUNCH.startX, launchHeight(this.definition, this.designCG), 0);
   }
 
   private centerMarker(kind: 'cg' | 'lift' | 'drag' | 'thrust'): THREE.Group {
@@ -679,6 +750,12 @@ export class SceneView {
     const editing = !!this.editorTarget && !this.simulation;
     this.environment.visible = !editing && this.environmentChallenge === 'birdman';
     this.mountainEnvironment.visible = !editing && this.environmentChallenge !== 'birdman';
+    this.workshop.visible = editing;
+    this.workshop.position.copy(this.aircraft.position).sub(this.designCG);
+    this.scene.background = new THREE.Color(editing ? 0x07182d : 0xd4e3e4);
+    this.controls.maxDistance = editing ? 72 : 700;
+    this.controls.maxPolarAngle = editing ? Math.PI : Math.PI * 0.94;
+    if (!editing) this.setHoveredPart(null);
     this.scene.fog = editing || this.environmentChallenge === 'wind-tunnel' ? null : this.environmentFog;
     this.debugGroup.visible = this.debug && !editing;
   }
@@ -692,13 +769,175 @@ export class SceneView {
     return Math.max(0, this.groundHits[0]?.point.y ?? 0);
   }
 
-  private constrainCamera(): void {
-    if (this.editorTarget && !this.simulation || this.simulation && !this.simulation.ended && this.view === 'locked') return;
-    const minimum = this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 0.55;
-    if (this.camera.position.y >= minimum) return;
-    this.camera.position.y = minimum;
-    this.camera.lookAt(this.controls.enabled ? this.controls.target : this.target);
+  private restoreCameraClearance(): void {
+    this.camera.position.sub(this.cameraClearanceOffset);
+    this.cameraClearanceOffset.set(0, 0, 0);
   }
+
+  private constrainCamera(): void {
+    if (this.editorTarget && !this.simulation) return;
+    const target = this.controls.enabled ? this.controls.target : this.target;
+    const origin = this.cameraClearanceOrigin.copy(this.camera.position);
+    const offset = this.cameraClearanceOffset;
+    offset.set(0, 0, 0);
+    const distance = origin.distanceTo(target);
+    // Prefer shortening the sightline. Terrain walls must not cause unbounded upward teleporting.
+    if (distance > 0.001) {
+      const maximumPull = Math.min(CAMERA_MAX_PUSH, Math.max(0, distance - 0.05));
+      for (let sample = 0; sample <= 32; sample++) {
+        const fraction = 1 - maximumPull * sample / (32 * distance);
+        this.cameraClearancePoint.lerpVectors(target, origin, fraction);
+        const point = this.cameraClearancePoint;
+        if (point.y >= this.surfaceHeight(point.x, point.z) + 0.55) {
+          this.camera.position.copy(point);
+          break;
+        }
+      }
+    }
+    const minimum = this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 0.55;
+    offset.subVectors(this.camera.position, origin);
+    const maximumY = Math.sqrt(Math.max(0, CAMERA_MAX_PUSH ** 2 - offset.x ** 2 - offset.z ** 2));
+    offset.y += Math.min(Math.max(0, minimum - this.camera.position.y), Math.max(0, maximumY - offset.y));
+    this.camera.position.copy(origin).add(offset);
+    this.camera.lookAt(target);
+  }
+
+  private buildWorkshop(): void {
+    this.workshop.name = 'design-wind-tunnel';
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(160, 96, 160),
+      new THREE.MeshStandardMaterial({ color: 0x102b4d, roughness: 0.88, side: THREE.BackSide }));
+    wall.name = 'workshop-deep-blue-walls';
+    wall.position.y = 36;
+    wall.receiveShadow = true;
+    this.workshop.add(wall);
+    for (const surface of ['floor', 'back', 'front', 'left', 'right'] as const) {
+      const grid = new THREE.GridHelper(160, 160, 0x6596bf, 0x294d71);
+      grid.name = `workshop-${surface}-metre-grid`;
+      if (surface === 'floor') grid.position.y = -11.98;
+      else if (surface === 'back' || surface === 'front') {
+        grid.rotation.x = Math.PI / 2;
+        grid.position.set(0, 36, surface === 'back' ? -79.98 : 79.98);
+        grid.scale.z = 0.6;
+      } else {
+        grid.rotation.z = Math.PI / 2;
+        grid.position.set(surface === 'left' ? -79.98 : 79.98, 36, 0);
+        grid.scale.x = 0.6;
+      }
+      this.workshop.add(grid);
+    }
+    const frameMaterial = new THREE.MeshBasicMaterial({ color: 0x5280a9 });
+    const frameGeometry = new THREE.TorusGeometry(24, 0.22, 6, 48);
+    for (const side of [-1, 1]) {
+      const frame = new THREE.Mesh(frameGeometry, frameMaterial);
+      frame.name = 'wind-tunnel-duct';
+      frame.rotation.y = Math.PI / 2;
+      frame.position.set(side * 79.8, 15, 0);
+      this.workshop.add(frame);
+    }
+    for (let metre = -70; metre <= 70; metre += 10) {
+      const tick = this.label(`${metre} m`, '#d5eeff', '#102b4d', 192, 80, true);
+      tick.name = 'workshop-metre-label';
+      tick.position.set(metre, -11.96, -16);
+      tick.rotation.x = -Math.PI / 2;
+      tick.scale.set(3.6, 1.5, 1);
+      this.workshop.add(tick);
+      const wallTick = this.label(`${metre} m`, '#d5eeff', '#102b4d', 192, 80, true);
+      wallTick.position.set(metre, -8, -79.96);
+      wallTick.scale.set(3.6, 1.5, 1);
+      this.workshop.add(wallTick);
+    }
+  }
+
+  private promoteDesignPerspective(): void {
+    if (this.simulation || this.camera !== this.orthographic || !this.cameraDragging
+      || this.editorPointerId >= 0 || this.camera.quaternion.angleTo(this.designOrbitRotation) < 1e-6) return;
+    const target = this.controls.target;
+    const distance = (this.orthographic.top - this.orthographic.bottom)
+      / (2 * this.orthographic.zoom * Math.tan(this.perspective.fov * DEG / 2));
+    this.vector.subVectors(this.orthographic.position, target).setLength(distance);
+    this.perspective.position.copy(target).add(this.vector);
+    this.perspective.quaternion.copy(this.orthographic.quaternion);
+    this.perspective.up.copy(this.orthographic.up);
+    this.camera = this.perspective;
+    this.controls.object = this.camera;
+    this.view = 'orbit';
+    this.editorDirty = true;
+    this.onDesignViewChange?.('orbit');
+  }
+
+  private partTarget(object: THREE.Object3D): EditorTarget {
+    let target: EditorTarget = null;
+    for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+      if (!node.visible) return null;
+      if (!target && node.userData.editorTarget) target = node.userData.editorTarget as EditorTarget;
+    }
+    return target;
+  }
+
+  private pickPart(event: PointerEvent): EditorTarget {
+    if (!this.editorTarget || this.simulation || this.editorPointerId >= 0) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.partPointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
+    this.body.updateWorldMatrix(true, true);
+    this.camera.updateMatrixWorld();
+    this.partRay.setFromCamera(this.partPointer, this.camera);
+    this.partHits.length = 0;
+    this.partRay.intersectObject(this.body, true, this.partHits);
+    for (const hit of this.partHits) {
+      if (!(hit.object instanceof THREE.Mesh)) continue;
+      const target = this.partTarget(hit.object);
+      if (target) return target;
+    }
+    return null;
+  }
+
+  private setHoveredPart(target: EditorTarget): void {
+    this.hoverTarget = target;
+    this.hoverOutline.visible = !!target;
+    this.renderer.domElement.style.cursor = target ? 'pointer' : '';
+    if (!target) return;
+    this.hoverBox.makeEmpty();
+    this.body.traverse(object => {
+      if (object instanceof THREE.Mesh && this.partTarget(object) === target) this.hoverBox.expandByObject(object);
+    });
+    this.hoverBox.expandByScalar(0.08);
+  }
+
+  private beginPartSelection(event: PointerEvent): void {
+    if (event.button !== 0 || !this.editorTarget || this.simulation || this.editorPointerId >= 0) return;
+    if (this.selectionPointer >= 0) { this.selectionMoved = true; return; }
+    this.selectionPointer = event.pointerId;
+    this.selectionX = event.clientX; this.selectionY = event.clientY;
+    this.selectionMoved = false;
+    this.selectionTarget = this.pickPart(event);
+  }
+
+  private movePartSelection(event: PointerEvent): void {
+    if (event.pointerId === this.selectionPointer
+      && Math.hypot(event.clientX - this.selectionX, event.clientY - this.selectionY) > 5) this.selectionMoved = true;
+    if (this.selectionPointer < 0 && !this.cameraDragging) this.setHoveredPart(this.pickPart(event));
+    else this.setHoveredPart(null);
+  }
+
+  private endPartSelection(event: PointerEvent): void {
+    if (event.pointerId !== this.selectionPointer) return;
+    const target = !this.selectionMoved && this.selectionTarget === this.pickPart(event) ? this.selectionTarget : null;
+    this.selectionPointer = -1;
+    this.selectionTarget = null;
+    if (target) {
+      if (this.editorChange && this.editorCommit) this.setEditor(target, this.editorChange, this.editorCommit);
+      this.onEditorSelect?.(target);
+    }
+    this.setHoveredPart(this.pickPart(event));
+  }
+
+  private cancelPartSelection(event: PointerEvent): void {
+    if (event.pointerId !== this.selectionPointer) return;
+    this.selectionPointer = -1; this.selectionTarget = null;
+    this.setHoveredPart(null);
+  }
+
+  private leavePartSelection(): void { this.setHoveredPart(null); }
 
   private buildEditorOverlay(): void {
     const overlay = this.editorOverlay;
@@ -814,19 +1053,21 @@ export class SceneView {
 
   private wingEditorPoint(index: number, side: number, out: THREE.Vector3): THREE.Vector3 {
     const key = this.editorTarget;
-    if (!key || key === 'assembly' || key === 'propulsion') return out.set(0, 0, 0);
+    if (!key || key === 'fuselage' || key === 'propulsion') return out.set(0, 0, 0);
     const wing = this.definition[key], point = wing.points[index], origin = wingOrigin(this.definition, key);
     const vertical = key === 'verticalTail';
     const incidence = (key === 'mainWing' ? this.definition.assembly.mainIncidence : key === 'horizontalTail' ? this.definition.assembly.tailIncidence : 0) * DEG;
     if (vertical) out.set(origin.x - point.x, origin.y + point.y, 0);
-    else out.set(origin.x - point.x * Math.cos(incidence),
-      origin.y - point.x * Math.sin(incidence) + point.y * Math.tan(wing.dihedral * DEG), point.y * side);
+    else {
+      wingLocalPoint(wing, incidence, side, -point.x, 0, point.y, out);
+      out.x += origin.x; out.y += origin.y;
+    }
     return out;
   }
 
   private editorAssemblyIndex(index: number): number {
     const key = this.editorTarget;
-    if (key === 'assembly') return index;
+    if (key === 'fuselage') return index;
     if (index < 6) return -1;
     return key === 'propulsion' ? index : key === 'mainWing' ? 0 : key === 'horizontalTail' ? 1 : 2;
   }
@@ -862,9 +1103,10 @@ export class SceneView {
     this.aircraft.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
     const label = t(key === 'mainWing' ? '主翼' : key === 'horizontalTail' ? '水平尾翼' : '垂直尾翼');
+    const tailMount = key === 'horizontalTail' && this.definition.assembly.tailOnFin ? this.editorHandles[6] : undefined;
     for (let i = 0; i < this.editorHandles.length; i++) {
       const handle = this.editorHandles[i];
-      const show = key === 'assembly' ? i < 6 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
+      const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
       handle.group.style.display = show ? '' : 'none';
       if (!show) { handle.leader.style.display = 'none'; continue; }
       const assemblyIndex = this.editorAssemblyIndex(i);
@@ -875,7 +1117,8 @@ export class SceneView {
       this.body.localToWorld(this.editProjection).project(this.camera);
       const ax = (this.editProjection.x + 1) * this.width / 2, ay = (1 - this.editProjection.y) * this.height / 2;
       // Preserve the layout offset; tiny anchor changes must not restart collision placement.
-      handle.x += ax - handle.ax; handle.y += ay - handle.ay;
+      if (handle === tailMount) { handle.x = ax; handle.y = ay; }
+      else { handle.x += ax - handle.ax; handle.y += ay - handle.ay; }
       handle.ax = ax; handle.ay = ay;
       handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
@@ -886,7 +1129,7 @@ export class SceneView {
     }
     for (let i = 0; i < this.editorSegments.length; i++) {
       const segment = this.editorSegments[i];
-      const show = key !== 'assembly' && key !== 'propulsion' && (key !== 'verticalTail' || segment.side > 0);
+      const show = key !== 'fuselage' && key !== 'propulsion' && (key !== 'verticalTail' || segment.side > 0);
       segment.group.style.display = show ? '' : 'none';
       if (!show) continue;
       const first = this.editorHandles[segment.side < 0 ? 4 : segment.index];
@@ -911,6 +1154,7 @@ export class SceneView {
       segment.x += desiredX - segment.ax; segment.y += desiredY - segment.ay;
       segment.ax = desiredX; segment.ay = desiredY;
       const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
+        && (!tailMount || Math.hypot(tailMount.x - x, tailMount.y - y) >= 52 - 1e-6)
         && !this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < 52 - 1e-6);
       let placed = fits(segment.x, segment.y);
       for (let radius = 0; radius <= Math.max(this.width, this.height) && !placed; radius += 26) {
@@ -932,7 +1176,7 @@ export class SceneView {
       text.textContent = t(segment.index === 0 ? '根弦 1–4' : '梢弦 2–3');
       text.setAttribute('x', String(segment.x + 15)); text.setAttribute('y', String(segment.y + 4));
     }
-    if (key !== 'assembly') {
+    {
       const handles = this.editorHandles.filter(h => h.group.style.display !== 'none');
       const occupied = this.editorSegments.filter(s => s.group.style.display !== 'none').map(s => ({ x: s.x, y: s.y }));
       for (const handle of handles) {
@@ -940,7 +1184,7 @@ export class SceneView {
         const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
           && !occupied.some(other => Math.hypot(other.x - x, other.y - y) < 52 - 1e-6)
           && !handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < 52 - 1e-6);
-        if (!fits(handle.x, handle.y)) {
+        if (handle !== tailMount && !fits(handle.x, handle.y)) {
           let found = false;
           for (let radius = 52; radius <= Math.max(this.width, this.height) && !found; radius += 26) {
             for (let step = 0; step < 16; step++) {
@@ -960,7 +1204,7 @@ export class SceneView {
     }
     for (let side = 0; side < 2; side++) {
       const polygon = this.editorPolygons[side];
-      polygon.style.display = key === 'assembly' || key === 'propulsion' || side === 1 && key === 'verticalTail' ? 'none' : '';
+      polygon.style.display = key === 'fuselage' || key === 'propulsion' || side === 1 && key === 'verticalTail' ? 'none' : '';
       if (polygon.style.display === 'none') continue;
       let points = '';
       for (let i = 0; i < 4; i++) {
@@ -982,7 +1226,7 @@ export class SceneView {
   private beginEditorDrag(event: PointerEvent, index: number, segment = false): void {
     if (event.button !== 0 || !this.editorTarget || this.simulation || this.editorPointerId >= 0) return;
     event.preventDefault(); event.stopPropagation();
-    if (this.editorTarget !== 'assembly') {
+    {
       // Resolve overlapping 44px touch targets by visible geometry, not SVG paint order.
       const rect = this.renderer.domElement.getBoundingClientRect();
       const x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -1006,9 +1250,22 @@ export class SceneView {
       else return;
     }
     this.editDefinition = clone(this.definition);
-    this.body.getWorldPosition(this.editOrigin);
-    const sideView = this.editorTarget === 'assembly' || this.editorTarget === 'verticalTail' || this.editorTarget === 'propulsion';
-    this.editPlane.setFromNormalAndCoplanarPoint(sideView ? this.vector.set(0, 0, 1) : UP, this.editOrigin);
+    const mount = !segment && this.editorAssemblyIndex(index) >= 0;
+    const handle = segment ? this.editorSegments[index] : this.editorHandles[index];
+    if (mount) this.assemblyEditorPoint(this.editorAssemblyIndex(index), this.editOrigin);
+    else this.wingEditorPoint(handle.index, handle.side, this.editOrigin);
+    this.body.localToWorld(this.editOrigin);
+    const sideView = mount || this.editorTarget === 'fuselage' || this.editorTarget === 'verticalTail' || this.editorTarget === 'propulsion';
+    const normal = this.vector.set(0, sideView ? 0 : 1, sideView ? 1 : 0);
+    if (!sideView) {
+      const key = this.editorTarget as 'mainWing' | 'horizontalTail';
+      const incidence = (key === 'mainWing' ? this.definition.assembly.mainIncidence : this.definition.assembly.tailIncidence) * DEG;
+      wingLocalPoint(this.definition[key], incidence, handle.side, 0, 1, 0, normal);
+    }
+    normal.applyQuaternion(this.body.getWorldQuaternion(this.deformationRotation));
+    this.camera.getWorldDirection(this.vector2);
+    if (Math.abs(normal.dot(this.vector2)) < 0.15) normal.copy(this.vector2);
+    this.editPlane.setFromNormalAndCoplanarPoint(normal, this.editOrigin);
     if (!this.intersectEditor(event)) { this.editDefinition = null; return; }
     this.editStart.copy(this.editPoint);
     this.editorDrag = segment ? -1 : index;
@@ -1031,14 +1288,16 @@ export class SceneView {
     const handle = this.editorSegmentDrag >= 0 ? this.editorSegments[this.editorSegmentDrag] : this.editorHandles[this.editorDrag];
     const assemblyIndex = this.editorSegmentDrag < 0 ? this.editorAssemblyIndex(this.editorDrag) : -1;
     if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, this.editPoint.x - this.editStart.x, this.editPoint.y - this.editStart.y);
-    else if (key !== 'assembly' && key !== 'propulsion') {
+    else if (key !== 'fuselage' && key !== 'propulsion') {
       const base = this.editDefinition!;
       const incidence = (key === 'mainWing' ? base.assembly.mainIncidence : key === 'horizontalTail' ? base.assembly.tailIncidence : 0) * DEG;
       const point = base[key].points[handle.index];
-      // Tail root midpoints stay mounted, so changing one root end moves that end by half its chord change.
-      const rootScale = key !== 'mainWing' && this.editorSegmentDrag < 0 && (handle.index === 0 || handle.index === 3) ? 2 : 1;
-      let x = point.x - (this.editPoint.x - this.editStart.x) / Math.cos(incidence) * rootScale;
-      let span = point.y + (key === 'verticalTail' ? this.editPoint.y - this.editStart.y : (this.editPoint.z - this.editStart.z) * handle.side);
+      const dx = this.editPoint.x - this.editStart.x, dy = this.editPoint.y - this.editStart.y, dz = this.editPoint.z - this.editStart.z;
+      const localX = key === 'verticalTail' ? dx : dx * Math.cos(incidence) + dy * Math.sin(incidence);
+      const localHeight = -dx * Math.sin(incidence) + dy * Math.cos(incidence);
+      let span = point.y + (key === 'verticalTail' ? dy
+        : dz * handle.side * Math.cos(base[key].dihedral * DEG) + localHeight * Math.sin(base[key].dihedral * DEG));
+      let x = point.x - localX;
       if (key === 'verticalTail') {
         if (handle.index === 1 || handle.index === 2) span = this.snapEditor(span, handle.index, true);
       } else x = this.snapEditor(x, handle.index, false, this.editorSegmentDrag >= 0);
@@ -1053,17 +1312,16 @@ export class SceneView {
     event.preventDefault(); event.stopPropagation();
     this.editDefinition = clone(this.definition);
     this.resetSnap(event.ctrlKey);
-    const amount = event.shiftKey ? 0.1 : 0.025;
+    const amount = event.shiftKey ? 0.1 : 0.01;
     const horizontal = event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0;
     const vertical = event.key === 'ArrowUp' ? amount : event.key === 'ArrowDown' ? -amount : 0;
     const key = this.editorTarget;
     const assemblyIndex = segment ? -1 : this.editorAssemblyIndex(index);
     if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, horizontal, vertical);
-    else if (key !== 'assembly' && key !== 'propulsion') {
+    else if (key !== 'fuselage' && key !== 'propulsion') {
       const handle = segment ? this.editorSegments[index] : this.editorHandles[index];
       const p = this.definition[key].points[handle.index];
-      const rootScale = key !== 'mainWing' && !segment && (handle.index === 0 || handle.index === 3) ? 2 : 1;
-      let x = p.x - (key === 'verticalTail' ? horizontal : vertical) * rootScale;
+      let x = p.x - (key === 'verticalTail' ? horizontal : vertical);
       let span = p.y + (key === 'verticalTail' ? vertical : horizontal * handle.side);
       if (key === 'verticalTail') {
         if (handle.index === 1 || handle.index === 2) span = this.snapEditor(span, handle.index, true);
@@ -1085,10 +1343,10 @@ export class SceneView {
   private snapEditor(value: number, index: number, span: boolean, segment = false): number {
     if (this.editorSnap.disabled) return value;
     const tolerance = Math.min(0.02, (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height * 5);
-    let best = Math.round(value * 10) / 10, distance = Math.abs(best - value);
+    let best = Math.round(value * 100) / 100, distance = Math.abs(best - value);
     let kind: 'grid' | 'vertex' = 'grid';
     const key = this.editorTarget;
-    if (key && key !== 'assembly' && key !== 'propulsion') {
+    if (key && key !== 'fuselage' && key !== 'propulsion') {
       const points = (this.editDefinition ?? this.definition)[key].points;
       for (let i = 0; i < points.length; i++) {
         if (i === index || segment && i === (index === 0 ? 3 : 2)) continue;
@@ -1115,50 +1373,78 @@ export class SceneView {
 
   private changeSegment(index: number, x: number, span: number): void {
     const key = this.editorTarget;
-    if (!key || key === 'assembly' || key === 'propulsion') return;
+    if (!key || key === 'fuselage' || key === 'propulsion') return;
     const next = clone(this.editDefinition ?? this.definition), p = next[key].points;
     const last = index === 0 ? 3 : 2;
-    let delta = clamp(x - p[index].x, -3 - Math.min(p[index].x, p[last].x), 6 - Math.max(p[index].x, p[last].x));
-    if (key !== 'mainWing' && index === 0) {
-      const ends = fuselageEnds(next), c = Math.cos((key === 'horizontalTail' ? next.assembly.tailIncidence : 0) * DEG);
-      delta = clamp(delta, (next.assembly[key] - Math.min(5, ends.nose)) / c, (next.assembly[key] - Math.max(-6, ends.tail)) / c);
-      next.assembly[key] -= delta * c;
+    let delta = Math.round((x - p[index].x) * 100) / 100;
+    delta = clamp(delta, -3 - Math.min(p[index].x, p[last].x), 6 - Math.max(p[index].x, p[last].x));
+    if (index === 0 && !(key === 'horizontalTail' && next.assembly.tailOnFin)) {
+      const limits = wingMountLimits(next, key);
+      const c = Math.cos((key === 'mainWing' ? next.assembly.mainIncidence : key === 'horizontalTail' ? next.assembly.tailIncidence : 0) * DEG);
+      delta = clamp(delta, (next.assembly[key] - limits.max) / c, (next.assembly[key] - limits.min) / c);
     }
-    p[index].x += delta; p[last].x += delta;
-    p[0].y = p[3].y = 0;
-    if (index === 1) p[1].y = p[2].y = clamp(span, 0.25, 12);
+    if (next[key].rootReference === undefined) next[key].rootReference = (p[0].x + p[3].x) / 2;
+    const firstX = p[index].x + delta, lastX = p[last].x + delta;
+    // Shift both chord ends together; point edits use the same stable origin.
+    if (key === 'horizontalTail' && next.assembly.tailOnFin && index === 0) {
+      next.verticalTail.points[1].x = firstX; next.verticalTail.points[2].x = lastX;
+    } else {
+      p[index].x = firstX; p[last].x = lastX;
+      if (index === 1) editWingPoint(next, key, 1, firstX, span);
+    }
+    normalizeAircraftGeometry(next);
     this.editorChange?.(next);
   }
 
   private changeWing(index: number, x: number, span: number): void {
     const key = this.editorTarget;
-    if (!key || key === 'assembly' || key === 'propulsion') return;
-    const next = clone(this.editDefinition ?? this.definition), wing = next[key], p = wing.points;
-    p[index].x = clamp(x, -3, 6);
-    if (index === 0 || index === 1) p[index].x = Math.min(p[index].x, p[index === 0 ? 3 : 2].x - 0.15);
-    else p[index].x = Math.max(p[index].x, p[index === 3 ? 0 : 1].x + 0.15);
-    if (index === 1 || index === 2) p[1].y = p[2].y = clamp(span, 0.25, 12);
-    p[0].y = p[3].y = 0;
+    if (!key || key === 'fuselage' || key === 'propulsion') return;
+    const next = clone(this.editDefinition ?? this.definition);
+    editWingPoint(next, key, index, x, span);
     this.editorChange?.(next);
   }
 
   private changeAssembly(index: number, x: number, y: number): void {
     const next = clone(this.editDefinition ?? this.definition);
+    x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100;
     const ends = fuselageEnds(next);
     if (index === 0) {
       const limits = mainWingMountLimits(next);
       next.assembly.mainWing = clamp(next.assembly.mainWing + x, limits.min, limits.max);
       next.assembly.mainWingHeight = clamp(this.snapMountHeight(next.assembly.mainWingHeight + y), -0.5, 1);
-    } else if (index === 1) next.assembly.horizontalTail = clamp(next.assembly.horizontalTail + x, Math.max(-6, ends.tail), Math.min(5, ends.nose));
-    else if (index === 2) next.assembly.verticalTail = clamp(next.assembly.verticalTail + x, Math.max(-6, ends.tail), Math.min(5, ends.nose));
-    else if (index === 3) next.cockpit.position = clamp(next.cockpit.position + x, Math.max(-3, ends.tail), Math.min(4, ends.nose - 0.95));
+    } else if (index === 1) {
+      const base = this.editDefinition ?? this.definition, origin = wingOrigin(base, 'horizontalTail');
+      const middle = (base.horizontalTail.points[0].x + base.horizontalTail.points[3].x) / 2;
+      const cx = origin.x - middle * Math.cos(base.assembly.tailIncidence * DEG) + x;
+      const cy = origin.y - middle * Math.sin(base.assembly.tailIncidence * DEG) + y;
+      const fin = wingOrigin(next, 'verticalTail'), tip = next.verticalTail.points;
+      const fx = fin.x - (tip[1].x + tip[2].x) / 2, fy = tip[1].y;
+      const tolerance = Math.max(0.3, this.mountSnapTolerance() * 6);
+      const attach = !this.editorSnap.disabled && Math.hypot(cx - fx, cy - fy) <= tolerance;
+      if (attach) {
+        next.assembly.tailOnFin = true;
+        this.editorSnap.active = true; this.editorSnap.kind = 'mount'; this.editorSnap.value = fy;
+      } else {
+        next.assembly.tailOnFin = false;
+        const limits = wingMountLimits(next, 'horizontalTail');
+        const reference = next.horizontalTail.rootReference ?? middle;
+        next.assembly.horizontalTail = clamp(cx + (middle - reference) * Math.cos(next.assembly.tailIncidence * DEG), limits.min, limits.max);
+      }
+    } else if (index === 2) {
+      const limits = wingMountLimits(next, 'verticalTail');
+      next.assembly.verticalTail = clamp(next.assembly.verticalTail + x, limits.min, limits.max);
+    } else if (index === 3) {
+      const limits = cockpitLimits(next);
+      next.cockpit.position = clamp(next.cockpit.position + x, limits.min, limits.max);
+    }
     else if (index === 6) {
-      next.engine.x = clamp(next.engine.x + x, Math.max(-6, ends.tail), Math.min(5, ends.nose));
+      next.engine.x = clamp(next.engine.x + x, ends.tail, ends.nose);
       next.engine.y = normalizeEngineHeight(next, next.engine.y + y);
     } else if (index === 7) {
       const limits = fuelTankLimits(next);
       next.fuelTank.x = clamp(next.fuelTank.x + x, limits.min, limits.max);
     } else resizeFuselage(next, index === 4 ? 'nose' : 'tail', (index === 4 ? ends.nose : ends.tail) + x);
+    normalizeAircraftGeometry(next);
     this.editorChange?.(next);
   }
 
@@ -1177,10 +1463,6 @@ export class SceneView {
     }
     this.editorChanged = false;
     if (cancel) this.resetSnap(false);
-    if (this.editorTarget === 'assembly' && !this.simulation) {
-      this.centerAssemblyCamera();
-      this.resize();
-    }
   }
 
   private orthographicSpan(): number {
@@ -1193,22 +1475,14 @@ export class SceneView {
       const horizontal = top || end ? size.z : size.x, vertical = top ? size.x : size.y;
       return Math.max(1.5, horizontal / (2 * aspect * 0.78), vertical / (2 * 0.78));
     }
-    if (key === 'assembly') return Math.max(2.3, this.definition.fuselage.length / (2 * aspect * 0.8), this.definition.verticalTail.points[1].y + 0.7);
+    if (key === 'fuselage') return Math.max(2.3, this.definition.fuselage.length / (2 * aspect * 0.8), Math.abs(this.definition.verticalTail.points[1].y) + 0.7);
     const wing = this.definition[key], p = wing.points;
     const chord = Math.max(p[2].x, p[3].x) - Math.min(p[0].x, p[1].x);
     const horizontal = key === 'verticalTail' ? chord / 2 : p[1].y;
-    const vertical = key === 'verticalTail' ? p[1].y / 2 : chord / 2;
+    const vertical = key === 'verticalTail' ? Math.abs(p[1].y) / 2 : chord / 2;
     return Math.max(2.3, horizontal / (aspect * (this.width <= 700 ? 0.72 : 0.62)), vertical / (this.width <= 700 ? 0.32 : 0.62));
   }
 
-  private centerAssemblyCamera(): void {
-    const center = this.aircraft.position.x + this.definition.fuselage.center - this.designCG.x;
-    const delta = center - this.controls.target.x;
-    this.controls.target.x = center;
-    this.target.x += delta;
-    this.camera.position.x += delta;
-    this.editorDirty = true;
-  }
 
   updateAircraft(d: AircraftDefinition): void {
     this.definition = d;
@@ -1247,7 +1521,7 @@ export class SceneView {
       const span = Math.max(wing.points[1].y, 0.1);
       for (let vertex = 0; vertex < position.count; vertex++) {
         const moving = this.wingMovable[i][vertex] !== 0;
-        const orange = i === 2 ? !moving : moving || i === 0 && Math.abs(position.getZ(vertex)) > span * 0.82;
+        const orange = moving || i === 0 && Math.abs(position.getZ(vertex)) > span * 0.82;
         (orange ? this.wingTipColor : this.wingBaseColor).toArray(colors, vertex * 3);
       }
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -1270,6 +1544,7 @@ export class SceneView {
     this.nose.position.x = fuselageEnds(d).nose + BODY_GEOMETRY.nose.x;
     this.pilot.position.x = d.cockpit.position;
     this.cockpit.position.x = d.cockpit.position;
+    this.updateCockpitShell();
     this.pilot.visible = d.birdman;
     this.cockpit.visible = !d.birdman;
     this.updatePropulsionGeometry();
@@ -1281,25 +1556,26 @@ export class SceneView {
     }
     this.syncWingPhysics();
     this.updateControlSurfaces();
-    if (!this.simulation && this.editorTarget === 'assembly' && this.editorPointerId < 0) this.centerAssemblyCamera();
-    if (!this.simulation && this.editorTarget === 'propulsion') {
-      this.propulsionBounds.getCenter(this.vector).sub(this.designCG).add(this.aircraft.position);
-      this.vector2.copy(this.vector).sub(this.controls.target);
-      this.controls.target.copy(this.vector);
-      this.target.copy(this.vector);
-      this.camera.position.add(this.vector2);
-    }
     this.updateCenters();
-    const cameraSpan = this.orthographicSpan();
-    if (this.editorPointerId < 0 && this.orthographic.top !== cameraSpan) {
-      const halfWidth = cameraSpan * this.width / this.height;
-      this.orthographic.left = -halfWidth;
-      this.orthographic.right = halfWidth;
-      this.orthographic.top = cameraSpan;
-      this.orthographic.bottom = -cameraSpan;
-      this.orthographic.updateProjectionMatrix();
-    }
+    if (this.hoverTarget) this.setHoveredPart(this.hoverTarget);
     this.metrics.geometryMs = performance.now() - start;
+  }
+
+  private updateCockpitShell(): void {
+    const shell = this.cockpit.getObjectByName('streamlined-cockpit-shell') as THREE.Mesh;
+    const geometry = shell.geometry, positions = geometry.getAttribute('position');
+    const rearLength = this.definition.cockpit.rearLength ?? BODY_GEOMETRY.shell.xRadius;
+    if (geometry.userData.rearLength === rearLength) return;
+    const original = geometry.userData.originalPositions ??= new Float32Array(positions.array);
+    const ratio = rearLength / BODY_GEOMETRY.shell.xRadius;
+    for (let i = 0; i < positions.count; i++) {
+      const x = original[i * 3];
+      positions.setX(i, x < 0 ? x * ratio : x);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    geometry.userData.rearLength = rearLength;
   }
 
   private wingChanged(index: number, wing: Wing, root: number, height: number, incidence: number): boolean {
@@ -1342,13 +1618,13 @@ export class SceneView {
     glass.name = 'cockpit-canopy';
     glass.scale.set(BODY_GEOMETRY.canopy.xRadius, BODY_GEOMETRY.canopy.yRadius, BODY_GEOMETRY.canopy.zRadius);
     glass.position.set(BODY_GEOMETRY.canopy.x, BODY_GEOMETRY.canopy.y, 0);
-    this.beam = this.mesh(new THREE.CylinderGeometry(0.085, BODY_GEOMETRY.beamRadius, 1, 8), graphite, this.body);
+    this.beam = this.mesh(new THREE.CylinderGeometry(0.05, BODY_GEOMETRY.beamRadius, 1, 24), ivory, this.body);
     this.beam.rotation.z = Math.PI / 2;
     this.support = this.mesh(new THREE.BoxGeometry(1, 1, 0.06), graphite, this.body);
     this.support.name = 'main-wing-support';
     this.support.matrixAutoUpdate = false;
     this.support.visible = false;
-    this.nose = this.mesh(new THREE.SphereGeometry(0.22, 10, 7), ivory, this.body);
+    this.nose = this.mesh(new THREE.SphereGeometry(0.22, 10, 7), orange, this.body);
     this.nose.position.set(0, BODY_GEOMETRY.nose.y, 0);
     this.nose.scale.set(BODY_GEOMETRY.nose.xRadius / 0.22, BODY_GEOMETRY.nose.yRadius / 0.22, BODY_GEOMETRY.nose.zRadius / 0.22);
     const seat = this.mesh(new THREE.BoxGeometry(1.65, 0.11, 0.46), graphite, this.pilot);
@@ -1373,6 +1649,12 @@ export class SceneView {
     skid.rotation.z = Math.PI / 2;
     skid.position.set(0, -0.45, 0);
     this.buildPropulsion();
+    this.body.userData.editorTarget = 'fuselage';
+    for (let i = 0; i < this.wingMeshes.length; i++) this.wingMeshes[i].userData.editorTarget = ['mainWing', 'horizontalTail', 'verticalTail'][i];
+    this.support.userData.editorTarget = 'mainWing';
+    for (const engine of this.engines) engine.userData.editorTarget = 'propulsion';
+    for (const support of this.engineSupports) support.userData.editorTarget = 'propulsion';
+    this.fuelTank.userData.editorTarget = 'propulsion';
   }
 
   private buildPropulsion(): void {
@@ -1633,6 +1915,7 @@ export class SceneView {
   }
 
   cameraView(name: string): void {
+    this.restoreCameraClearance();
     const names: Record<string, string> = { '俯视': 'top', '侧视': 'side', '正视': 'front', '后视': 'rear', '追尾': 'chase', '锁定': 'locked', '侧追尾': 'legacy-chase', '侧面': 'flight-side', '驾驶员': 'pilot', '自由': 'free', '自由镜头': 'free', '轨道': 'orbit', '三维': 'orbit', 'perspective': 'orbit', 'cockpit': 'pilot', 'follow': 'chase', 'back': 'rear' };
     this.view = names[name] ?? name;
     this.cameraYaw = this.cameraPitch = 0;
@@ -1641,7 +1924,6 @@ export class SceneView {
     this.cameraReleasedAt = -Infinity;
     if (this.cameraPointer >= 0 && this.renderer.domElement.hasPointerCapture(this.cameraPointer)) this.renderer.domElement.releasePointerCapture(this.cameraPointer);
     this.cameraPointer = -1;
-    if (!this.simulation && this.editorTarget) this.view = this.editorTarget === 'mainWing' || this.editorTarget === 'horizontalTail' ? 'top' : 'side';
     const orthographic = ['top', 'side', 'front', 'rear'].includes(this.view);
     this.camera = orthographic ? this.orthographic : this.perspective;
     this.controls.object = this.camera;
@@ -1649,13 +1931,15 @@ export class SceneView {
     this.controls.enableRotate = true;
     this.controls.enableDamping = this.view !== 'locked';
     this.target.copy(this.aircraft.position);
-    if (this.editorTarget && this.editorTarget !== 'assembly' && this.editorTarget !== 'propulsion' && !this.simulation) {
+    if (this.editorTarget && this.editorTarget !== 'fuselage' && this.editorTarget !== 'propulsion' && !this.simulation) {
       const key = this.editorTarget, wing = this.definition[key], origin = wingOrigin(this.definition, key);
       const incidence = (key === 'mainWing' ? this.definition.assembly.mainIncidence : key === 'horizontalTail' ? this.definition.assembly.tailIncidence : 0) * DEG;
       const chord = (wing.points[0].x + wing.points[1].x + wing.points[2].x + wing.points[3].x) / 4;
-      this.target.x += origin.x - chord * Math.cos(incidence) - this.designCG.x;
-      this.target.y += origin.y - chord * Math.sin(incidence) + (key === 'verticalTail' ? wing.points[1].y / 2 : wing.points[1].y / 2 * Math.tan(wing.dihedral * DEG)) - this.designCG.y;
-    } else if (this.editorTarget === 'assembly' && !this.simulation) {
+      if (key === 'verticalTail') this.vector.set(-chord, wing.points[1].y / 2, 0);
+      else wingLocalPoint(wing, incidence, 1, -chord, 0, wing.points[1].y / 2, this.vector);
+      this.target.x += origin.x + this.vector.x - this.designCG.x;
+      this.target.y += origin.y + this.vector.y - this.designCG.y;
+    } else if (this.editorTarget === 'fuselage' && !this.simulation) {
       this.target.x += this.definition.fuselage.center - this.designCG.x;
       this.target.y -= this.designCG.y;
     } else if (this.editorTarget === 'propulsion' && !this.simulation) {
@@ -1673,14 +1957,19 @@ export class SceneView {
     this.camera.up.set(this.view === 'top' ? 1 : 0, this.view === 'top' ? 0 : 1, 0);
     this.camera.position.copy(this.target).add(this.vector);
     this.camera.lookAt(this.target);
+    this.refreshControlsUp();
     this.orthographic.zoom = 1;
     this.resize();
     this.editorDirty = true;
     this.controls.update();
-    this.constrainCamera();
     if (this.simulation && (!this.controls.enabled || this.view === 'free')) this.followCamera(1, true);
     this.cameraHome.copy(this.camera.position);
     this.targetHome.copy(this.controls.target);
+    if (orthographic && !this.simulation) {
+      this.designOrbitRotation.copy(this.camera.quaternion);
+    }
+    this.constrainCamera();
+    if (!this.simulation) this.onDesignViewChange?.(this.view);
   }
 
   setQuality(name: Quality): void {
@@ -1740,6 +2029,7 @@ export class SceneView {
   render(dt: number, alpha = 1): void {
     if (this.disposed) return;
     const start = performance.now();
+    this.restoreCameraClearance();
     this.applyAircraft();
     const seconds = Math.min(0.1, Math.max(0, Number.isFinite(dt) ? dt : 0));
     this.elapsed += seconds;
@@ -1761,6 +2051,7 @@ export class SceneView {
       if (inWater && !this.wasInWater) this.beginSplash(sim.telemetry.waterContact ? sim.telemetry.waterContactPoint : sim.position);
       this.wasInWater = inWater;
     }
+    if (!sim && this.editorTarget) this.workshop.position.copy(this.aircraft.position).sub(this.designCG);
     if (this.crashAge >= 0) {
       const previous = this.crashAge; this.crashAge += seconds;
       if (previous < 0.4 && this.crashAge >= 0.4) this.crashStroke?.();
@@ -1805,11 +2096,20 @@ export class SceneView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.endEditorDrag(true);
+    this.selectionPointer = -1; this.selectionTarget = null;
     this.resizeObserver.disconnect();
     this.layoutObserver.disconnect();
     window.removeEventListener('blur', this.cancelEditorDrag);
     this.unsubscribeLanguage();
     this.controls.dispose();
+    this.renderer.domElement.removeEventListener('pointerdown', this.beginPartSelection, true);
+    this.renderer.domElement.removeEventListener('pointermove', this.movePartSelection);
+    this.renderer.domElement.removeEventListener('pointerup', this.endPartSelection, true);
+    this.renderer.domElement.removeEventListener('pointercancel', this.cancelPartSelection);
+    this.renderer.domElement.removeEventListener('lostpointercapture', this.cancelPartSelection);
+    this.renderer.domElement.removeEventListener('pointerleave', this.leavePartSelection);
+    this.onEditorSelect = this.onDesignViewChange = null;
     this.editorOverlay.remove();
     for (const geometry of this.wingNormalGeometry) geometry.dispose();
     this.release(this.scene);
@@ -1842,15 +2142,16 @@ export class SceneView {
     sections.length = 0;
     const vertical = index === 2, fraction = wing.controlSurface, hingeFraction = 1 - fraction;
     const profileCount = 32, chordSteps = 16;
-    const c = Math.cos(incidence * DEG), s = Math.sin(incidence * DEG), dihedral = Math.tan(wing.dihedral * DEG);
-    const halfSpan = wing.points[1].y;
+    const angle = incidence * DEG;
+    const point = new THREE.Vector3(), hinge = new THREE.Vector3();
+    const halfSpan = Math.abs(wing.points[1].y), spanSign = vertical ? Math.sign(wing.points[1].y) : 1;
     const rootChord = wing.points[3].x - wing.points[0].x, tipChord = wing.points[2].x - wing.points[1].x;
     const rootHinge = -wing.points[0].x - hingeFraction * rootChord;
     const tipHinge = -wing.points[1].x - hingeFraction * tipChord;
     const axes: THREE.Vector3[] = [];
     for (const side of vertical ? [1] : [-1, 1]) {
-      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, halfSpan, 0).normalize())
-        : new THREE.Vector3((tipHinge - rootHinge) * c, (tipHinge - rootHinge) * s + halfSpan * dihedral, halfSpan * side).normalize());
+      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, spanSign * halfSpan, 0).normalize())
+        : wingLocalPoint(wing, angle, side, tipHinge - rootHinge, 0, halfSpan, new THREE.Vector3()).normalize());
       let previous: WingRenderSection | null = null;
       for (let start = 0; start < halfSpan - 1e-10; start += SURFACE_STEP) {
         const end = Math.min(start + SURFACE_STEP, halfSpan), rows = Math.max(1, Math.ceil((end - start) / 0.2));
@@ -1873,13 +2174,19 @@ export class SceneView {
           const trailing = THREE.MathUtils.lerp(wing.points[3].x, wing.points[2].x, t), chord = trailing - leading;
           const hingeX = -leading - hingeFraction * chord;
           const hingeY = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * hingeFraction);
-          const hx = rootX + (vertical ? fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX : hingeX * c - hingeY * s);
-          const hy = height + (vertical ? span : hingeX * s + hingeY * c + span * dihedral);
-          const hz = vertical ? 0 : span * side;
+          if (vertical) hinge.set(rootX + (fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX), height + spanSign * span, 0);
+          else {
+            wingLocalPoint(wing, angle, side, hingeX, hingeY, span, hinge);
+            hinge.x += rootX; hinge.y += height;
+          }
           if (row === 0 || row === rows) {
             const reference = row === 0 ? section.referenceRoot : section.referenceTip;
             const quarter = -leading - chord * 0.25;
-            reference.set(rootX + quarter * c, vertical ? height + span : height + quarter * s + span * dihedral, vertical ? 0 : span * side);
+            if (vertical) reference.set(rootX + quarter, height + spanSign * span, 0);
+            else {
+              wingLocalPoint(wing, angle, side, quarter, 0, span, reference);
+              reference.x += rootX; reference.y += height;
+            }
           }
           for (let k = 0; k < profileCount; k++) {
             const upper = k <= chordSteps, j = upper ? k : profileCount - k;
@@ -1890,16 +2197,19 @@ export class SceneView {
             const thickness = 5 * 0.105 * chord * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
             const camber = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u);
             const x = -leading - u * chord, y = camber + (upper ? thickness : -thickness);
-            if (vertical) vertices.push(rootX + x, height + span, y);
-            else vertices.push(rootX + x * c - y * s, height + x * s + y * c + span * dihedral, span * side);
-            hinges.push(hx, hy, hz);
+            if (vertical) vertices.push(rootX + x, height + spanSign * span, y);
+            else {
+              wingLocalPoint(wing, angle, side, x, y, span, point);
+              vertices.push(rootX + point.x, height + point.y, point.z);
+            }
+            hinges.push(hinge.x, hinge.y, hinge.z);
             movable.push(fraction > 0 && u >= hingeFraction ? 1 : 0);
           }
         }
         for (let row = 0; row < rows; row++) {
           for (let k = 0; k < profileCount; k++) {
             const a = section.vertexStart + row * profileCount + k, b = section.vertexStart + row * profileCount + (k + 1) % profileCount;
-            if (vertical || side < 0) section.skin.push(a, b + profileCount, b, a, a + profileCount, b + profileCount);
+            if (vertical ? spanSign > 0 : side < 0) section.skin.push(a, b + profileCount, b, a, a + profileCount, b + profileCount);
             else section.skin.push(a, b, b + profileCount, a, b + profileCount, a + profileCount);
           }
         }
@@ -1915,7 +2225,7 @@ export class SceneView {
           }
           const capIndices = cap === 0 ? section.rootIndices : section.tipIndices;
           for (let k = 1; k < profileCount - 1; k++) {
-            const reverse = (cap === 0) !== (vertical || side < 0);
+            const reverse = (cap === 0) !== (vertical ? spanSign > 0 : side < 0);
             if (reverse) capIndices.push(base, base + k, base + k + 1);
             else capIndices.push(base, base + k + 1, base + k);
           }
@@ -3159,7 +3469,6 @@ export class SceneView {
     this.desiredTarget.sub(this.renderCG);
     this.desiredPosition.applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
     this.desiredTarget.applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
-    this.desiredPosition.y = Math.max(0.45, this.desiredPosition.y);
     const blend = immediate || pilot || this.reducedMotion ? 1 : 1 - Math.exp(-dt * 4.2);
     this.camera.position.lerp(this.desiredPosition, blend);
     this.target.lerp(this.desiredTarget, blend);
@@ -3169,7 +3478,7 @@ export class SceneView {
 
   private updateCameraInteraction(dt: number): void {
     // Editing disables OrbitControls; do not mistake that for a flight camera orbit.
-    if (this.editorPointerId >= 0) return;
+    if (!this.simulation || this.editorPointerId >= 0) return;
     if ((this.view === 'free' || this.view === 'locked') && !this.resultOrbit) return;
     const returning = !this.cameraDragging && this.elapsed - this.cameraReleasedAt > 3;
     const blend = 1 - Math.exp(-dt * 0.35);

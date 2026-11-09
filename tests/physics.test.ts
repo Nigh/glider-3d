@@ -1,11 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
-import { clone, defaultAircraft, DEG, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
-import { coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
+import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
+import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
 function definition(change?: (d: AircraftDefinition) => void) { const d = clone(defaultAircraft); change?.(d); return d; }
+function cockpitDrag(d: AircraftDefinition, cg: Vector3, velocity: Vector3, omega = new Vector3()) {
+  const force = velocity.clone().multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * 0.07), torque = new Vector3();
+  for (const [index, shape] of (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).entries()) {
+    const arm = new Vector3(d.cockpit.position + shape.x, shape.y, 0).sub(cg);
+    const v = new Vector3().crossVectors(omega, arm).add(velocity), speed = v.length(), exposed = index === 0 ? 1 : 0.5;
+    const projected = speed > 0 ? Math.PI * shape.xRadius * shape.yRadius * shape.zRadius
+      * Math.hypot(v.x / shape.xRadius, v.y / shape.yRadius, v.z / shape.zRadius) / speed : 0;
+    const area = exposed * (0.18 * projected + 0.004 * 2 * Math.PI * shape.xRadius * (shape.yRadius + shape.zRadius));
+    const drag = v.multiplyScalar(-0.5 * AIR_DENSITY * speed * area);
+    force.add(drag); torque.add(new Vector3().crossVectors(arm, drag));
+  }
+  return { force, torque };
+}
 function release(s = new FlightSimulation(defaultAircraft, 'birdman', 0)) {
   while (s.launching) s.step(neutral);
   expect(s.ended).toBe(false);
@@ -35,11 +48,12 @@ function budget(s: FlightSimulation) {
 }
 function world(s: FlightSimulation, point: Vector3) { return point.clone().sub(s.aircraft.cg).applyQuaternion(s.quaternion).add(s.position); }
 function keelPoints(d: AircraftDefinition) {
-  const { nose, tail } = fuselageEnds(d);
-  const points = [new Vector3(nose, -0.12, 0), new Vector3(tail, -0.12, 0), new Vector3(d.cockpit.position - 0.75, -0.495, 0)];
+  const { nose, tail } = fuselageEnds(d), shell = cockpitGeometry(d);
+  const points = [new Vector3(nose, -0.12, 0), new Vector3(tail, -0.12, 0),
+    new Vector3(d.cockpit.position + shell.x, shell.y - shell.yRadius, 0)];
   for (const key of ['mainWing', 'horizontalTail'] as const) {
     const origin = wingOrigin(d, key), angle = (key === 'mainWing' ? d.assembly.mainIncidence : d.assembly.tailIncidence) * DEG;
-    for (const point of d[key].points) for (const side of [-1, 1]) points.push(new Vector3(origin.x - point.x * Math.cos(angle), origin.y - point.x * Math.sin(angle) + point.y * Math.tan(d[key].dihedral * DEG), side * point.y));
+    for (const point of d[key].points) for (const side of [-1, 1]) points.push(wingLocalPoint(d[key], angle, side, -point.x, 0, point.y, new Vector3()).add(new Vector3(origin.x, origin.y, 0)));
   }
   return points;
 }
@@ -147,7 +161,9 @@ describe('展向条带与完整翼面', () => {
       s.position.y = 280;
       s.velocity.set(12 * Math.cos(a.alpha) * Math.cos(a.beta), -12 * Math.sin(a.alpha) * Math.cos(a.beta), 12 * Math.sin(a.beta));
     });
-    const sum = a.bodyDrag.clone(), torque = new Vector3();
+    const velocity = new Vector3(12 * Math.cos(a.alpha) * Math.cos(a.beta), -12 * Math.sin(a.alpha) * Math.cos(a.beta), 12 * Math.sin(a.beta));
+    const body = cockpitDrag(defaultAircraft, p.cg, velocity), sum = a.bodyDrag.clone(), torque = body.torque.clone();
+    expect(a.bodyDrag.distanceTo(body.force)).toBeLessThan(1e-10);
     for (let i = 0; i < a.wings.length; i++) {
       expect(s.telemetry.aerodynamics.wings[i].force.distanceTo(a.wings[i].force)).toBeLessThan(0.02);
       sum.add(a.wings[i].force); torque.add(a.wings[i].torque);
@@ -229,7 +245,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
   });
 
   it('最后尾而非CG计距，横向飞行与偏航使用同一径向几何标准，距离非负', () => {
-    const d = definition(d => { d.fuselage.length = 8; d.horizontalTail = wing(2, 0.4, 0.4); d.verticalTail = wing(2, 0.4, 0.4); d.assembly.horizontalTail = -2.5; d.assembly.verticalTail = -2.5; });
+    const d = definition(d => { d.fuselage.length = 8; d.mainWing.dihedral = 0; d.horizontalTail = wing(2, 0.4, 0.4); d.verticalTail = wing(2, 0.4, 0.4); d.assembly.horizontalTail = -2.5; d.assembly.verticalTail = -2.5; });
     for (const yaw of [0, 0.7, -1.2]) {
       const s = probe(d, s => { s.quaternion.setFromAxisAngle(axisY, yaw); s.position.set(50 * Math.cos(yaw), 80, -50 * Math.sin(yaw)); s.velocity.set(0, 0, 0); }, 1e-8);
       expect(s.telemetry.distance).toBeCloseTo(50 - 4 - s.aircraft.cg.x, 6);
@@ -520,5 +536,135 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(() => s.loadReplay({ frames: new Float64Array([NaN, 0, 0, 0, 0]), length: 1, launchRoll: 0 })).toThrow();
     expect(() => s.loadReplay({ frames: new Float64Array(), length: 0, launchRoll: 2 * DEG })).toThrow();
     expect(() => s.step({ ...neutral, lateral: NaN })).toThrow();
+  });
+});
+
+describe('驾驶舱与尾翼几何的物理消费者', () => {
+  function evaluate(s: FlightSimulation, velocity: Vector3, omega = new Vector3()) {
+    s.structure.reset(); s.quaternion.identity(); s.velocity.copy(velocity); s.omega.copy(omega);
+    (Reflect.get(s, 'syncContacts') as () => void).call(s);
+    const calculate = Reflect.get(s, 'evaluateForces') as (input: Controls, velocity: Vector3, omega: Vector3, orientation: typeof s.quaternion, position: Vector3) => void;
+    calculate.call(s, neutral, velocity, omega, s.quaternion, s.position);
+  }
+
+  it('驾驶舱阻力使用安装点局部转动来流，力矩与耗散不藏进自由力偶', () => {
+    const d = definition(d => { d.birdman = false; });
+    const s = new FlightSimulation(d, 'test-space', 0), velocity = new Vector3(), omega = new Vector3(0, 0, 0.7);
+    s.position.set(40, 280, 0); evaluate(s, velocity, omega);
+    const body = cockpitDrag(s.definition, s.cg, velocity, omega), force = new Vector3(), torque = new Vector3();
+    let power = 0;
+    for (const surface of s.surfaces) {
+      const arm = surface.point.clone().sub(s.cg);
+      force.add(surface.force); torque.add(new Vector3().crossVectors(arm, surface.force));
+      power += surface.drag.dot(new Vector3().crossVectors(omega, arm));
+    }
+    expect(s.telemetry.force.clone().sub(force).distanceTo(body.force)).toBeLessThan(1e-9);
+    expect(s.telemetry.torque.clone().sub(torque).distanceTo(body.torque)).toBeLessThan(1e-9);
+    expect(body.torque.dot(omega)).toBeLessThan(0);
+    expect(s.telemetry.aeroPower - power).toBeCloseTo(body.torque.dot(omega), 9);
+  });
+
+  it('后段伸缩同时改变质量、惯量、气动阻力、油箱上限与真实接触包络', () => {
+    const short = definition(d => { d.birdman = false; d.cockpit.rearLength = 0.2; });
+    const long = definition(d => { d.birdman = false; d.cockpit.rearLength = 2.5; });
+    const a = derive(short), b = derive(long);
+    expect(b.mass - a.mass).toBeCloseTo(cockpitMass(long) - cockpitMass(short), 10);
+    // 惯量转到共同机体原点后比较；CG随壳体后移，总CG惯量不保证单调。
+    const cabinMoments = [short, long].map(d => {
+      const shell = cockpitGeometry(d), mass = cockpitMass(d), x = d.cockpit.position + shell.x, y = shell.y;
+      return new Vector3(mass * ((shell.yRadius ** 2 + shell.zRadius ** 2) / 5 + y ** 2),
+        mass * ((shell.xRadius ** 2 + shell.zRadius ** 2) / 5 + x ** 2),
+        mass * ((shell.xRadius ** 2 + shell.yRadius ** 2) / 5 + x ** 2 + y ** 2));
+    });
+    for (const axis of ['x', 'y', 'z'] as const) {
+      const originMoments = [a, b].map(p => p.inertia[axis] + p.mass * (p.cg.lengthSq() - p.cg[axis] ** 2));
+      expect(originMoments[1] - originMoments[0]).toBeCloseTo(cabinMoments[1][axis] - cabinMoments[0][axis], 9);
+    }
+    const cabinProducts = [short, long].map(d => {
+      const shell = cockpitGeometry(d);
+      return -cockpitMass(d) * (d.cockpit.position + shell.x) * shell.y;
+    });
+    const originProducts = [a, b].map(p => p.inertiaTensor.elements[3] - p.mass * p.cg.x * p.cg.y);
+    expect(originProducts[1] - originProducts[0]).toBeCloseTo(cabinProducts[1] - cabinProducts[0], 9);
+    expect(b.aerodynamics.bodyDrag.length()).toBeGreaterThan(a.aerodynamics.bodyDrag.length());
+    expect(fuelCapacityLimit(short)).toBeLessThan(fuelCapacityLimit(long));
+    const shells = [short, long].map(d => new FlightSimulation(d, 'test-space', 0));
+    for (const s of shells) {
+      const shell = cockpitGeometry(s.definition);
+      const hull = contacts(s).filter(point => Reflect.get(point, 'sectionId') === undefined && Math.abs(point.y - shell.y) < 1e-10);
+      expect(hull.some(point => Math.abs(point.x - (s.definition.cockpit.position + shell.x - shell.xRadius)) < 1e-10)).toBe(true);
+      expect(hull.some(point => Math.abs(point.x - (s.definition.cockpit.position + shell.x + shell.xRadius)) < 1e-10)).toBe(true);
+      s.position.set(40, s.cg.y - shell.y + shell.yRadius - 0.1, 100);
+      evaluate(s, new Vector3());
+      expect(s.telemetry.force.y).toBeGreaterThan(0);
+    }
+    expect(shells[1].telemetry.force.y).toBeGreaterThan(shells[0].telemetry.force.y);
+    const fueled = clone(short); fueled.birdman = false; fueled.engine.count = 1; fueled.fuelTank.capacity = 40;
+    const tank = new FlightSimulation(fueled, 'low-altitude', 0);
+    expect(tank.telemetry.fuelRemaining).toBeCloseTo(fuelCapacityLimit(short), 10);
+    expect(tank.aircraft.mass - derive(short).mass).toBeGreaterThan(tank.telemetry.fuelRemaining * 0.8);
+  });
+
+  it('鸟人间隐藏驾驶舱不改变座架质量、接触点与机身阻力', () => {
+    const samples = [0.2, 2.5].map(rearLength => new FlightSimulation(definition(d => { d.cockpit.rearLength = rearLength; }), 'birdman', 0));
+    const [a, b] = samples;
+    expect(b.aircraft.mass).toBe(a.aircraft.mass);
+    expect(b.cg.toArray()).toEqual(a.cg.toArray());
+    expect(b.aircraft.inertiaTensor.elements).toEqual(a.aircraft.inertiaTensor.elements);
+    expect(contacts(b).map(point => point.toArray())).toEqual(contacts(a).map(point => point.toArray()));
+    const velocity = new Vector3(12, 0, 0), drag = velocity.clone().multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * 0.07);
+    for (const s of samples) {
+      s.position.set(40, 280, 0); evaluate(s, velocity);
+      expect(s.telemetry.aerodynamics.bodyDrag.toArray()).toEqual(drag.toArray());
+    }
+  });
+
+  it.each([-0.5, 0.5])('有符号垂尾高度 %r 保留条带面积、侧向恢复力、惯量与接触高度', height => {
+    const d = definition(d => { d.verticalTail.points[1].y = height; d.verticalTail.points[2].y = height; });
+    const s = new FlightSimulation(d, 'birdman', 0);
+    s.position.set(40, 280, 0); evaluate(s, new Vector3(12, 0, 2));
+    const panels = s.surfaces.filter(surface => surface.kind === 'vertical'), origin = wingOrigin(s.definition, 'verticalTail');
+    expect(panels.reduce((sum, panel) => sum + panel.area, 0)).toBeCloseTo(planform(d.verticalTail, false).area, 12);
+    expect(panels.length).toBeGreaterThan(0);
+    for (const panel of panels) {
+      expect((panel.point.y - origin.y) * height).toBeGreaterThan(0);
+      expect(panel.spanStart).toBeGreaterThanOrEqual(0); expect(panel.spanEnd).toBeGreaterThan(panel.spanStart);
+      expect(panel.force.z).toBeLessThan(0); expect(panel.spanDirection.y).toBe(Math.sign(height));
+    }
+    const sectionIds = new Set(s.structure.sections.filter(section => section.wingKey === 'verticalTail').map(section => section.id));
+    const finContacts = contacts(s).filter(point => sectionIds.has(Reflect.get(point, 'sectionId')));
+    expect(finContacts.some(point => Math.abs(point.y - origin.y - height) < 1e-10)).toBe(true);
+    expect(s.aircraft.inertia.x).toBeGreaterThan(0); expect(s.aircraft.inverseInertia.determinant()).toBeGreaterThan(0);
+  });
+
+  it('下垂垂尾提高发射净空，并按实际位置增加入水阻力', () => {
+    const samples = [0.5, -0.5].map(height => {
+      const d = definition(d => { d.verticalTail.points[1].y = height; d.verticalTail.points[2].y = height; });
+      const s = new FlightSimulation(d, 'birdman', 0);
+      const clearance = s.position.y - s.cg.y;
+      for (const point of contacts(s)) {
+        const p = world(s, point);
+        expect(p.y - runwayHeight(p.x)).toBeGreaterThanOrEqual(0.049999);
+      }
+      s.position.set(40, s.cg.y + 0.3, 0); evaluate(s, new Vector3(8, 0, 0));
+      return { clearance, drag: -s.telemetry.drag.x };
+    });
+    expect(samples[1].clearance).toBeGreaterThan(samples[0].clearance);
+    expect(samples[1].drag).toBeGreaterThan(samples[0].drag);
+  });
+
+  it('平尾吸附垂尾后，气动、接触、质量中心与惯量共用梢弦安装位置', () => {
+    const loose = definition(d => { d.verticalTail.points[1].y = 2; d.verticalTail.points[2].y = 2; });
+    const attached = clone(loose); attached.assembly.tailOnFin = true;
+    const a = new FlightSimulation(loose, 'birdman', 0), b = new FlightSimulation(attached, 'birdman', 0);
+    b.structure.reset();
+    const origin = wingOrigin(b.definition, 'horizontalTail');
+    expect(origin.y).toBe(2); expect(b.cg.y).toBeGreaterThan(a.cg.y); expect(b.aircraft.inertia.x).toBeGreaterThan(a.aircraft.inertia.x);
+    for (const panel of b.surfaces.filter(surface => surface.kind === 'tail')) expect(panel.point.y).toBeCloseTo(origin.y, 10);
+    const sectionIds = new Set(b.structure.sections.filter(section => section.wingKey === 'horizontalTail').map(section => section.id));
+    const tailContacts = contacts(b).filter(point => sectionIds.has(Reflect.get(point, 'sectionId')));
+    expect(tailContacts.length).toBeGreaterThan(0); expect(tailContacts.every(point => point.y > 1.8)).toBe(true);
+    expect(b.definition.horizontalTail.points[0].x).toBe(b.definition.verticalTail.points[1].x);
+    expect(b.definition.horizontalTail.points[3].x).toBe(b.definition.verticalTail.points[2].x);
   });
 });

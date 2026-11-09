@@ -1,5 +1,5 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingOrigin, type AircraftDefinition, type Controls, type EngineMount, type Wing, type WingKey } from './model';
+import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
 import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
@@ -47,7 +47,7 @@ export const LAUNCH_ROLL_LIMIT = DEG;
 export const SURFACE_STEP = 0.8;
 const AIR_VISCOSITY = 1.46e-5;
 const SPAN_EFFICIENCY = 0.9;
-/** 流线整流罩/尾梁等效阻力面积，工程近似，不是Squalo分项测量。 */
+/** 尾梁等未解析机体阻力面积；驾驶舱壳体和座舱罩另按可见尺寸计算。 */
 const BODY_DRAG_AREA = 0.07;
 /**
  * DAE-11原型，XFOIL6.96/Mach0/Ncrit9预测，非TAKUMI-11实测。
@@ -213,7 +213,13 @@ export interface FlightTelemetry {
   /** 累计浮力功，可正可负；列于能量预算输入侧。 */
   waterWork: number;
 }
-export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array }
+/** One second bounds seek integration while template deltas avoid repeated geometry. */
+export const REPLAY_KEYFRAME_INTERVAL = 1;
+type SnapshotValue = number | string | boolean | null | [number];
+type SnapshotNode = [string, string[], SnapshotValue[]];
+export interface SimulationSnapshot { binding: string; changes: [number, (number | string | SnapshotValue)[]][]; extra: SnapshotNode[] }
+export interface ReplayKeyframe { time: number; frame: number; state: SimulationSnapshot }
+export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array; keyframes?: ReplayKeyframe[] }
 
 export function validateRecording(recording: InputRecording): void {
   if (!(recording.frames instanceof Float64Array) || !Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length !== recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
@@ -226,6 +232,26 @@ export function validateRecording(recording: InputRecording): void {
       : field === 6 ? value >= 0 && value <= 1 : Math.abs(value) <= 1;
     if (!Number.isFinite(value) || !valid) throw new Error('飞行记录包含无效输入');
   }
+  if (recording.keyframes !== undefined) {
+    if (!Array.isArray(recording.keyframes) || recording.keyframes.length > recording.length + 1) throw Error('回放关键帧无效');
+    let frame = -1, time = -1, elapsed = 0, index = 0;
+    for (const point of recording.keyframes) {
+      if (!point || !Number.isInteger(point.frame) || point.frame <= frame || point.frame > recording.length || !Number.isFinite(point.time) || point.time < 0 || point.time <= time) throw Error('回放关键帧无效');
+      while (index < point.frame) elapsed += recording.frames[index++ * FRAME_WIDTH];
+      if (Math.abs(elapsed - point.time) > 1e-8 || !point.state || !Array.isArray(point.state.changes) || !Array.isArray(point.state.extra)) throw Error('回放关键帧无效');
+      frame = point.frame; time = point.time;
+    }
+    if (recording.length && (!recording.keyframes.length || recording.keyframes[0].frame !== 0 || recording.keyframes.at(-1)!.frame !== recording.length)) throw Error('回放关键帧缺少端点状态');
+    const frames = new Set(recording.keyframes.map(point => point.frame));
+    let total = 0, next = REPLAY_KEYFRAME_INTERVAL;
+    for (let i = 0; i < recording.length; i++) {
+      total += recording.frames[i * FRAME_WIDTH];
+      if (total + 1e-9 >= next) {
+        if (!frames.has(i + 1)) throw Error('回放关键帧间隔无效');
+        next = (Math.floor((total + 1e-9) / REPLAY_KEYFRAME_INTERVAL) + 1) * REPLAY_KEYFRAME_INTERVAL;
+      }
+    }
+  }
 }
 
 function quarterChord(w: Wing) {
@@ -237,15 +263,21 @@ function quarterChord(w: Wing) {
 
 function sweepAngle(w: Wing) {
   const root = w.points[3].x - w.points[0].x, tip = w.points[2].x - w.points[1].x;
-  return Math.atan2(w.points[1].x - w.points[0].x + (tip - root) / 4, w.points[1].y);
+  return Math.atan2(w.points[1].x - w.points[0].x + (tip - root) / 4, Math.abs(w.points[1].y));
 }
 
 function massLayout(d: AircraftDefinition): MassPart[] {
   const length = d.fuselage.length;
   const fuselageMass = AIRFRAME_MASS.fuselageLinear * length;
+  const shell = cockpitGeometry(d), cabinMass = cockpitMass(d);
   const parts: MassPart[] = [
     { mass: fuselageMass, x: d.fuselage.center - 0.13 * length, y: 0, z: 0, ix: fuselageMass * 0.04, iy: fuselageMass * length * length / 12, iz: fuselageMass * length * length / 12 },
-    { mass: AIRFRAME_MASS.cockpit, x: d.cockpit.position, y: 0.12, z: 0, ix: 0.1, iy: 0.2, iz: 0.2 },
+    // 鸟人间保留座架代理；只有可见驾驶舱按同尺寸均匀椭球近似。
+    d.birdman ? { mass: cabinMass, x: d.cockpit.position, y: 0.12, z: 0, ix: 0.1, iy: 0.2, iz: 0.2 }
+      : { mass: cabinMass, x: d.cockpit.position + shell.x, y: shell.y, z: 0,
+        ix: cabinMass * (shell.yRadius ** 2 + shell.zRadius ** 2) / 5,
+        iy: cabinMass * (shell.xRadius ** 2 + shell.zRadius ** 2) / 5,
+        iz: cabinMass * (shell.xRadius ** 2 + shell.yRadius ** 2) / 5 },
     // 趴姿只改变显示网格；乘员仍用此固定质点和局部惯量近似，不引入关节运动功。
     { mass: PILOT_MASS, x: d.cockpit.position, y: 0.15, z: 0, ix: PILOT_MASS * 0.08, iy: PILOT_MASS * 0.025, iz: PILOT_MASS * 0.08, moving: true },
   ];
@@ -280,7 +312,7 @@ function massLayout(d: AircraftDefinition): MassPart[] {
     const tank = d.fuelTank, shape = fuelTankDimensions(tank.capacity), radius2 = shape.radius ** 2, length2 = (shape.length / 2) ** 2;
     for (const fuel of [false, true]) {
       const mass = fuel ? tank.capacity * FUEL_DENSITY : 0.8 + tank.capacity * 0.035;
-      parts.push({ mass, x: tank.x, y: BODY_GEOMETRY.shell.y, z: 0, ix: mass * 2 * radius2 / 5,
+      parts.push({ mass, x: tank.x, y: shell.y, z: 0, ix: mass * 2 * radius2 / 5,
         iy: mass * (length2 + radius2) / 5, iz: mass * (length2 + radius2) / 5, fuel });
     }
   }
@@ -292,17 +324,20 @@ function properties(d: AircraftDefinition): AircraftProperties {
   const tail = planform(d.horizontalTail);
   const mainQuarter = quarterChord(d.mainWing), mainAngle = d.assembly.mainIncidence * DEG;
   const mainOrigin = wingOrigin(d, 'mainWing'), tailOrigin = wingOrigin(d, 'horizontalTail');
-  const mainX = mainOrigin.x - mainQuarter * Math.cos(mainAngle);
-  const tailX = tailOrigin.x - quarterChord(d.horizontalTail) * Math.cos(d.assembly.tailIncidence * DEG);
+  const center = p.span / 2 * (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
+  const mainQuarterChord = wingLocalPoint(d.mainWing, mainAngle, 1, -mainQuarter, 0, center, new Vector3());
+  mainQuarterChord.x += mainOrigin.x; mainQuarterChord.y += mainOrigin.y; mainQuarterChord.z = 0;
+  const mainX = mainQuarterChord.x;
+  const tailCenter = tail.span / 2 * (tail.root + 2 * tail.tip) / (3 * (tail.root + tail.tip));
+  const tailX = tailOrigin.x + wingLocalPoint(d.horizontalTail, d.assembly.tailIncidence * DEG, 1, -quarterChord(d.horizontalTail), 0, tailCenter, new Vector3()).x;
   const mainSlope = 1 / (1 + 6.45 / (Math.PI * SPAN_EFFICIENCY * p.aspect)) * Math.cos(sweepAngle(d.mainWing));
   const tailSlopeRatio = 1 / (1 + 6.45 / (Math.PI * SPAN_EFFICIENCY * tail.aspect)) * Math.cos(sweepAngle(d.horizontalTail)) / mainSlope;
   const effectiveness = 0.65 * tail.area / p.area * tailSlopeRatio;
   const neutral = (mainX + effectiveness * tailX) / (1 + effectiveness);
-  const center = p.span / 2 * (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
   return { mass: 0, cg: new Vector3(), inertia: new Vector3(), inertiaTensor: new Matrix3(), inverseInertia: new Matrix3(), wingArea: p.area, span: p.span, aspect: p.aspect,
     wingLoading: 0, stallSpeed: 0, glideRatio: 0, staticMargin: 0,
-    mainQuarterChord: new Vector3(mainX, mainOrigin.y - mainQuarter * Math.sin(mainAngle) + center * Math.tan(d.mainWing.dihedral * DEG), 0),
-    neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d)) };
+    mainQuarterChord,
+    neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d), d) };
 }
 
 function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, out: AircraftProperties, neutral: number, chord: number, updateInertia = true, lateral = 0, structure?: WingStructure) {
@@ -414,9 +449,9 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
   const surfaces: AerodynamicSurface[] = [];
   for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
     const vertical = key === 'verticalTail', w = d[key], p = planform(w, !vertical);
-    const halfSpan = w.points[1].y;
+    const halfSpan = Math.abs(w.points[1].y), direction = Math.sign(w.points[1].y);
     const incidence = (key === 'mainWing' ? d.assembly.mainIncidence : key === 'horizontalTail' ? d.assembly.tailIncidence : 0) * DEG;
-    const origin = wingOrigin(d, key), angle = w.dihedral * DEG;
+    const origin = wingOrigin(d, key);
     for (let start = 0; start < halfSpan - 1e-10; start += SURFACE_STEP) {
       const end = Math.min(start + SURFACE_STEP, halfSpan), width = end - start;
       const root = p.root + (p.tip - p.root) * start / halfSpan;
@@ -426,16 +461,18 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
         + (p.root + (p.tip - p.root) * center / halfSpan) / 4;
       for (let side = -1; side <= 1; side += 2) {
         if (vertical && side === -1) continue;
+        const point = vertical ? new Vector3(-quarter, direction * center, 0) : wingLocalPoint(w, incidence, side, -quarter, 0, center, new Vector3());
+        point.x += origin.x; point.y += origin.y;
         surfaces.push({ bodyId: 0, name: `${vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '水平尾翼'}${side < 0 ? '左' : '右'}`} ${start.toFixed(1)}–${end.toFixed(1)} m`,
-          point: new Vector3(origin.x - quarter * Math.cos(incidence),
-            vertical ? origin.y + center : origin.y - quarter * Math.sin(incidence) + center * Math.tan(angle), vertical ? 0 : side * center),
-          normal: vertical ? new Vector3(0, 0, 1) : new Vector3(0, Math.cos(angle), -side * Math.sin(angle)),
+          point,
+          normal: vertical ? new Vector3(0, 0, 1) : wingLocalPoint(w, incidence, side, 0, 1, 0, new Vector3()),
           area: width * (root + tip) / 2, aspect: p.aspect, span: p.span,
           chord: 2 / 3 * (root * root + root * tip + tip * tip) / (root + tip), spanStart: start, spanEnd: end,
-          spanDirection: vertical ? new Vector3(0, 1, 0) : new Vector3(0, Math.tan(angle), side),
-          chordDirection: new Vector3(1, 0, 0), crossflowDirection: vertical ? new Vector3(0, 1, 0) : new Vector3(0, 0, side),
+          spanDirection: vertical ? new Vector3(0, direction, 0) : wingLocalPoint(w, incidence, side, 0, 0, 1, new Vector3()),
+          chordDirection: vertical ? new Vector3(1, 0, 0) : wingLocalPoint(w, incidence, side, 1, 0, 0, new Vector3()),
+          crossflowDirection: vertical ? new Vector3(0, direction, 0) : wingLocalPoint(w, incidence, side, 0, 0, 1, new Vector3()),
           sweep: sweepAngle(w), clearance: Infinity, groundEffect: 1, inducedDrag: 0,
-          incidence: vertical ? 0 : (key === 'mainWing' ? d.assembly.mainIncidence : d.assembly.tailIncidence) * DEG,
+          incidence,
           controlEffectiveness: effectiveness(w.controlSurface),
           kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
           force: new Vector3(), drag: new Vector3() });
@@ -449,7 +486,8 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
 function evaluateSurface(surface: AerodynamicSurface, input: Controls, mainDownwash: number, mainAspect: number,
   velocity: Vector3, coefficient: Polar, liftDirection: Vector3) {
   const speed = velocity.length(), normalSpeed = velocity.dot(surface.normal);
-  let incidence = surface.incidence;
+  // Installation incidence already rotates the physical normal and chord; only control/downwash offsets remain.
+  let incidence = 0;
   if (surface.kind === 'main') incidence -= surface.side * input.aileron * AILERON_LIMIT * surface.controlEffectiveness;
   else if (surface.kind === 'tail') incidence -= mainDownwash * 1.56 / (Math.PI * mainAspect) - input.elevator * ELEVATOR_LIMIT * surface.controlEffectiveness;
   else incidence -= input.rudder * RUDDER_LIMIT * surface.controlEffectiveness;
@@ -488,16 +526,27 @@ class AerodynamicSummary implements AerodynamicReference {
   liftCenter: Vector3 | null = null;
   dragCenter: Vector3 | null = null;
   readonly wings: WingAerodynamics[];
+  readonly bodies: { point: Vector3; projection: Vector3; skinArea: number }[];
+  readonly bodyTorque = new Vector3();
+  bodyPower = 0;
   private readonly liftPoint = new Vector3();
   private readonly dragPoint = new Vector3();
   private readonly inverse = new Quaternion();
   private readonly velocity = new Vector3();
+  private readonly localVelocity = new Vector3();
   private readonly arm = new Vector3();
   private readonly localForce = new Vector3();
   private readonly localDrag = new Vector3();
   private readonly moment = new Vector3();
 
-  constructor(readonly surfaces: AerodynamicSurface[]) {
+  constructor(readonly surfaces: AerodynamicSurface[], d: AircraftDefinition) {
+    this.bodies = (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).map((shape, index) => {
+      // 椭球投影面积 + 湿表面摩擦代理；罩体只取露出壳体的上半部，不重复计算下半部。
+      const exposed = index === 0 ? 1 : 0.5, pressure = 0.18 * Math.PI * exposed;
+      return { point: new Vector3(d.cockpit.position + shape.x, shape.y, 0),
+        projection: new Vector3(shape.yRadius * shape.zRadius, shape.xRadius * shape.zRadius, shape.xRadius * shape.yRadius).multiplyScalar(pressure),
+        skinArea: 0.004 * 2 * Math.PI * shape.xRadius * (shape.yRadius + shape.zRadius) * exposed };
+    });
     this.wings = (['main', 'tail', 'vertical'] as const).map((kind, index) => {
       const panels = surfaces.filter(surface => surface.kind === kind);
       return { kind, name: ['主翼', '水平尾翼', '垂直尾翼'][index],
@@ -506,8 +555,25 @@ class AerodynamicSummary implements AerodynamicReference {
         force: new Vector3(), lift: new Vector3(), drag: new Vector3(), torque: new Vector3() };
     });
   }
+  updateBody(cg: Vector3, velocity: Vector3, omega?: Vector3) {
+    this.bodyDrag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * BODY_DRAG_AREA);
+    this.bodyTorque.set(0, 0, 0);
+    this.bodyPower = this.bodyDrag.dot(velocity);
+    for (const body of this.bodies) {
+      this.arm.copy(body.point).sub(cg);
+      if (omega) this.localVelocity.crossVectors(omega, this.arm).add(velocity);
+      else this.localVelocity.copy(velocity);
+      const v = this.localVelocity, p = body.projection;
+      const areaSpeed = Math.hypot(p.x * v.x, p.y * v.y, p.z * v.z) + body.skinArea * v.length();
+      this.localForce.copy(v).multiplyScalar(-0.5 * AIR_DENSITY * areaSpeed);
+      this.bodyDrag.add(this.localForce);
+      this.bodyTorque.add(this.moment.crossVectors(this.arm, this.localForce));
+      this.bodyPower += this.localForce.dot(v);
+    }
+  }
 
-  update(cg: Vector3, orientation: Quaternion, velocity: Vector3, torque?: Vector3) {
+
+  update(cg: Vector3, orientation: Quaternion, velocity: Vector3, torque?: Vector3, omega?: Vector3) {
     this.inverse.copy(orientation).invert();
     this.velocity.copy(velocity).applyQuaternion(this.inverse);
     this.speed = velocity.length();
@@ -543,8 +609,9 @@ class AerodynamicSummary implements AerodynamicReference {
     for (const wing of this.wings) {
       this.force.add(wing.force); this.lift.add(wing.lift); this.drag.add(wing.drag);
     }
-    this.bodyDrag.copy(this.velocity).multiplyScalar(-0.5 * AIR_DENSITY * this.speed * BODY_DRAG_AREA);
+    this.updateBody(cg, this.velocity, omega);
     this.force.add(this.bodyDrag); this.drag.add(this.bodyDrag);
+    this.torque.add(this.bodyTorque); this.dragMoment.add(this.bodyTorque);
     this.freeMoment.set(0, 0, 0);
     if (torque) { this.freeMoment.copy(torque).sub(this.torque); this.torque.copy(torque); }
     this.liftCenter = this.center(this.lift, this.liftMoment, cg, this.liftPoint);
@@ -572,7 +639,8 @@ function evaluateReference(aircraft: AircraftProperties) {
     const alpha = (reference ? 5 : -6 + sample / 4) * DEG, beta = reference ? 3 * DEG : 0;
     velocity.set(speed * Math.cos(alpha) * Math.cos(beta), -speed * Math.sin(alpha) * Math.cos(beta), speed * Math.sin(beta));
     let mainLift = 0;
-    force.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * speed * BODY_DRAG_AREA);
+    summary.updateBody(aircraft.cg, velocity);
+    force.copy(summary.bodyDrag);
     for (const surface of summary.surfaces) {
       const cl = evaluateSurface(surface, ZERO_CONTROLS, mainLift, aircraft.aspect, velocity, coefficient, direction);
       if (surface.kind === 'main') mainLift += cl * surface.area / aircraft.wingArea;
@@ -591,25 +659,38 @@ function evaluateReference(aircraft: AircraftProperties) {
 /** 与 scene.wingGeometry 相同的翼型采样，碰撞与发射净空包含安装角和厚度。 */
 function makeContacts(d: AircraftDefinition, structure?: WingStructure): ContactPoint[] {
   const { nose, tail } = fuselageEnds(d);
+  const shell = cockpitGeometry(d);
   const points: ContactPoint[] = [
     new Vector3(nose, -0.12, 0),
     new Vector3(nose + 0.252, -0.156, 0),
     new Vector3(tail, -0.12, 0),
-    new Vector3(d.cockpit.position - 0.75, -0.495, 0),
-    new Vector3(d.cockpit.position + 0.75, -0.495, 0),
   ];
+  // 鸟人间只显示乘员和滑橇，不让隐藏驾驶舱挤占发射槽。
+  if (d.birdman) {
+    points.push(new Vector3(d.cockpit.position - 0.75, -0.495, 0), new Vector3(d.cockpit.position + 0.75, -0.495, 0));
+  }
+  for (const shape of d.birdman ? [] : [shell, BODY_GEOMETRY.canopy]) {
+    for (let row = 0; row <= 16; row++) {
+      const angle = row / 16 * Math.PI;
+      for (let ring = 0; ring < 16; ring++) {
+        const azimuth = ring / 16 * Math.PI * 2, section = Math.sin(angle);
+        if (shape === BODY_GEOMETRY.canopy && Math.cos(azimuth) < 0) continue;
+        points.push(new Vector3(d.cockpit.position + shape.x + shape.xRadius * Math.cos(angle),
+          shape.y + shape.yRadius * section * Math.cos(azimuth), shape.zRadius * section * Math.sin(azimuth)));
+      }
+    }
+  }
   for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
     const w = d[key], vertical = key === 'verticalTail';
     const origin = wingOrigin(d, key);
     const incidence = (key === 'mainWing' ? d.assembly.mainIncidence : key === 'horizontalTail' ? d.assembly.tailIncidence : 0) * DEG;
-    const c = Math.cos(incidence), s = Math.sin(incidence);
     for (const side of [-1, 1]) {
       if (vertical && side < 0) continue;
       const rows = structure ? structure.sections.filter(section => section.wingKey === key && section.side === side)
         .flatMap(section => [{ span: section.spanStart, section, tip: false }, { span: section.spanEnd, section, tip: true }])
-        : [{ span: 0, section: undefined, tip: false }, { span: w.points[1].y, section: undefined, tip: true }];
+        : [{ span: 0, section: undefined, tip: false }, { span: Math.abs(w.points[1].y), section: undefined, tip: true }];
       for (const row of rows) {
-        const span = row.span, fraction = span / w.points[1].y;
+        const span = row.span, fraction = span / Math.abs(w.points[1].y);
         const leading = w.points[0].x + (w.points[1].x - w.points[0].x) * fraction;
         const trailing = w.points[3].x + (w.points[2].x - w.points[3].x) * fraction, chord = trailing - leading;
         for (let j = 0; j <= 16; j++) {
@@ -618,8 +699,9 @@ function makeContacts(d: AircraftDefinition, structure?: WingStructure): Contact
           const x = -leading - u * chord;
           for (const face of [-1, 1]) {
             const y = (vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u)) + face * thickness;
-            const point: ContactPoint = vertical ? new Vector3(origin.x + x, origin.y + span, y)
-              : new Vector3(origin.x + x * c - y * s, origin.y + x * s + y * c + span * Math.tan(w.dihedral * DEG), side * span);
+            const point: ContactPoint = vertical ? new Vector3(origin.x + x, origin.y + Math.sign(w.points[1].y) * span, y)
+              : wingLocalPoint(w, incidence, side, x, y, span, new Vector3());
+            if (!vertical) { point.x += origin.x; point.y += origin.y; }
             if (row.section) { point.sectionId = row.section.id; point.tip = row.tip; point.reference = point.clone(); }
             points.push(point);
           }
@@ -649,7 +731,7 @@ function makeContacts(d: AircraftDefinition, structure?: WingStructure): Contact
       const angle = row / 8 * Math.PI;
       for (let ring = 0; ring < 16; ring++) {
         const azimuth = ring / 16 * Math.PI * 2, radius = shape.radius * Math.sin(angle);
-        points.push(new Vector3(tank.x + shape.length / 2 * Math.cos(angle), BODY_GEOMETRY.shell.y + radius * Math.cos(azimuth), radius * Math.sin(azimuth)));
+        points.push(new Vector3(tank.x + shape.length / 2 * Math.cos(angle), shell.y + radius * Math.cos(azimuth), radius * Math.sin(azimuth)));
       }
     }
   }
@@ -677,6 +759,7 @@ function contactLaunchOffset(contacts: ContactPoint[], cg: Vector3, structure?: 
 
 export class FlightSimulation {
   readonly definition: AircraftDefinition;
+  private readonly cockpitShape: BodyEllipsoid;
   readonly id = 0;
   readonly structure: WingStructure;
   readonly fragments: WingFragment[] = [];
@@ -716,6 +799,8 @@ export class FlightSimulation {
   readonly recording: Float64Array;
   readonly wingLoads: Float64Array;
   private readonly frameLoads = [0, 0, 0];
+  private keyframes: ReplayKeyframe[] = [];
+  private nextKeyframe = REPLAY_KEYFRAME_INTERVAL;
   recordingLength = 0;
   time = 0;
   readonly groundImpactPoint = new Vector3();
@@ -831,6 +916,7 @@ export class FlightSimulation {
 
   constructor(d: AircraftDefinition, challenge: ChallengeMode = 'birdman', private readonly fixedLaunchRoll?: number, testSettings: TestSpaceSettings = defaultTestSpace) {
     this.definition = validateAircraft(d);
+    this.cockpitShape = cockpitGeometry(this.definition);
     if (!Object.hasOwn(challengeDefinitions, challenge)) throw new Error('未知飞行挑战');
     if (challenge === 'birdman' && (!this.definition.birdman || this.definition.engine.count > 0)) throw new Error('鸟人间比赛只允许无动力鸟人间设计');
     this.challenge = challenge;
@@ -847,11 +933,11 @@ export class FlightSimulation {
     this.chord = planform(this.definition.mainWing).chord;
     this.surfaces = makeSurfaces(this.definition);
     this.structure = new WingStructure(this.definition, this.surfaces);
-    this.aerodynamics = new AerodynamicSummary(this.surfaces);
+    this.aerodynamics = new AerodynamicSummary(this.surfaces, this.definition);
     this.contacts = makeContacts(this.definition, this.structure);
     this.wingContactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
     this.wingImpactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
-    const shell = BODY_GEOMETRY.shell;
+    const shell = this.cockpitShape;
     this.waterBody = Array.from({ length: WATER.bodySamples }, (_, index) => {
       const fraction = (index + 0.5) / WATER.bodySamples * 2 - 1;
       const section = Math.sqrt(1 - fraction * fraction);
@@ -903,6 +989,8 @@ export class FlightSimulation {
       this.quaternion.identity();
     }
     this.recordingLength = 0; this.replayIndex = 0; this.replayFinished = false; this.replay = null;
+    this.keyframes = []; this.nextKeyframe = REPLAY_KEYFRAME_INTERVAL;
+    snapshotTemplates.delete(this);
     this.maxSpeed = this.minSpeed = this.challenge === 'birdman' ? LAUNCH.speed : this.velocity.length();
     this.travelled = 0; this.weight = 0; this.lateral = 0; this.checkpointIndex = 0; this.completed = false;
     this.engineRpm = 0; this.thrust = 0; this.availableThrust = 0; this.propulsionPower = 0;
@@ -960,14 +1048,19 @@ export class FlightSimulation {
     }
     this.laboratoryState.takeoffHeight = 0; this.laboratoryState.takeoffSpeed = 0;
     this.maxHeight = this.position.y;
-    this.aerodynamics.update(this.aircraft.cg, this.quaternion, this.velocity);
+    this.aerodynamics.update(this.aircraft.cg, this.quaternion, this.velocity, undefined, this.omega);
     this.updateTelemetry();
     if (!this.launching) this.beginFlight();
   }
 
   getRecording(): InputRecording {
     if(this.replay) return { ...this.replay, frames:this.replay.frames.slice(), wingLoads:this.replay.wingLoads?.slice() };
-    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3) };
+    if (!isLaboratory(this.challenge) && this.recordingLength && this.keyframes.at(-1)?.frame !== this.recordingLength) this.captureKeyframe();
+    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3), keyframes: this.keyframes.slice() };
+  }
+
+  private captureKeyframe() {
+    this.keyframes.push({ time: this.elapsed, frame: this.recordingLength, state: snapshotSimulation(this, this.launchRoll) });
   }
 
   configureTestSpace(settings: TestSpaceSettings) {
@@ -997,7 +1090,7 @@ export class FlightSimulation {
     this.laboratoryState.windMotion = motion;
     this.applyWindTunnelFixture(0);
     this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
-    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
+    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque, this.omega);
     this.updateTelemetry();
   }
 
@@ -1036,7 +1129,7 @@ export class FlightSimulation {
     advanceWindTunnel(this.laboratoryState.windTunnel, this.laboratoryState.windTarget, dt, this.windTunnelEnabled, this.laboratoryState.windMotion!);
     this.applyWindTunnelFixture(dt);
     this.evaluateForces(ZERO_CONTROLS, this.laboratoryState.windVelocity, this.omega, this.quaternion, this.position);
-    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque);
+    this.aerodynamics.update(this.cg, this.quaternion, this.laboratoryState.windVelocity, this.torque, this.omega);
     // The fixture balances the net force and torque. Wings still carry their
     // local aerodynamic/self-weight loads and the rig's imposed angular motion.
     this.supportForce.set(0, this.mass * GRAVITY, 0);
@@ -1077,19 +1170,32 @@ export class FlightSimulation {
   /** Copy the complete mutable physics graph, preserving prototypes and internal aliases.
    * Large append-only recording buffers and the validated aircraft definition are shared. */
   checkpoint(): FlightSimulation {
-    const seen = new Map<object, any>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, this.definition]]);
+    const seen = new Map<object, object>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, this.definition], [this.keyframes, this.keyframes]]);
+    // Contact solver workspaces are rebuilt before every use; synchronous steps may share them.
+    for (const buffer of [this.platformFaces, this.platformGaps, this.platformImpulses, this.platformAxes, this.groundNormals, this.platformActive]) seen.set(buffer, buffer);
     if (this.replay) seen.set(this.replay, this.replay);
-    const copy = (value: any): any => {
+    let bytes = 0;
+    const copy = (value: unknown): unknown => {
       if (value === null || typeof value !== 'object') return value;
       if (seen.has(value)) return seen.get(value);
-      if (ArrayBuffer.isView(value)) { const result = (value as Float64Array).slice(); seen.set(value, result); return result; }
-      const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
+      if (value instanceof Float64Array || value instanceof Int32Array || value instanceof Int8Array) {
+        const result = value.slice(); bytes += result.byteLength + 64; seen.set(value, result); return result;
+      }
+      const result: object = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
       seen.set(value, result);
-      for (const key of Object.keys(value)) result[key] = copy(value[key]);
+      const keys = Object.keys(value);
+      bytes += 64 + keys.reduce((sum, key) => sum + 24 + key.length * 2, 0);
+      for (const key of keys) stateRecord(result)[key] = copy(stateRecord(value)[key]);
       return result;
     };
-    return copy(this);
+    // This graph comes only from the existing, typed simulation.
+    const result = copy(this) as FlightSimulation;
+    checkpointSizes.set(result, bytes);
+    return result;
   }
+
+  /** Conservative retained graph estimate; shared recording/design storage is excluded. */
+  get checkpointBytes() { return checkpointSizes.get(this) ?? 0; }
 
   /** Attach immutable recorded inputs to an already restored state without resetting it. */
   resumeReplay(recording: InputRecording, frame: number) {
@@ -1102,7 +1208,7 @@ export class FlightSimulation {
   loadReplay(recording: InputRecording) {
     if (isLaboratory(this.challenge)) throw Error('测试环境不支持回放');
     validateRecording(recording);
-    const copy = { frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), length: recording.length, launchRoll: recording.launchRoll, wingLoads: recording.wingLoads?.slice() };
+    const copy = { ...recording, frames: recording.frames.slice(0, recording.length * FRAME_WIDTH), wingLoads: recording.wingLoads?.slice() };
     this.reset(copy.launchRoll);
     this.replay = copy;
     this.recording.set(copy.frames);
@@ -1115,6 +1221,7 @@ export class FlightSimulation {
   step(controls: FlightControls, dt = 1 / 60) {
     if (this.ended || this.replayFinished) return;
     const started = performance.now(), recordingFrame = this.recordingLength;
+    if (!this.replay && !isLaboratory(this.challenge) && !this.keyframes.length) this.captureKeyframe();
     const input = this.effective;
     if (this.replay) {
       const offset = this.replayIndex * FRAME_WIDTH;
@@ -1177,15 +1284,20 @@ export class FlightSimulation {
     for (let i = 0; i < steps && !this.ended; i++) this.integrate(input, h);
     if (!this.replay && recordingFrame < this.recordingLength) this.wingLoads.set(this.frameLoads, recordingFrame * 3);
     this.telemetry.physicsMs = performance.now() - started;
+    if (!this.replay && !isLaboratory(this.challenge) && this.recordingLength > recordingFrame && (this.elapsed + 1e-9 >= this.nextKeyframe || this.ended)) {
+      this.captureKeyframe();
+      this.nextKeyframe = (Math.floor((this.elapsed + 1e-9) / REPLAY_KEYFRAME_INTERVAL) + 1) * REPLAY_KEYFRAME_INTERVAL;
+    }
   }
 
   private updatePropulsion(throttle: number, dt: number) {
     const count = this.definition.engine.count, spec = engineCatalog[this.definition.engine.type];
     if (count === 0) { this.engineRpm = 0; this.thrust = 0; this.availableThrust = 0; return; }
     const target = this.fuelRemaining > 0 ? throttle : 0, delta = this.engineRpm - target;
-    const decay = Math.exp(-dt / spec.spoolTime);
-    const integral = Math.max(0, target ** 2 * dt + 2 * target * delta * spec.spoolTime * (1 - decay)
-      + delta ** 2 * spec.spoolTime / 2 * (1 - decay * decay));
+    const spoolTime = target > this.engineRpm ? spec.spoolUpTime : spec.spoolDownTime;
+    const decay = Math.exp(-dt / spoolTime);
+    const integral = Math.max(0, target ** 2 * dt + 2 * target * delta * spoolTime * -Math.expm1(-dt / spoolTime)
+      + delta ** 2 * spoolTime / 2 * -Math.expm1(-2 * dt / spoolTime));
     this.engineRpm = target + delta * decay;
     let density = 0;
     for (const engine of this.enginePositions) {
@@ -1196,7 +1308,7 @@ export class FlightSimulation {
     this.availableThrust = required > 0 ? count * spec.maxThrust * integral / dt * burned / required : 0;
     if (burned <= 0 || !this.fuelPart) return;
     const removedMass = burned * FUEL_DENSITY, tank = this.definition.fuelTank;
-    this.arm.set(tank.x, BODY_GEOMETRY.shell.y, 0).sub(this.aircraft.cg);
+    this.arm.set(tank.x, this.fuelPart.y, 0).sub(this.aircraft.cg);
     this.localVelocity.crossVectors(this.omega, this.arm).applyQuaternion(this.quaternion).add(this.velocity);
     this.cross.copy(this.arm).applyQuaternion(this.quaternion).add(this.position);
     this.telemetry.fuelEnergyRemoved += removedMass * (GRAVITY * this.cross.y + this.localVelocity.lengthSq() / 2
@@ -1425,7 +1537,7 @@ export class FlightSimulation {
       this.waterPoint.copy(this.arm).applyQuaternion(orientation).add(position);
       const height = this.waterHeight(this.waterPoint.x, this.waterPoint.z);
       this.waterAxis.set(0, 1, 0).applyQuaternion(this.inverse);
-      const shell = BODY_GEOMETRY.shell;
+      const shell = this.cockpitShape;
       // ponytail: 五个机身截面用投影包围高度；需精确水线时再细分椭球切片。
       const halfDepth = Math.max(1e-4, sample.radius * Math.hypot(this.waterAxis.y, this.waterAxis.z * shell.zRadius / shell.yRadius)
         + Math.abs(this.waterAxis.x) * shell.xRadius / WATER.bodySamples);
@@ -1475,10 +1587,11 @@ export class FlightSimulation {
       surface.drag.applyQuaternion(orientation);
       this.telemetry.force.add(surface.force); this.telemetry.drag.add(surface.drag);
     }
-    // 机身/乘员阻力作用于重心；分布翼面之外补充未解析尺度的动压角阻尼。
-    this.localDrag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * speed * BODY_DRAG_AREA);
+    this.aerodynamics.updateBody(this.aircraft.cg, this.bodyVelocity, omega);
+    this.torque.add(this.aerodynamics.bodyTorque);
+    this.localDrag.copy(this.aerodynamics.bodyDrag).applyQuaternion(orientation);
     this.telemetry.force.add(this.localDrag); this.telemetry.drag.add(this.localDrag);
-    power += this.localDrag.dot(velocity);
+    power += this.aerodynamics.bodyPower;
     const spec = engineCatalog[this.definition.engine.type];
     for (const engine of this.enginePositions) {
       this.arm.set(engine.x, engine.y, engine.z).sub(this.aircraft.cg);
@@ -1665,7 +1778,7 @@ export class FlightSimulation {
       this.integrateFlight(input, dt / 2);
       return;
     }
-    this.aerodynamics.update(this.aircraft.cg, this.midpointQuaternion, this.midpointVelocity, this.torque);
+    this.aerodynamics.update(this.aircraft.cg, this.midpointQuaternion, this.midpointVelocity, this.torque, this.midpointOmega);
     const speed = this.previousVelocity.length();
     if (onRail) {
       this.velocity.copy(this.candidateVelocity);
@@ -2403,7 +2516,7 @@ export class FlightSimulation {
   }
 
   /** 椭球世界最低点：安装位置与scene共用，不以CG或旧机头碰撞代理决定入水。 */
-  private lowestBodyPoint(shape: typeof BODY_GEOMETRY['nose' | 'shell' | 'canopy'], centerX: number, position: Vector3, orientation: Quaternion, out: Vector3, normal?: Vector3) {
+  private lowestBodyPoint(shape: BodyEllipsoid, centerX: number, position: Vector3, orientation: Quaternion, out: Vector3, normal?: Vector3) {
     this.inverse.copy(orientation).invert();
     if (normal) this.waterAxis.copy(normal); else this.waterAxis.set(0, 1, 0);
     this.waterAxis.applyQuaternion(this.inverse);
@@ -2426,11 +2539,11 @@ export class FlightSimulation {
     for (let index = -3; index < this.contacts.length; index++) {
       if (index === -3) this.noseAt(position, orientation, this.waterPoint);
       else if (index < 0) {
-        const shape = index === -2 ? BODY_GEOMETRY.shell : BODY_GEOMETRY.canopy;
+        const shape = index === -2 ? this.cockpitShape : BODY_GEOMETRY.canopy;
         this.lowestBodyPoint(shape, this.definition.cockpit.position + shape.x, position, orientation, this.waterPoint);
       } else {
-        // 旧机头代理不在椭球表面；驾驶舱下方两个点仅表示鸟人间乘员。
-        if (index < 3 || (index < 5 && !this.definition.birdman)) continue;
+        // 前三个接触点是旧机头/尾梁代理；其余均来自真实壳体、翼面和附件。
+        if (index < 3) continue;
         const point = this.contacts[index];
         if (!this.mainContact(point)) continue;
         this.waterPoint.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
@@ -2490,14 +2603,12 @@ export class FlightSimulation {
       // contacts are supported by the impulse solver instead.
       if (this.criticalGroundContact(position, orientation)) return 'terrain';
       if (speedSquared < WATER.stopSpeed ** 2) {
-        const shell=BODY_GEOMETRY.shell;
+        const shell = this.cockpitShape;
         this.lowestBodyPoint(shell, this.definition.cockpit.position+shell.x, position, orientation, this.cross);
         if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
         // Tail beam is part of the fuselage; a stationary wingtip alone is not.
-        for (let i=2;i<5;i++) {
-          this.cross.copy(this.contacts[i]).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
-          if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
-        }
+        this.cross.copy(this.contacts[2]).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+        if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
       }
     }
     this.noseAt(position, orientation, this.nosePoint);
@@ -2527,4 +2638,246 @@ export class FlightSimulation {
       speedScore: this.challenge === 'low-altitude' && this.completed && this.time > 0
         ? LOW_ALTITUDE.scoreScale * (challengeDefinitions['low-altitude'].length - challengeStartGate(this.challenge)!.x) / this.time : 0 };
   }
+}
+
+// Snapshots are deltas against a trusted constructor graph. Static geometry and
+// untouched scratch buffers cost no file space; aliases and every changed value survive.
+const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount'];
+const unsafeSnapshotKeys = ['__proto__', 'prototype', 'constructor'];
+type StateRecord = Record<string, unknown>;
+// Object traversal needs indexed access, after runtime object checks.
+const stateRecord = (value: object): StateRecord => value as StateRecord;
+type SnapshotTemplate = { simulation: FlightSimulation; binding: string; nodes: StateRecord[]; keys: string[][]; ids: Map<object, number> };
+const snapshotTemplates = new WeakMap<FlightSimulation, SnapshotTemplate>();
+const recordingTemplates = new WeakMap<InputRecording, SnapshotTemplate>();
+const checkpointSizes = new WeakMap<FlightSimulation, number>();
+
+function simulationGraph(simulation: FlightSimulation): SnapshotTemplate {
+  const nodes: StateRecord[] = [], keys: string[][] = [], ids = new Map<object, number>();
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object' || ids.has(value)) return;
+    const object = stateRecord(value);
+    ids.set(value, nodes.length); nodes.push(object);
+    const names = value === simulation.definition ? [] : Object.keys(value).filter(key => value !== simulation || !snapshotOmitted.includes(key));
+    keys.push(names);
+    for (const key of names) visit(object[key]);
+  };
+  visit(simulation);
+  return { simulation, binding: JSON.stringify([simulation.definition, simulation.challenge, stateRecord(simulation).launchRoll]), nodes, keys, ids };
+}
+
+function snapshotTemplate(sim: FlightSimulation, launchRoll: number) {
+  let template = snapshotTemplates.get(sim);
+  if (!template) {
+    template = simulationGraph(new FlightSimulation(sim.definition, sim.challenge, launchRoll));
+    snapshotTemplates.set(sim, template);
+  }
+  return template;
+}
+
+function snapshotSimulation(sim: FlightSimulation, launchRoll: number): SimulationSnapshot {
+  const template = snapshotTemplate(sim, launchRoll), ids = new Map<object, number>(), paired = new Map<number, StateRecord>();
+  const align = (value: unknown, base: unknown) => {
+    if (!value || !base || typeof value !== 'object' || typeof base !== 'object' || ids.has(value) || Object.getPrototypeOf(value) !== Object.getPrototypeOf(base)) return;
+    const id = template.ids.get(base)!;
+    if (paired.has(id)) return;
+    ids.set(value, id); paired.set(id, stateRecord(value));
+    if (base === template.simulation.definition) return;
+    for (const key of template.keys[id]) align(stateRecord(value)[key], stateRecord(base)[key]);
+  };
+  align(sim, template.simulation);
+  const extra: SnapshotNode[] = [];
+  const encode = (value: unknown): SnapshotValue => {
+    if (value === undefined) return [-1];
+    if (Object.is(value, -0)) return [-4];
+    if (value === Infinity) return [-2];
+    if (value === -Infinity) return [-3];
+    if (typeof value === 'number' && !Number.isFinite(value)) throw Error('回放状态包含无效数值');
+    if (value === null || typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value !== 'object') throw Error('回放状态包含无效类型');
+    const known = ids.get(value);
+    if (known !== undefined) return [known];
+    const id = template.nodes.length + extra.length;
+    ids.set(value, id);
+    const kind = value instanceof Vector3 ? 'v' : value instanceof Quaternion ? 'q' : value instanceof Matrix3 ? 'm' : Array.isArray(value) ? 'a' : 'o';
+    const keys = Object.keys(value);
+    const node: SnapshotNode = [kind, keys, []];
+    extra.push(node);
+    node[2] = keys.map(key => encode(stateRecord(value)[key]));
+    return [id];
+  };
+  const changes: SimulationSnapshot['changes'] = [];
+  for (const [id, value] of paired) {
+    if (value === stateRecord(sim.definition)) continue;
+    const base = template.nodes[id], keys = template.keys[id], fields: (number | string | SnapshotValue)[] = [];
+    if (Array.isArray(value) && value.length !== base.length) fields.push('length', value.length);
+    for (const key of Object.keys(value)) {
+      if (value === stateRecord(sim) && snapshotOmitted.includes(key)) continue;
+      const item = value[key], old = base[key];
+      if (Object.is(item, old) || item && typeof item === 'object' && ids.has(item) && ids.get(item) === template.ids.get(old as object)) continue;
+      const index = keys.indexOf(key);
+      fields.push(index < 0 ? key : index, encode(item));
+    }
+    if (fields.length) changes.push([id, fields]);
+  }
+  return { binding: template.binding, changes, extra };
+}
+
+const controlSnapshotKeys = ['weight', 'lateral', 'throttle', 'rudder', 'elevator', 'aileron', 'autoTrim', 'adaptiveControls', 'trimPitch', 'trimRoll'];
+const fragmentSnapshotKeys = ['id', 'position', 'quaternion', 'velocity', 'omega', 'cg', 'mass', 'inertiaTensor', 'inverseInertia', 'landed', 'force', 'torque', 'drag', 'aeroPower', 'midpointVelocity', 'midpointOmega', 'midpointPosition', 'midpointQuaternion', 'candidateVelocity', 'candidateOmega'];
+const resultSnapshotKeys = ['maxG', 'distance', 'time', 'averageSpeed', 'maxSpeed', 'minSpeed', 'maxHeight', 'landing', 'takeoffHeight', 'takeoffSpeed', 'platformHeight', 'challenge', 'score', 'completed', 'checkpointScores', 'speedScore', 'heightPenalty'];
+
+export function captureReplayKeyframe(sim: FlightSimulation, recording: InputRecording): ReplayKeyframe {
+  return { time: sim.elapsedTime, frame: sim.replayFrame, state: snapshotSimulation(sim, recording.launchRoll) };
+}
+
+/** Decode only known constructors and template-owned fields, never file-provided prototypes. */
+export function restoreReplayKeyframe(definition: AircraftDefinition, challenge: ChallengeMode, recording: InputRecording, point: ReplayKeyframe): FlightSimulation {
+  function fail(): never { throw Error('回放关键帧状态无效'); }
+  let template = recordingTemplates.get(recording);
+  if (!template) {
+    template = simulationGraph(new FlightSimulation(definition, challenge, recording.launchRoll));
+    recordingTemplates.set(recording, template);
+  }
+  if (template.simulation.challenge !== challenge || JSON.stringify(template.simulation.definition) !== JSON.stringify(validateAircraft(definition))) fail();
+  const state = point.state;
+  if (!state || state.binding !== template.binding || !Array.isArray(state.changes) || !Array.isArray(state.extra) || state.changes.length > template.nodes.length || state.extra.length > 20_000) fail();
+  const sim = template.simulation.checkpoint(), graph = simulationGraph(sim), nodes = graph.nodes;
+  const shapes = template.keys.filter((keys, index) => Object.getPrototypeOf(template!.nodes[index]) === Object.prototype);
+  let fields = 0;
+  for (const node of state.extra) {
+    if (!Array.isArray(node) || node.length !== 3 || !Array.isArray(node[1]) || !Array.isArray(node[2]) || node[1].length !== node[2].length || (fields += node[1].length) > 200_000) fail();
+    const [kind, keys] = node;
+    if (keys.some(key => typeof key !== 'string' || unsafeSnapshotKeys.includes(key)) || new Set(keys).size !== keys.length) fail();
+    let value: object;
+    if (kind === 'v') { if (keys.join(',') !== 'x,y,z') fail(); value = new Vector3(); }
+    else if (kind === 'q') { if (keys.join(',') !== 'isQuaternion,_x,_y,_z,_w') fail(); value = new Quaternion(); }
+    else if (kind === 'm') { if (keys.join(',') !== 'elements') fail(); value = new Matrix3(); }
+    else if (kind === 'a') { if (keys.some((key, index) => key !== String(index))) fail(); value = []; }
+    else if (kind === 'o') {
+      const allowed = shapes.some(shape => keys.length === shape.length && keys.every(key => shape.includes(key)))
+        || keys.length === fragmentSnapshotKeys.length && keys.every(key => fragmentSnapshotKeys.includes(key))
+        || keys.every(key => resultSnapshotKeys.includes(key)) && resultSnapshotKeys.filter(key => !['takeoffHeight', 'takeoffSpeed', 'platformHeight'].includes(key)).every(key => keys.includes(key))
+        || keys.every(key => controlSnapshotKeys.includes(key));
+      if (!allowed) fail();
+      value = {};
+    } else fail();
+    nodes.push(stateRecord(value));
+  }
+  const decode = (value: SnapshotValue): unknown => {
+    if (Array.isArray(value)) {
+      if (value.length !== 1 || !Number.isInteger(value[0]) || value[0] < -4 || value[0] >= nodes.length) fail();
+      return value[0] === -4 ? -0 : value[0] === -1 ? undefined : value[0] === -2 ? Infinity : value[0] === -3 ? -Infinity : nodes[value[0]];
+    }
+    if (value !== null && !['number', 'string', 'boolean'].includes(typeof value) || typeof value === 'number' && !Number.isFinite(value)) fail();
+    return value;
+  };
+  state.extra.forEach(([, keys, values], index) => keys.forEach((key, field) => { nodes[template!.nodes.length + index][key] = decode(values[field]); }));
+  const changed = new Set<number>();
+  const controls = ['effective', 'applied', 'requestedControls', 'fullControls', 'predictedControls'].map(key => stateRecord(sim)[key]);
+  for (const change of state.changes) {
+    if (!Array.isArray(change) || change.length !== 2) fail();
+    const [id, updates] = change;
+    if (!Number.isInteger(id) || id < 0 || id >= template.nodes.length || changed.has(id) || !Array.isArray(updates) || updates.length % 2 || (fields += updates.length) > 400_000) fail();
+    changed.add(id);
+    const object = nodes[id], keys = template.keys[id], seen = new Set<string>();
+    if (object === stateRecord(sim.definition)) fail();
+    for (let i = 0; i < updates.length; i += 2) {
+      const field = updates[i];
+      const key = typeof field === 'number' && Number.isInteger(field) ? keys[field] : typeof field === 'string' ? field : undefined;
+      if (key === undefined || unsafeSnapshotKeys.includes(key) || seen.has(key) || object === stateRecord(sim) && snapshotOmitted.includes(key)) fail();
+      seen.add(key);
+      if (!keys.includes(key) && !(Array.isArray(object) && (key === 'length' || /^(0|[1-9]\d*)$/.test(key))) && !(controls.includes(object) && controlSnapshotKeys.includes(key))) fail();
+      const value = decode(updates[i + 1] as SnapshotValue);
+      if (Array.isArray(object) && (key === 'length' && (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 20_000) || key !== 'length' && Number(key) >= 20_000)) fail();
+      if (ArrayBuffer.isView(object) && (typeof value !== 'number' || !Number.isFinite(value))) fail();
+      object[key] = value;
+    }
+  }
+  // Validate restored shapes against trusted objects, including arrays introduced
+  // by fractures/results. Typed buffers and class instances retain their methods.
+  const checked = new Map<object, Set<object>>();
+  const check = (value: unknown, base: unknown, key = '') => {
+    // Live flights leave the reset policy unset; replay templates pin their launch roll.
+    if (key === 'fixedLaunchRoll') {
+      if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > LAUNCH_ROLL_LIMIT)) fail();
+      return;
+    }
+    if (base === null || base === undefined) {
+      if (value === null || value === undefined) return;
+      if (key === 'energyPerDistance') { if (typeof value !== 'number' || !Number.isFinite(value)) fail(); return; }
+      if (key === 'liftCenter' || key === 'dragCenter') { check(value, new Vector3()); return; }
+      if (key === 'frozenControls') {
+        if (!value || typeof value !== 'object' || Object.keys(value).some(name => !controlSnapshotKeys.includes(name))) fail();
+        for (const [name, item] of Object.entries(value)) if (typeof item !== (name === 'autoTrim' || name === 'adaptiveControls' ? 'boolean' : 'number') || typeof item === 'number' && !Number.isFinite(item)) fail();
+        return;
+      }
+      if (key === 'result') {
+        if (!value || typeof value !== 'object' || Object.keys(value).some(name => !resultSnapshotKeys.includes(name))) fail();
+        const result = stateRecord(value as object);
+        for (const name of resultSnapshotKeys) {
+          if (['takeoffHeight', 'takeoffSpeed', 'platformHeight'].includes(name) && result[name] === undefined) continue;
+          if (name === 'checkpointScores') { check(result[name], [0], name); continue; }
+          if (name === 'challenge') { if (result[name] !== challenge) fail(); continue; }
+          if (name === 'landing') { if (!['water', 'terrain', 'boundary', 'finish', 'manual'].includes(String(result[name]))) fail(); continue; }
+          if (typeof result[name] !== (name === 'completed' ? 'boolean' : 'number') || typeof result[name] === 'number' && !Number.isFinite(result[name])) fail();
+        }
+        return;
+      }
+      fail();
+    }
+    if (typeof base !== 'object') {
+      const unboundedWingMetric = value === Infinity && sim.aircraft.wingArea === 0 && (key === 'wingLoading' || key === 'stallSpeed');
+      if (typeof value !== typeof base || typeof value === 'number' && !Number.isFinite(value) && value !== base && !unboundedWingMetric) fail();
+      return;
+    }
+    if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.getPrototypeOf(base)) fail();
+    if (base instanceof Quaternion && Math.abs((value as Quaternion).lengthSq() - 1) > 1e-6) fail();
+    if (checked.get(value)?.has(base)) return;
+    if (!checked.has(value)) checked.set(value, new Set());
+    checked.get(value)!.add(base);
+    if (base === template!.simulation.definition) { if (JSON.stringify(value) !== JSON.stringify(base)) fail(); return; }
+    if (Array.isArray(base)) {
+      if (!Array.isArray(value)) fail();
+      if (value.length > 20_000) fail();
+      if (key === 'fragments') {
+        if (value.length > sim.structure.sections.length) fail();
+        for (const item of value) {
+          if (!item || typeof item !== 'object' || Object.keys(item).length !== fragmentSnapshotKeys.length || fragmentSnapshotKeys.some(name => !Object.hasOwn(item, name))) fail();
+          const fragment = stateRecord(item);
+          for (const name of fragmentSnapshotKeys) check(fragment[name], name === 'landed' ? false : name.includes('Quaternion') || name === 'quaternion' ? new Quaternion() : ['inertiaTensor', 'inverseInertia'].includes(name) ? new Matrix3() : ['id', 'mass', 'aeroPower'].includes(name) ? 0 : new Vector3(), name);
+        }
+      } else {
+        const dynamic = ['candidates', 'checkpointScores'].includes(key);
+        if (!dynamic && value.length !== base.length) fail();
+        const element = key === 'candidates' ? template!.simulation.structure.sections[0] : key === 'checkpointScores' ? 0 : base[0];
+        for (let i = 0; i < value.length; i++) check(value[i], dynamic ? element : base[i], String(i));
+      }
+      return;
+    }
+    if (ArrayBuffer.isView(base)) {
+      const actual = value as Float64Array, expected = base as Float64Array;
+      if (actual.length !== expected.length) fail();
+      for (let i = 0; i < actual.length; i++) if (typeof actual[i] !== 'number' || !Number.isFinite(actual[i]) && actual[i] !== expected[i]) fail();
+      return;
+    }
+    const actual = stateRecord(value as object), expected = stateRecord(base);
+    const names = Object.keys(base).filter(name => base !== template!.simulation || !snapshotOmitted.includes(name));
+    for (const name of names) {
+      if (!Object.hasOwn(actual, name)) fail();
+      check(actual[name], expected[name], name);
+    }
+    for (const name of Object.keys(actual)) {
+      if (base === template!.simulation && snapshotOmitted.includes(name) || names.includes(name)) continue;
+      if (!controls.includes(actual) || !controlSnapshotKeys.includes(name)) fail();
+      check(actual[name], name === 'autoTrim' || name === 'adaptiveControls' ? false : 0, name);
+    }
+  };
+  check(sim, template.simulation);
+  if (Math.abs(sim.elapsedTime - point.time) > 1e-8 || sim.challenge !== challenge || stateRecord(sim).launchRoll !== recording.launchRoll || sim.telemetry.cg !== sim.aircraft.cg || sim.telemetry.aerodynamics !== stateRecord(sim).aerodynamics || sim.structure.definition !== sim.definition || sim.structure.sections.some((section, index) => section.surface !== sim.surfaces[index])) fail();
+  if (!Number.isInteger(point.frame) || point.frame < 0 || point.frame > recording.length || !Number.isFinite(point.time) || point.time < 0 || sim.mass <= 0 || sim.telemetry.fuelRemaining < 0 || sim.telemetry.fuelRemaining > sim.definition.fuelTank.capacity + 1e-8 || sim.ended !== (sim.result !== null)) fail();
+  const bodies = new Set([0, ...sim.fragments.map(fragment => fragment.id)]);
+  if (bodies.size !== sim.fragments.length + 1 || sim.fragments.some(fragment => !Number.isInteger(fragment.id) || fragment.id <= 0 || fragment.mass <= 0) || sim.structure.sections.some(section => !bodies.has(section.bodyId))) fail();
+  sim.resumeReplay(recording, point.frame);
+  return sim;
 }

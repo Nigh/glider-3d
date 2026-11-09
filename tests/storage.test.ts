@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clone, defaultAircraft } from '../src/model';
+import { clone, defaultAircraft, presets } from '../src/model';
 import {
   deleteAircraft, duplicateAircraft, exportAircraft, History, importAircraft,
-  listAircraft, readBest, renameAircraft, saveAircraft, writeBest, PHYSICS_VERSION,
+  listAircraft as listAllAircraft, loadAircraft, isAircraftCompatible, readBest, renameAircraft, saveAircraft, writeBest, PHYSICS_VERSION,
 } from '../src/storage';
+
+const listAircraft = () => listAllAircraft().filter(aircraft => !aircraft.builtIn);
 
 class MemoryStorage implements Storage {
   private records = new Map<string, string>();
@@ -166,6 +168,57 @@ describe('飞机本地保存', () => {
     expect(() => renameAircraft(saved.id, '不能保存')).toThrow('本地存储空间已满');
     expect(() => saveAircraft(defaultAircraft)).toThrow('本地存储空间已满');
     expect(listAircraft()).toEqual([saved]);
+  });
+});
+
+describe('系统机库与飞机类型隔离', () => {
+  it('空机库直接列出全部系统预设，不写浏览器存储', () => {
+    const records = listAllAircraft();
+    expect(records.map(record => record.definition)).toEqual(presets);
+    expect(records.every(record => record.builtIn && record.updatedAt === 0)).toBe(true);
+    expect(new Set(records.map(record => record.id)).size).toBe(presets.length);
+    expect(storage.length).toBe(0);
+    for (const record of records) expect(loadAircraft(record.id)).toEqual(record);
+  });
+
+  it('存储禁用时系统记录仍可加载，用户存储错误不被吞掉', () => {
+    const system = listAllAircraft()[0];
+    vi.stubGlobal('localStorage', undefined);
+    expect(loadAircraft(system.id)).toEqual(system);
+    expect(() => listAllAircraft()).toThrow('无法访问浏览器本地存储');
+  });
+
+  it('系统飞机不可覆盖、改名或删除，但可独立复制、导出和同名保存', () => {
+    const system = listAllAircraft()[0];
+    expect(() => saveAircraft(defaultAircraft, system.id)).toThrow('系统飞机不可修改或删除');
+    expect(() => renameAircraft(system.id, '改名')).toThrow('系统飞机不可修改或删除');
+    expect(() => deleteAircraft(system.id)).toThrow('系统飞机不可修改或删除');
+    const copy = duplicateAircraft(system.id);
+    expect(copy.builtIn).toBeUndefined();
+    expect(copy.id).not.toBe(system.id);
+    expect(copy.definition).toEqual({ ...system.definition, name: `${system.name} 副本` });
+    expect(importAircraft(exportAircraft(system.definition))).toEqual(system.definition);
+    const personal = saveAircraft(system.definition);
+    expect(personal.builtIn).toBeUndefined();
+    deleteAircraft(personal.id);
+    system.definition.name = '仅修改读取副本';
+    expect(loadAircraft(system.id).definition).toEqual(presets[0]);
+    expect(listAllAircraft().filter(record => record.builtIn)).toHaveLength(presets.length);
+  });
+
+  it('伪造系统 ID 的本地记录不能覆盖或重复系统飞机', () => {
+    const system = listAllAircraft()[0];
+    storage.setItem(`lakewind.aircraft.${system.id}`, JSON.stringify({ ...system, definition: { ...system.definition, name: '伪造' } }));
+    expect(listAllAircraft()).toHaveLength(presets.length);
+    expect(loadAircraft(system.id).definition).toEqual(presets[0]);
+  });
+
+  it('鸟人间与普通比赛互斥，两个实验室都允许两类飞机', () => {
+    const standard = presets.find(preset => !preset.birdman)!;
+    for (const mode of ['birdman', 'downhill', 'low-altitude', 'test-space', 'wind-tunnel'] as const) {
+      expect(isAircraftCompatible(defaultAircraft, mode)).toBe(mode !== 'downhill' && mode !== 'low-altitude');
+      expect(isAircraftCompatible(standard, mode)).toBe(mode !== 'birdman');
+    }
   });
 });
 

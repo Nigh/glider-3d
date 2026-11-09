@@ -4,6 +4,25 @@ import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
  ...laboratoryMessages,
  ...inputMessages,
+ "平尾安装至垂尾顶端": ["Mount horizontal tail on fin tip", "水平尾翼を垂直尾翼の先端に取り付ける"],
+ "已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。": ["Mounted on the fin tip. The root follows the fin tip chord; turn off to return to the fuselage.", "垂直尾翼の先端に取り付け済みです。翼根は先端弦に連動します。オフにすると胴体に戻ります。"],
+ "可开启开关直接安装，或将平尾安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the horizontal-tail mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、水平尾翼の取り付け点を垂直尾翼の先端付近へドラッグして吸着させます。"],
+ "驾驶舱后段长度": ["Cockpit rear length", "操縦席の後部長"],
+ "前段与玻璃座舱罩固定；后段长度改变驾驶舱质量和最大油箱容量。": ["The front and glass canopy stay fixed. Rear length changes cockpit mass and maximum fuel capacity.", "前部とガラスキャノピーは固定です。後部の長さで操縦席の質量と燃料タンクの最大容量が変わります。"],
+ "实色表示实际转速，滑块表示设定转速。": ["Solid fill shows actual RPM; the thumb shows target RPM.", "塗りつぶしは実回転数、つまみは設定回転数を示します。"],
+ "机身必须支撑完整驾驶舱": ["The fuselage must support the entire cockpit", "胴体は操縦席全体を支える必要があります"],
+ "尾翼翼根无法安装到当前机身": ["The tail root does not fit the current fuselage", "現在の胴体には尾翼の付け根を取り付けられません"],
+ "平尾垂尾安装开关必须是布尔值": ["The fin-mounted tail setting must be a boolean", "垂直尾翼への取り付け設定は真偽値で指定してください"],
+ "机头须至少为 0.1 m，机尾须不高于 -0.1 m": ["The nose must be at least 0.1 m and the tail no farther forward than -0.1 m", "機首は0.1 m以上、機尾は-0.1 m以下にしてください"],
+ "机身必须支撑尾翼安装点": ["The fuselage must support the tail mounting points", "胴体は尾翼の取り付け点を支える必要があります"],
+ "飞机类型": ["Aircraft type", "機体の種類"],
+ "鸟人间飞机": ["Birdman aircraft", "鳥人間の機体"],
+ "普通飞机": ["Standard aircraft", "通常の機体"],
+ "系统飞机": ["System aircraft", "システム機体"],
+ "系统飞机不可修改或删除，请先复制。": ["System aircraft cannot be changed or deleted. Make a copy first.", "システム機体は変更・削除できません。先に複製してください。"],
+ "当前挑战不可使用鸟人间飞机，请选择普通飞机。": ["Birdman aircraft cannot enter this challenge. Choose a standard aircraft.", "このチャレンジでは鳥人間の機体は使用できません。通常の機体を選んでください。"],
+ "已导入机库，但当前挑战不可使用鸟人间飞机，未加载。": ["Saved to the hangar, but not loaded: Birdman aircraft cannot enter this challenge.", "格納庫に保存しましたが、読み込みませんでした。このチャレンジでは鳥人間の機体は使用できません。"],
+ "系统飞机可复制和导出，不可修改或删除。个人设计保存在当前浏览器，同名保存需确认覆盖。": ["System aircraft can be copied and exported, but not changed or deleted. Personal designs are saved in this browser; overwriting a matching name requires confirmation.", "システム機体は複製・書き出しできますが、変更・削除はできません。個人の設計はこのブラウザーに保存され、同名で上書きするときは確認が必要です。"],
  "垂直速度": ["Vertical velocity", "鉛直速度"],
  "实时杆量": ["Live control inputs", "現在の操縦入力"],
  "此记录未保存负载曲线": ["This recording has no saved load curves", "この記録には負荷曲線が保存されていません"],
@@ -388,9 +407,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Ailerons and elevator control attitude; the pilot sits inside a streamlined cockpit.",
   "副翼と昇降舵で姿勢を操作し、操縦者は流線型のコックピットに収まります。"
  ],
- "切换挑战保留当前飞机。仅进入鸟人间时，不符合规则的飞机恢复默认。重置设计会载入当前挑战的默认飞机。": [
-  "Changing challenges keeps your aircraft. Only entering Birdman replaces an ineligible aircraft with the default. Reset design loads the current challenge's default aircraft.",
-  "挑戦を変えても現在の機体を維持します。鳥人間に入るときだけ、ルール外の機体を初期機体に戻します。設計リセットでは現在の挑戦の初期機体を読み込みます。"
+ "比赛仅允许对应类型的飞机；测试空间和风洞可切换类型。重置设计载入当前类型的默认飞机。": [
+  "Races require the matching aircraft type. Test Space and Wind Tunnel allow either type. Reset design loads the default for the current type.",
+  "競技では対応する種類の機体のみ使用できます。テスト空間と風洞では種類を切り替えられます。設計リセットは現在の種類の初期機体を読み込みます。"
  ],
  "机头端点": [
   "Nose endpoint",
@@ -408,9 +427,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "· Pilot",
   "· 操縦者"
  ],
- "端点以机身局部 X 为准。移动一端，另一端不动；在组装视图也可直接拖动。驾驶舱及尾翼必须留在机身支撑范围内。": [
-  "Endpoints use local fuselage X. Moving one end leaves the other fixed; drag them in Assembly too. The cockpit and tail mounts must remain supported by the fuselage.",
-  "端点は胴体ローカルXで指定します。一端を動かしても他端は固定です。組立画面でもドラッグできます。コックピットと尾翼の取付点は胴体の支持範囲に収めます。"
+ "端点以机身局部 X 为准。移动一端，另一端不动；在机身编辑中也可直接拖动。驾驶舱及尾翼必须留在机身支撑范围内。": [
+  "Endpoints use local fuselage X. Moving one end leaves the other fixed; drag them while editing the fuselage too. The cockpit and tail mounts must remain supported by the fuselage.",
+  "端点は胴体ローカルXで指定します。一端を動かしても他端は固定です。胴体編集中にもドラッグできます。コックピットと尾翼の取付点は胴体の支持範囲に収めます。"
  ],
  "驾驶舱位置": [
   "Cockpit position",
@@ -2071,5 +2090,14 @@ export const messages: Record<string, readonly [string, string]> = {
  "中": ["Medium", "中"],
  "低": ["Low", "低"],
  "预设设计": ["Design presets", "設計プリセット"],
+ "回放关键帧无效": ["Invalid replay keyframes", "リプレイのキーフレームが無効です"],
+ "回放关键帧状态无效": ["Invalid replay keyframe state", "リプレイのキーフレーム状態が無効です"],
+ "回放关键帧缺少端点状态": ["Replay keyframes are missing endpoint states", "リプレイのキーフレームに開始または終了状態がありません"],
+ "回放关键帧间隔无效": ["Invalid replay keyframe interval", "リプレイのキーフレーム間隔が無効です"],
+ "回放关键帧编码无效": ["Invalid replay keyframe encoding", "リプレイのキーフレーム形式が無効です"],
+ "回放关键帧超过 128 MB": ["Replay keyframes exceed 128 MB", "リプレイのキーフレームが128 MBを超えています"],
+ "回放状态包含无效数值": ["Replay state contains an invalid number", "リプレイ状態に無効な数値があります"],
+ "回放状态包含无效类型": ["Replay state contains an invalid type", "リプレイ状態に無効な型があります"],
+ "回放时间无效": ["Invalid replay time", "リプレイ時刻が無効です"],
  "本次滑翔成绩": ["Glide result", "今回の滑空結果"]
 };
