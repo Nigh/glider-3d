@@ -789,7 +789,7 @@ describe('工坊场景与直接选取', () => {
     expect(simulation.structure.sections.filter(section=>section.wingKey==='verticalTail').at(-1)!.referenceTip.y).toBe(-0.48);
     geometry.dispose();view.wingNormalGeometry[2].dispose();for(const hinge of view.hingeLines)hinge.geometry.dispose();
   });
-  it('平尾安装拖动吸附梢弦中心，脱离后回机身，Ctrl跳过吸附',()=>{
+  it('平尾安装在较大范围内吸附至精确梢弦中心，拖远脱离，Ctrl跳过吸附',()=>{
     const view=designSceneView(),base=clone(defaultAircraft);
     Object.assign(view,{
       definition:base,editDefinition:clone(base),editorTarget:'horizontalTail',
@@ -798,10 +798,12 @@ describe('工坊场景与直接选取', () => {
     });
     const origin=wingOrigin(base,'verticalTail'),p=base.verticalTail.points;
     const x=origin.x-(p[1].x+p[2].x)/2-base.assembly.horizontalTail,y=p[1].y;
-    view.changeAssembly(1,x,y);
+    view.changeAssembly(1,x+0.2,y+0.05);
     expect(view.definition.assembly.tailOnFin).toBe(true);expect(view.editorSnap.kind).toBe('mount');
     expect(wingOrigin(view.definition,'horizontalTail').y).toBe(y);
-    view.editDefinition=clone(view.definition);view.changeAssembly(1,0.3,0);
+    const mount=view.assemblyEditorPoint(1,new Vector3());
+    expect(mount.x).toBeCloseTo(origin.x-(p[1].x+p[2].x)/2,12);expect(mount.y).toBe(y);
+    view.editDefinition=clone(view.definition);view.changeAssembly(1,0.6,0);
     expect(view.definition.assembly.tailOnFin).toBe(false);
     view.editDefinition=clone(base);view.editorSnap.disabled=true;view.changeAssembly(1,x,y);
     expect(view.definition.assembly.tailOnFin).toBe(false);

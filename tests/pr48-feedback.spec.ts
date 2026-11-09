@@ -49,3 +49,55 @@ test('精确尾翼端点编辑保持其他端点位置且支持向下垂尾', as
  await cockpit.fill('0.31'); await cockpit.press('Tab');
  await expect.poll(() => page.evaluate(() => window.glider.aircraft.cockpit.position)).toBeCloseTo(0.31, 2);
 });
+
+test('平尾开关控制安装位置，吸附手柄固定在垂尾顶端并支持撤销重做', async ({ page }) => {
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ await page.getByRole('tab', { name: '水平尾翼', exact: true }).click();
+ await page.locator('.viewport-tools').getByRole('button', { name: '侧视', exact: true }).click();
+ const toggle = page.getByRole('switch', { name: '平尾安装至垂尾顶端', exact: true });
+ await expect(toggle).toHaveAttribute('aria-checked', 'false');
+ await toggle.click();
+ await expect(toggle).toHaveAttribute('aria-checked', 'true');
+ await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(1.5, 6);
+ await expect.poll(() => page.evaluate(() => {
+  const mount = (window.glider.scene.editor.handles as { handle: number; x: number; y: number; ax: number; ay: number }[]).find(h => h.handle === 6)!;
+  return Math.hypot(mount.x - mount.ax, mount.y - mount.ay);
+ })).toBe(0);
+ await expect(page.getByRole('spinbutton', { name: '水平尾翼位置精确值', exact: true })).toBeDisabled();
+ await page.getByRole('button', { name: '撤销', exact: true }).click();
+ await expect(toggle).toHaveAttribute('aria-checked', 'false');
+ await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(0, 6);
+ await page.getByRole('button', { name: '重做', exact: true }).click();
+ await expect(toggle).toHaveAttribute('aria-checked', 'true');
+ await toggle.click();
+ await expect(toggle).toHaveAttribute('aria-checked', 'false');
+ await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(0, 6);
+ await expect(page.getByRole('spinbutton', { name: '水平尾翼位置精确值', exact: true })).toBeEnabled();
+});
+
+test('真实拖动在垂尾顶端外侧二十厘米仍吸附至准确顶端', async ({ page, isMobile }) => {
+ test.skip(isMobile, '精确鼠标轨迹在桌面验证；移动端覆盖显式安装开关');
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ await page.getByRole('tab', { name: '水平尾翼', exact: true }).click();
+ await page.locator('.viewport-tools').getByRole('button', { name: '侧视', exact: true }).click();
+ const toggle = page.getByRole('switch', { name: '平尾安装至垂尾顶端', exact: true });
+ await toggle.click();
+ await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(1.5, 6);
+ const mounted = await page.evaluate(() => (window.glider.scene.editor.handles as { handle: number; x: number; y: number; ax: number; ay: number }[]).find(h => h.handle === 6)!);
+ await toggle.click();
+ await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(0, 6);
+ const body = await page.evaluate(() => (window.glider.scene.editor.handles as { handle: number; x: number; y: number; ax: number; ay: number }[]).find(h => h.handle === 6)!);
+ const canvas = await page.locator('.scene canvas').boundingBox();
+ if (!canvas) throw Error('Scene canvas missing');
+ const scale = (body.ay - mounted.ay) / 1.5;
+ await page.mouse.move(canvas.x + body.x, canvas.y + body.y);
+ await page.mouse.down();
+ await page.mouse.move(canvas.x + body.x + mounted.ax - body.ax + 0.2 * scale, canvas.y + body.y + mounted.ay - body.ay + 0.05 * scale, { steps: 12 });
+ await page.mouse.up();
+ await expect(toggle).toHaveAttribute('aria-checked', 'true');
+ await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(1.5, 6);
+ await expect.poll(() => page.evaluate(() => {
+  const mount = (window.glider.scene.editor.handles as { handle: number; x: number; y: number; ax: number; ay: number }[]).find(h => h.handle === 6)!;
+  return Math.hypot(mount.x - mount.ax, mount.y - mount.ay);
+ })).toBe(0);
+});

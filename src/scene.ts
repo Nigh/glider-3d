@@ -1103,6 +1103,7 @@ export class SceneView {
     this.aircraft.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
     const label = t(key === 'mainWing' ? '主翼' : key === 'horizontalTail' ? '水平尾翼' : '垂直尾翼');
+    const tailMount = key === 'horizontalTail' && this.definition.assembly.tailOnFin ? this.editorHandles[6] : undefined;
     for (let i = 0; i < this.editorHandles.length; i++) {
       const handle = this.editorHandles[i];
       const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
@@ -1116,7 +1117,8 @@ export class SceneView {
       this.body.localToWorld(this.editProjection).project(this.camera);
       const ax = (this.editProjection.x + 1) * this.width / 2, ay = (1 - this.editProjection.y) * this.height / 2;
       // Preserve the layout offset; tiny anchor changes must not restart collision placement.
-      handle.x += ax - handle.ax; handle.y += ay - handle.ay;
+      if (handle === tailMount) { handle.x = ax; handle.y = ay; }
+      else { handle.x += ax - handle.ax; handle.y += ay - handle.ay; }
       handle.ax = ax; handle.ay = ay;
       handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
@@ -1152,6 +1154,7 @@ export class SceneView {
       segment.x += desiredX - segment.ax; segment.y += desiredY - segment.ay;
       segment.ax = desiredX; segment.ay = desiredY;
       const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
+        && (!tailMount || Math.hypot(tailMount.x - x, tailMount.y - y) >= 52 - 1e-6)
         && !this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < 52 - 1e-6);
       let placed = fits(segment.x, segment.y);
       for (let radius = 0; radius <= Math.max(this.width, this.height) && !placed; radius += 26) {
@@ -1181,7 +1184,7 @@ export class SceneView {
         const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
           && !occupied.some(other => Math.hypot(other.x - x, other.y - y) < 52 - 1e-6)
           && !handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < 52 - 1e-6);
-        if (!fits(handle.x, handle.y)) {
+        if (handle !== tailMount && !fits(handle.x, handle.y)) {
           let found = false;
           for (let radius = 52; radius <= Math.max(this.width, this.height) && !found; radius += 26) {
             for (let step = 0; step < 16; step++) {
@@ -1416,7 +1419,8 @@ export class SceneView {
       const cy = origin.y - middle * Math.sin(base.assembly.tailIncidence * DEG) + y;
       const fin = wingOrigin(next, 'verticalTail'), tip = next.verticalTail.points;
       const fx = fin.x - (tip[1].x + tip[2].x) / 2, fy = tip[1].y;
-      const attach = !this.editorSnap.disabled && Math.hypot(cx - fx, cy - fy) <= this.mountSnapTolerance();
+      const tolerance = Math.max(0.3, this.mountSnapTolerance() * 6);
+      const attach = !this.editorSnap.disabled && Math.hypot(cx - fx, cy - fy) <= tolerance;
       if (attach) {
         next.assembly.tailOnFin = true;
         this.editorSnap.active = true; this.editorSnap.kind = 'mount'; this.editorSnap.value = fy;
@@ -1614,7 +1618,7 @@ export class SceneView {
     glass.name = 'cockpit-canopy';
     glass.scale.set(BODY_GEOMETRY.canopy.xRadius, BODY_GEOMETRY.canopy.yRadius, BODY_GEOMETRY.canopy.zRadius);
     glass.position.set(BODY_GEOMETRY.canopy.x, BODY_GEOMETRY.canopy.y, 0);
-    this.beam = this.mesh(new THREE.CylinderGeometry(0.025, BODY_GEOMETRY.beamRadius, 1, 16), ivory, this.body);
+    this.beam = this.mesh(new THREE.CylinderGeometry(0.05, BODY_GEOMETRY.beamRadius, 1, 24), ivory, this.body);
     this.beam.rotation.z = Math.PI / 2;
     this.support = this.mesh(new THREE.BoxGeometry(1, 1, 0.06), graphite, this.body);
     this.support.name = 'main-wing-support';

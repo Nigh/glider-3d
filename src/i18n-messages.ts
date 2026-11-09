@@ -4,6 +4,9 @@ import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
  ...laboratoryMessages,
  ...inputMessages,
+ "平尾安装至垂尾顶端": ["Mount horizontal tail on fin tip", "水平尾翼を垂直尾翼の先端に取り付ける"],
+ "已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。": ["Mounted on the fin tip. The root follows the fin tip chord; turn off to return to the fuselage.", "垂直尾翼の先端に取り付け済みです。翼根は先端弦に連動します。オフにすると胴体に戻ります。"],
+ "可开启开关直接安装，或将平尾安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the horizontal-tail mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、水平尾翼の取り付け点を垂直尾翼の先端付近へドラッグして吸着させます。"],
  "驾驶舱后段长度": ["Cockpit rear length", "操縦席の後部長"],
  "前段与玻璃座舱罩固定；后段长度改变驾驶舱质量和最大油箱容量。": ["The front and glass canopy stay fixed. Rear length changes cockpit mass and maximum fuel capacity.", "前部とガラスキャノピーは固定です。後部の長さで操縦席の質量と燃料タンクの最大容量が変わります。"],
  "实色表示实际转速，滑块表示设定转速。": ["Solid fill shows actual RPM; the thumb shows target RPM.", "塗りつぶしは実回転数、つまみは設定回転数を示します。"],
