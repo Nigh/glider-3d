@@ -8,7 +8,7 @@ import * as challenges from '../src/challenges';
 
 const neutral={weight:0,elevator:0,aileron:0,rudder:0};
 afterEach(()=>vi.restoreAllMocks());
-const conventional=()=>clone(presets.find(p=>p.name==='低空喷气巡航型')!);
+const conventional=()=>clone(presets.find(p=>p.name==='基础单发型')!);
 function groundFlight(speed=8){
  vi.spyOn(challenges,'challengeTerrainHeight').mockReturnValue(20);
  const sim=new FlightSimulation(conventional(),'low-altitude',0);

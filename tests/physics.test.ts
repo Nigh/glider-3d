@@ -504,7 +504,7 @@ describe('气动、质量、能量与消费者边界', () => {
   it.each(presets.map(d => ({ name: d.name, d })))('$name 可完整飞行至真实接触，代表性预设不靠平台碰撞结束', ({ d }) => {
     const s = fly(d); expect(s.ended).toBe(true); expect(s.result).not.toBeNull(); budget(s);
     expect(Number.isFinite(s.result!.distance)).toBe(true); expect(s.result!.distance).toBeGreaterThanOrEqual(0);
-    if (d.name === '默认均衡型' || d.name === '高展弦比型') { expect(s.result!.landing).toBe('water'); expect(s.result!.distance).toBeGreaterThan(20); }
+    if (d.birdman) { expect(s.result!.landing).toBe('water'); expect(s.result!.distance).toBeGreaterThan(20); }
     const replay = new FlightSimulation(d, d.birdman ? 'birdman' : 'downhill', DEG); replay.loadReplay(s.getRecording());
     while (!replay.ended && !replay.replayFinished) replay.step(neutral);
     expect(replay.result).toEqual(s.result);

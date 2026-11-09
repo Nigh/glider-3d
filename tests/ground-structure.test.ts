@@ -9,7 +9,7 @@ const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
 afterEach(() => vi.restoreAllMocks());
 
 function grazing(downward = 0.3, weak = false) {
-  const definition = clone(presets.find(p => p.name === '低空喷气巡航型')!);
+  const definition = clone(presets.find(p => p.name === '基础单发型')!);
   if (weak) {
     definition.mainWing.materialId = 'spruce';
     definition.mainWing.structure = { width: 0.05, height: 0.07, wallThickness: 0.002 };

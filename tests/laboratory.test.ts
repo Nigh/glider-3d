@@ -8,7 +8,7 @@ import { exportReplay } from '../src/replay';
 import { readBest, writeBest } from '../src/storage';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0, throttle: 0 };
-const powered = () => clone(presets.find(p => p.name === '低空喷气巡航型')!);
+const powered = () => clone(presets.find(p => p.name === '基础单发型')!);
 
 it('keeps both laboratories out of leaderboard storage even when storage is unavailable', () => {
   const access = vi.fn(() => { throw Error('blocked'); });
@@ -130,8 +130,8 @@ describe('wind tunnel', () => {
     { name: 'pitch', poses: [[0, 45], [0, -45], [0, 0]] },
     { name: 'combined', poses: [[180, 45], [-180, -45], [0, 0]] },
     { name: 'inverted and opposing', poses: [[180, 0], [180, -45], [-180, 45], [0, 0]] },
-  ])('keeps the balanced preset intact at 10 m/s through $name startup, travel and stops', ({ poses }) => {
-    const sim = new FlightSimulation(clone(presets.find(p => p.name === '默认均衡型')!), 'wind-tunnel', 0);
+  ])('keeps the twin-engine preset intact at 10 m/s through $name startup, travel and stops', ({ poses }) => {
+    const sim = new FlightSimulation(clone(presets.find(p => p.engine.count === 2)!), 'wind-tunnel', 0);
     sim.setWindTunnelEnabled(true);
     for (let frame = 0; frame < 120; frame++) sim.step(neutral);
     expect(sim.windTunnel.speed).toBe(10);
@@ -151,8 +151,8 @@ describe('wind tunnel', () => {
     expect(maximumAcceleration).toBeGreaterThan(0.15); // Exercise the real startup peak, not just a stationary fixture.
     expect(sim.fragments).toHaveLength(0);
   });
-  it('keeps the balanced preset intact at 10 m/s when retargeted during peak startup acceleration', () => {
-    const sim = new FlightSimulation(clone(presets.find(p => p.name === '默认均衡型')!), 'wind-tunnel', 0);
+  it('keeps the twin-engine preset intact at 10 m/s when retargeted during peak startup acceleration', () => {
+    const sim = new FlightSimulation(clone(presets.find(p => p.engine.count === 2)!), 'wind-tunnel', 0);
     sim.setWindTunnelEnabled(true);
     for (let frame = 0; frame < 120; frame++) sim.step(neutral);
     // Each single-axis ramp peaks in acceleration after 1/frequency seconds.
@@ -197,8 +197,9 @@ describe('wind tunnel', () => {
       expect(a.roll).toBeCloseTo(b.roll, 10); expect(a.pitch).toBeCloseTo(b.pitch, 10);
     }
   });
-  it('gently reorients a light, unreinforced aircraft without motion-induced breakup', () => {
+  it('gently reorients a light carbon aircraft without motion-induced breakup', () => {
     const definition = clone(defaultAircraft); definition.mainWing.materialAmount = 0.5;
+    for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) definition[key].materialId = 'carbon-epoxy';
     const sim = new FlightSimulation(definition, 'wind-tunnel', 0);
     sim.step(neutral); expect(sim.structure.fractureCount).toBe(0);
     let maximumAcceleration = 0, previous = sim.omega.clone();

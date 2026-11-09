@@ -65,6 +65,9 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
  await page.getByRole('button', { name: /^风洞/ }).click();
  await page.getByRole('button', { name: '重置设计', exact: true }).click();
+ // Use the compact reinforced preset; this test exercises tunnel motion, not the wooden Birdman wing's load limit.
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ await page.locator('[data-aircraft-id="system:基础双发型"]').getByRole('button', { name: '加载', exact: true }).click();
  await page.getByRole('button', { name: /前往风洞/ }).click();
  await expect(page.getByRole('switch', { name: '气动图层', exact: true })).toHaveAttribute('aria-checked', 'true');
  await expect(page.getByRole('complementary', { name: '实时气动数据', exact: true })).toBeVisible();

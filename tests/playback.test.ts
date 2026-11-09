@@ -35,7 +35,7 @@ it('seeks variable-duration recordings forward, backward and to both endpoints w
 });
 
 it('records real per-step G peaks and reproduces them in replay, including launch loads', async () => {
- const definition=clone(presets.find(p=>p.name==='高山速降机动型')!),sim=new FlightSimulation(definition,'downhill',0);
+ const definition=clone(presets.find(p=>p.name==='高性能滑翔型')!),sim=new FlightSimulation(definition,'downhill',0);
  expect(sim.telemetry.gForce).toBeCloseTo(1,12);
  let maxG=1;
  for(let i=0;i<4000&&!sim.ended;i++){
@@ -51,7 +51,7 @@ it('records real per-step G peaks and reproduces them in replay, including launc
 },20000);
 
 it('persists fixed frame-aligned keyframes and seeks untouched regions with bounded integration', async () => {
- const definition=clone(presets.find(p=>p.name==='低空喷气巡航型')!),sim=new FlightSimulation(definition,'low-altitude',0.005);
+ const definition=clone(presets.find(p=>p.name==='基础单发型')!),sim=new FlightSimulation(definition,'low-altitude',0.005);
  for(let i=0;i<80;i++)sim.step({...neutral,throttle:0,trimPitch:0.1,adaptiveControls:true},i%2?0.25:0.125);
  const recording=sim.getRecording(),replay={definition,challenge:'low-altitude' as const,recording};
  expect(recording.keyframes![0].time).toBe(0);
@@ -78,7 +78,7 @@ it('persists fixed frame-aligned keyframes and seeks untouched regions with boun
 },30000);
 
 it('prefetches both sides without changing the displayed state or emitting chart samples, with bounded memory', async () => {
- const definition=clone(presets.find(p=>p.name==='低空喷气巡航型')!),sim=new FlightSimulation(definition,'low-altitude',0.005);
+ const definition=clone(presets.find(p=>p.name==='基础单发型')!),sim=new FlightSimulation(definition,'low-altitude',0.005);
  for(let i=0;i<360;i++)sim.step({...neutral,throttle:0},1/120);
  const recording=sim.getRecording(),replay={definition,challenge:'low-altitude' as const,recording};
  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});

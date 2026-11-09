@@ -8,7 +8,7 @@ import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
-import { isLaboratory, TEST_SPACE } from './laboratory';
+import { isLaboratory, TEST_SPACE, testSpaceTerrainHeight } from './laboratory';
 import { LaboratoryScene } from './laboratory-scene';
 import { language, t } from './i18n';
 
@@ -2072,8 +2072,7 @@ export class SceneView {
     this.updateCenters();
     this.updateFuelCgRange();
     this.updateEditorOverlay();
-    this.light.target.position.copy(this.aircraft.position);
-    this.light.position.copy(this.aircraft.position).add(this.vector.set(-55, 110, 65));
+    this.updateLight();
     this.updateCatapult();
     this.renderer.render(this.scene, this.camera);
     this.metrics.renderMs = performance.now() - start;
@@ -2126,6 +2125,17 @@ export class SceneView {
     mesh.receiveShadow = true;
     parent.add(mesh);
     return mesh;
+  }
+
+  private updateLight(): void {
+    this.light.target.position.copy(this.aircraft.position);
+    this.light.position.copy(this.aircraft.position).add(this.vector.set(-55, 110, 65));
+    // Follow the aircraft, but retain its ground receiver along the same light ray.
+    const far = this.environmentChallenge === 'test-space'
+      ? Math.max(230, this.vector.length() * (1 + Math.max(0, this.aircraft.position.y) / 110) + 20) : 230;
+    const camera = this.light.shadow.camera;
+    if (camera.far !== far) { camera.far = far; camera.updateProjectionMatrix(); }
+    this.light.shadow.bias = -0.0805 / far;
   }
 
   private placeStrut(mesh: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3, radius: number): void {
@@ -2516,6 +2526,7 @@ export class SceneView {
     this.orthographic.updateProjectionMatrix();
     this.controls.maxDistance = mountain ? 1400 : 700;
     if (isLaboratory(challenge)) {
+      if (challenge === 'test-space') this.buildTestSpaceEnvironment();
       this.laboratoryScene = new LaboratoryScene(challenge, this.definition, this.mountainEnvironment);
       if (this.simulation) this.laboratoryScene.update(this.simulation);
       this.environmentFog.color.setHex(challenge === 'wind-tunnel' ? 0x45494b : 0xd5e4e7);
@@ -2548,6 +2559,42 @@ export class SceneView {
     texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     texture.needsUpdate = true;
     return new THREE.MeshStandardMaterial({ color, vertexColors, map: texture, roughness: 1, side: THREE.DoubleSide });
+  }
+
+  private buildTestSpaceEnvironment(): void {
+    const { halfSize, step, beachHalfWidth } = TEST_SPACE, count = halfSize * 2 / step + 1;
+    const positions = new Float32Array(count * count * 3), colors = new Float32Array(positions.length);
+    const uvs = new Float32Array(count * count * 2), indices = new Uint32Array((count - 1) ** 2 * 6);
+    const color = new THREE.Color();
+    let index = 0;
+    for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
+      const vertex = row * count + col, offset = vertex * 3;
+      const x = -halfSize + col * step, z = -halfSize + row * step, y = testSpaceTerrainHeight(x, z);
+      positions[offset] = x; positions[offset + 1] = y; positions[offset + 2] = z;
+      uvs[vertex * 2] = x / 24; uvs[vertex * 2 + 1] = z / 24;
+      color.setHex(Math.abs(z) <= beachHalfWidth ? 0xdac7a0 : z > beachHalfWidth ? 0x92a8a1 : y > 3800 ? 0xe1e7e5 : y > 1800 ? 0x92958a : 0x78916d);
+      color.toArray(colors, offset);
+      if (col === count - 1 || row === count - 1) continue;
+      const next = vertex + count;
+      indices[index++] = vertex; indices[index++] = next; indices[index++] = vertex + 1;
+      indices[index++] = vertex + 1; indices[index++] = next; indices[index++] = next + 1;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1)); geometry.computeVertexNormals();
+    const terrain = this.mesh(geometry, this.groundMaterial(0xffffff, true), this.mountainEnvironment);
+    terrain.name = 'test-space-terrain'; terrain.castShadow = false;
+    const width = halfSize * 2, length = halfSize - beachHalfWidth;
+    const material = this.waterMaterial(0x6a9fae, width, length);
+    // Match the lake's render-only waterline offset, with stable shore depth at long view distances.
+    material.polygonOffset = true; material.polygonOffsetFactor = -1; material.polygonOffsetUnits = -1;
+    const ocean = this.mesh(new THREE.PlaneGeometry(width, length), material, this.mountainEnvironment);
+    ocean.name = 'test-space-ocean'; ocean.rotation.x = -Math.PI / 2; ocean.position.set(0, -0.035, (halfSize + beachHalfWidth) / 2); ocean.castShadow = false;
+    const bounds = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(10000, 10000, 10000)), new THREE.LineBasicMaterial({ color: 0xa3b5ae, transparent: true, opacity: 0.18 }));
+    bounds.name = 'test-space-boundary'; bounds.position.y = 5000; this.mountainEnvironment.add(bounds);
+    this.buildTrees(this.mountainEnvironment, true);
   }
 
   private buildMountainEnvironment(challenge: ChallengeMode): void {
@@ -2913,8 +2960,20 @@ export class SceneView {
     river.castShadow = false;
   }
 
-  private buildEnvironment(): void {
-    const water = new THREE.MeshStandardMaterial({ color: 0x7bada6, roughness: 0.35, metalness: 0.24, flatShading: true });
+  private waterMaterial(color: number, width: number, length: number): THREE.MeshStandardMaterial {
+    const size = 64, pixels = new Uint8Array(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const u = x * Math.PI * 2 / size, v = y * Math.PI * 2 / size;
+      const shade = Math.round(218 + 22 * Math.sin(4 * u + Math.sin(2 * v)) * Math.sin(3 * v + Math.sin(u)));
+      const offset = (y * size + x) * 4;
+      pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = shade; pixels[offset + 3] = 255;
+    }
+    const texture = new THREE.DataTexture(pixels, size, size);
+    texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter; texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true; texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    texture.repeat.set(width / 32, length / 32); texture.needsUpdate = true;
+    const water = new THREE.MeshStandardMaterial({ color, map: texture, roughness: 0.35, metalness: 0.24, flatShading: true });
     water.onBeforeCompile = shader => {
       shader.uniforms.lakeTime = this.waterTime;
       shader.vertexShader = 'uniform float lakeTime;\nvarying vec3 lakePosition;\n' + shader.vertexShader;
@@ -2922,6 +2981,11 @@ export class SceneView {
       shader.fragmentShader = 'uniform float lakeTime;\nvarying vec3 lakePosition;\n' + shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\nfloat wave = sin(lakePosition.x * 0.2 + lakePosition.y * 0.48 + lakeTime * 0.42) * sin(lakePosition.y * 0.17 - lakeTime * 0.3);\ndiffuseColor.rgb *= 1.0 + wave * 0.045;');
     };
+    return water;
+  }
+
+  private buildEnvironment(): void {
+    const water = this.waterMaterial(0x7bada6, 2400, 2000);
     const lake = this.mesh(new THREE.PlaneGeometry(2400, 2000), water, this.environment);
     lake.rotation.x = -Math.PI / 2;
     lake.position.set(700, -0.035, 0);
@@ -3106,31 +3170,7 @@ export class SceneView {
       mountain.castShadow = false;
       this.terrain.push(mountain);
     }
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6d7960, roughness: 1 });
-    const leavesMaterial = new THREE.MeshStandardMaterial({ color: 0x617c62, roughness: 1, flatShading: true });
-    const treeGeometry = new THREE.ConeGeometry(1, 3.4, 5);
-    const trunkGeometry = new THREE.CylinderGeometry(0.15, 0.2, 2, 5);
-    const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, 48);
-    const trees = new THREE.InstancedMesh(treeGeometry, leavesMaterial, 48);
-    trunks.castShadow = trees.castShadow = true;
-    trunks.receiveShadow = trees.receiveShadow = true;
-    this.detail.add(trunks, trees);
-    const instance = new THREE.Object3D();
-    this.environment.updateMatrixWorld(true);
-    for (let i = 0; i < 48; i++) {
-      const x = -27 - (i % 8) * 11 + Math.sin(i * 7.2) * 3;
-      const z = (i < 24 ? -1 : 1) * (15 + Math.floor((i % 24) / 8) * 22 + Math.sin(i * 2.2) * 8);
-      const scale = 0.8 + (Math.sin(i * 8.2) + 1) * 0.8;
-      const groundY = this.surfaceHeight(x, z);
-      instance.position.set(x, groundY + 0.8, z);
-      instance.scale.setScalar(1);
-      instance.updateMatrix();
-      trunks.setMatrixAt(i, instance.matrix);
-      instance.position.set(x, groundY + 2 + scale * 1.1, z);
-      instance.scale.setScalar(scale);
-      instance.updateMatrix();
-      trees.setMatrixAt(i, instance.matrix);
-    }
+    this.buildTrees(this.detail);
     const buoyMaterial = new THREE.MeshStandardMaterial({ color: 0xe6aa65, roughness: 0.7, flatShading: true });
     const buoyGeometry = new THREE.ConeGeometry(0.48, 1.3, 6);
     for (let distance = 50; distance <= 700; distance += 50) {
@@ -3146,6 +3186,33 @@ export class SceneView {
     }
     this.scene.add(...this.centerMarkers);
     this.scene.updateMatrixWorld(true);
+  }
+
+  private buildTrees(parent: THREE.Group, laboratory = false): void {
+    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6d7960, roughness: 1 });
+    const leavesMaterial = new THREE.MeshStandardMaterial({ color: 0x617c62, roughness: 1, flatShading: true });
+    const treeGeometry = new THREE.ConeGeometry(1, 3.4, 5);
+    const trunkGeometry = new THREE.CylinderGeometry(0.15, 0.2, 2, 5);
+    const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, 48);
+    const trees = new THREE.InstancedMesh(treeGeometry, leavesMaterial, 48);
+    trunks.name = 'tree-trunks'; trees.name = 'tree-canopies';
+    trunks.castShadow = trees.castShadow = true;
+    trunks.receiveShadow = trees.receiveShadow = true;
+    parent.add(trunks, trees);
+    const instance = new THREE.Object3D(), trunkScale = laboratory ? 3 : 1;
+    this.environment.updateMatrixWorld(true);
+    for (let i = 0; i < 48; i++) {
+      const x = laboratory ? TEST_SPACE.platformX - 400 + (i % 8) * 115 + Math.sin(i * 7.2) * 25 : -27 - (i % 8) * 11 + Math.sin(i * 7.2) * 3;
+      const z = laboratory ? -65 - Math.floor(i / 8) * 140 + Math.sin(i * 2.2) * 15 : (i < 24 ? -1 : 1) * (15 + Math.floor((i % 24) / 8) * 22 + Math.sin(i * 2.2) * 8);
+      const scale = (0.8 + (Math.sin(i * 8.2) + 1) * 0.8) * trunkScale;
+      const groundY = laboratory ? testSpaceTerrainHeight(x, z) : this.surfaceHeight(x, z);
+      instance.position.set(x, groundY + 0.8 * trunkScale, z);
+      instance.scale.setScalar(trunkScale);
+      instance.updateMatrix(); trunks.setMatrixAt(i, instance.matrix);
+      instance.position.set(x, groundY + 2 * trunkScale + scale * 1.1, z);
+      instance.scale.setScalar(scale);
+      instance.updateMatrix(); trees.setMatrixAt(i, instance.matrix);
+    }
   }
 
   private updateCatapult(): void {

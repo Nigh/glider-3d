@@ -1,0 +1,126 @@
+{
+  "name": "鸟人间滑翔基础型",
+  "birdman": true,
+  "fuselage": {
+    "length": 7.69,
+    "center": -0.5950000000000002
+  },
+  "cockpit": {
+    "position": 1.95
+  },
+  "mainWing": {
+    "points": [
+      {
+        "x": -0.07,
+        "y": 0
+      },
+      {
+        "x": 0.26,
+        "y": 6.29
+      },
+      {
+        "x": 1.06,
+        "y": 6.29
+      },
+      {
+        "x": 1.57,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.75,
+    "dihedral": 5.9,
+    "controlSurface": 0,
+    "materialId": "spruce",
+    "materialAmount": 1.77,
+    "structure": {
+      "width": 0.055,
+      "height": 0.13,
+      "wallThickness": 0.0012
+    }
+  },
+  "horizontalTail": {
+    "points": [
+      {
+        "x": 0,
+        "y": 0
+      },
+      {
+        "x": 0.15,
+        "y": 1.75
+      },
+      {
+        "x": 0.7000000000000001,
+        "y": 1.75
+      },
+      {
+        "x": 0.9,
+        "y": 0
+      }
+    ],
+    "dihedral": 0,
+    "controlSurface": 0,
+    "materialId": "spruce",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.025,
+      "height": 0.055,
+      "wallThickness": 0.0008
+    }
+  },
+  "verticalTail": {
+    "points": [
+      {
+        "x": 0.09,
+        "y": 0
+      },
+      {
+        "x": 0.26,
+        "y": 1.5
+      },
+      {
+        "x": 0.6599999999999999,
+        "y": 1.5
+      },
+      {
+        "x": 0.99,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.45,
+    "dihedral": 0,
+    "controlSurface": 1,
+    "materialId": "spruce",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.025,
+      "height": 0.055,
+      "wallThickness": 0.0008
+    }
+  },
+  "assembly": {
+    "mainWing": 1.7400000000000002,
+    "mainWingHeight": 1,
+    "horizontalTail": -3.99,
+    "verticalTail": -3.9,
+    "mainIncidence": 3,
+    "tailIncidence": 0,
+    "tailOnFin": false
+  },
+  "pilot": {
+    "mass": 60
+  },
+  "controls": {
+    "travel": 0.45,
+    "lateralTravel": 0.1
+  },
+  "engine": {
+    "type": "jet-01",
+    "count": 0,
+    "x": -0.5,
+    "y": 0.5
+  },
+  "fuelTank": {
+    "x": 0.35,
+    "capacity": 0
+  }
+}

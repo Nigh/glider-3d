@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { AircraftDefinition } from './model';
 import type { FlightSimulation } from './physics';
-import { TEST_SPACE, testSpaceTerrainHeight, windTunnelRoom, type LaboratoryMode } from './laboratory';
+import { TEST_SPACE, windTunnelRoom, type LaboratoryMode } from './laboratory';
 
 /** Environment objects share SceneView's normal disposal and rendering lifecycle. */
 export class LaboratoryScene {
@@ -19,41 +19,21 @@ export class LaboratoryScene {
 
   private box(parent: THREE.Group, name: string, size: number[], position: number[], color: number) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size as [number, number, number]), new THREE.MeshStandardMaterial({ color, roughness: 0.75 }));
-    mesh.name = name; mesh.position.fromArray(position); parent.add(mesh); return mesh;
+    mesh.name = name; mesh.position.fromArray(position); mesh.castShadow = mesh.receiveShadow = true; parent.add(mesh); return mesh;
   }
 
   private buildTestSpace() {
-    const { halfSize, step } = TEST_SPACE, count = halfSize * 2 / step + 1;
-    const positions = new Float32Array(count * count * 3), colors = new Float32Array(positions.length);
-    const indices = new Uint32Array((count - 1) ** 2 * 6), color = new THREE.Color();
-    let index = 0;
-    for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
-      const x = -halfSize + col * step, z = -halfSize + row * step, y = testSpaceTerrainHeight(x, z), offset = (row * count + col) * 3;
-      positions.set([x, y, z], offset);
-      color.setHex(Math.abs(z) <= 25 ? 0xdac7a0 : z > 25 ? 0x92a8a1 : y > 3800 ? 0xe1e7e5 : y > 1800 ? 0x92958a : 0x78916d);
-      colors.set([color.r, color.g, color.b], offset);
-      if (col < count - 1 && row < count - 1) {
-        const a = row * count + col, b = a + count;
-        indices.set([a, b, a + 1, a + 1, b, b + 1], index); index += 6;
-      }
-    }
-    const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3)); geometry.setIndex(new THREE.BufferAttribute(indices, 1)); geometry.computeVertexNormals();
-    const terrain = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
-    terrain.name = 'test-space-terrain'; this.root.add(terrain);
-    const ocean = new THREE.Mesh(new THREE.PlaneGeometry(halfSize * 2, halfSize - 25), new THREE.MeshStandardMaterial({ color: 0x6a9fae, roughness: 0.25, metalness: 0.15, transparent: true, opacity: 0.94 }));
-    ocean.name = 'test-space-ocean'; ocean.rotation.x = -Math.PI / 2; ocean.position.set(0, 0, (halfSize + 25) / 2); this.root.add(ocean);
-    const bounds = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(10000, 10000, 10000)), new THREE.LineBasicMaterial({ color: 0xa3b5ae, transparent: true, opacity: 0.18 }));
-    bounds.name = 'test-space-boundary'; bounds.position.y = 5000; this.root.add(bounds);
     this.platform.name = 'balloon-launch-platform'; this.platform.position.x = TEST_SPACE.platformX; this.root.add(this.platform);
-    this.box(this.platform, 'test-platform-deck', [50, 0.8, 40], [0, -0.4, 0], 0x677975);
+    const deck = this.box(this.platform, 'test-platform-deck', [50, 0.8, 40], [0, -0.4, 0], 0x677975);
+    // Keep the physical deck at exactly 0 m; separate coincident raster depth only.
+    deck.material.polygonOffset = true; deck.material.polygonOffsetFactor = -2; deck.material.polygonOffsetUnits = -2;
     for (const side of [-1, 1]) {
       this.box(this.platform, 'platform-edge', [50, 0.06, 0.25], [0, 0.03, side * 19], 0xe8d4a0);
       this.box(this.platform, 'test-space-rail', [50, 0.2, 0.12], [0, 1.9, side * 0.65], 0x9baaa8);
       for (let x = -25; x <= 25; x += 10) this.box(this.platform, 'rail-post', [0.16, 1.8, 0.16], [x, 0.9, side * 0.65], 0x879896);
       for (const x of [-24, 24]) {
         const balloon = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshStandardMaterial({ color: side < 0 ? 0xe2b083 : 0xd8ded0, roughness: 0.85 }));
-        balloon.name = 'platform-balloon'; balloon.position.set(x, 36, side * 19); balloon.scale.set(5, 8, 5); this.platform.add(balloon);
+        balloon.name = 'platform-balloon'; balloon.position.set(x, 36, side * 19); balloon.scale.set(5, 8, 5); balloon.castShadow = true; this.platform.add(balloon);
         const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 28, 5), new THREE.MeshStandardMaterial({ color: 0xb9b19a }));
         rope.name = 'balloon-tether'; rope.position.set(x, 14, side * 19); this.platform.add(rope);
       }

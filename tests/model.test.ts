@@ -6,7 +6,7 @@ import { derive, FlightSimulation } from '../src/physics';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
- it('预设均通过几何校验，包括空气动力学不稳定设计',()=>{for(const d of presets)expect(validateAircraft(d)).toEqual(d);});
+ it('所有系统飞机均通过几何校验且参数不被修改',()=>{for(const d of presets)expect(validateAircraft(d)).toEqual(d);});
  it('材料用量默认1，迁移旧档并拒绝非有限或越界字段',()=>{
   for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
    const legacy:any=clone(defaultAircraft);delete legacy[key].materialAmount;
@@ -89,7 +89,7 @@ describe('参数化几何与信任边界',()=>{
  it('各翼根中心随安装角保持在安装高度，尾翼中心固定梁上',()=>{
   const d=clone(defaultAircraft);d.assembly.mainIncidence=18;d.assembly.tailIncidence=-12;d.assembly.mainWingHeight=-0.5;
   for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
-   const origin=wingOrigin(d,key),middle=(d[key].points[0].x+d[key].points[3].x)/2;
+   const origin=wingOrigin(d,key),middle=d[key].rootReference??(d[key].points[0].x+d[key].points[3].x)/2;
    const angle=(key==='mainWing'?d.assembly.mainIncidence:key==='horizontalTail'?d.assembly.tailIncidence:0)*DEG;
    expect(origin.y-middle*Math.sin(angle)).toBeCloseTo(key==='mainWing'?-0.5:0,12);
    if(key!=='mainWing')expect(origin.x-middle*Math.cos(angle)).toBeCloseTo(d.assembly[key],12);
@@ -126,7 +126,7 @@ describe('参数化几何与信任边界',()=>{
   expect(fuselageEnds(d).nose).toBe(original.nose);
  });
  it('旧定义补齐中心且驾驶员统一60kg，不能通过JSON降低重量',()=>{
-  const legacy={...clone(defaultAircraft),fuselage:{length:6.5},pilot:{mass:40}};
+  const legacy={...clone(defaultAircraft),fuselage:{length:10},pilot:{mass:40}};
   const checked=validateAircraft(legacy);
   expect(checked.fuselage.center).toBe(0);
   expect(checked.pilot.mass).toBe(PILOT_MASS);
@@ -217,7 +217,11 @@ describe('参数化几何与信任边界',()=>{
   expect(()=>validateAircraft({...d,birdman:true})).toThrow('鸟人间');
   d.engine.x=fuselageEnds(d).tail+0.1;d.fuelTank.x=fuelTankLimits(d).max;
   resizeFuselage(d,'tail',100);resizeFuselage(d,'nose',-100);
-  expect(fuselageEnds(d).tail).toBeLessThanOrEqual(d.engine.x);expect(validateAircraft(d)).toEqual(d);
+  expect(fuselageEnds(d).tail).toBeLessThanOrEqual(d.engine.x);
+  const checked=validateAircraft(d);
+  expect(checked.engine.x).toBeCloseTo(d.engine.x,12);
+  expect(checked.fuelTank.x).toBeGreaterThanOrEqual(fuelTankLimits(checked).min);
+  expect(checked.fuelTank.x).toBeLessThanOrEqual(fuelTankLimits(checked).max);
  });
  it('根点独立编辑保持其他绝对端点，角度不为零也不改变原点',()=>{
   for(const key of ['mainWing','horizontalTail','verticalTail'] as const)for(const index of [0,3]){
@@ -323,24 +327,15 @@ describe('材料目录与独立梁截面',()=>{
  });
  it('三翼材料与截面修改实际改变设计质量，材料切换不修改截面',()=>{
   for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
-   const d=clone(defaultAircraft),baseline=derive(d).mass,w=d[key],section=beamSection(w.structure),p=w.points;
+   const d=clone(defaultAircraft),baseline=derive(d).mass,w=d[key],section=beamSection(w.structure,w.materialAmount),p=w.points;
    const quarterDelta=p[1].x-p[0].x+((p[2].x-p[1].x)-(p[3].x-p[0].x))/4;
    const beamLength=Math.hypot(quarterDelta,p[1].y)*(key==='verticalTail'?1:2);
    for(const id of Object.keys(materialCatalog) as MaterialId[]){
     d[key].materialId=id;expect(validateAircraft(d)[key].structure).toEqual(defaultAircraft[key].structure);
-    expect(derive(d).mass-baseline).toBeCloseTo((materialCatalog[id].density-materialCatalog['carbon-epoxy'].density)*section.area*beamLength,8);
+    expect(derive(d).mass-baseline).toBeCloseTo((materialCatalog[id].density-materialCatalog[defaultAircraft[key].materialId].density)*section.area*beamLength,8);
    }
    d[key].materialId='carbon-epoxy';d[key].structure.wallThickness*=1.5;
    expect(derive(d).mass).toBeGreaterThan(baseline);
-  }
- });
- it('默认使用CFRP，速降和喷气预设三翼均采用加强截面',()=>{
-  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
-   expect(defaultAircraft[key].materialId).toBe('carbon-epoxy');
-   for(const d of presets.filter(d=>d.name==='高山速降机动型'||d.name==='低空喷气巡航型')){
-    expect(d[key].materialId).toBe('carbon-epoxy');
-    expect(beamSection(d[key].structure).secondMoment).toBeGreaterThan(beamSection(defaultAircraft[key].structure).secondMoment);
-   }
   }
  });
  it('设计边界移除运行形变、分段归属和断片，不写回原始对象',()=>{

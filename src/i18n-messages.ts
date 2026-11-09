@@ -4,6 +4,12 @@ import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
  ...laboratoryMessages,
  ...inputMessages,
+ "鸟人间滑翔基础型": ["Basic Birdman glider", "鳥人間基本滑空型"],
+ "高性能滑翔型": ["High-performance glider", "高性能滑空型"],
+ "基础双发型": ["Basic twin-engine aircraft", "基本双発型"],
+ "基础单发型": ["Basic single-engine aircraft", "基本単発型"],
+ "巡航油门 {throttle}% · 巡航速度 {speed} m/s": ["Cruise throttle {throttle}% · Cruise speed {speed} m/s", "巡航スロットル {throttle}% · 巡航速度 {speed} m/s"],
+ "{span} m 翼展": ["{span} m wingspan", "翼幅 {span} m"],
  "平尾安装至垂尾顶端": ["Mount horizontal tail on fin tip", "水平尾翼を垂直尾翼の先端に取り付ける"],
  "已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。": ["Mounted on the fin tip. The root follows the fin tip chord; turn off to return to the fuselage.", "垂直尾翼の先端に取り付け済みです。翼根は先端弦に連動します。オフにすると胴体に戻ります。"],
  "可开启开关直接安装，或将平尾安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the horizontal-tail mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、水平尾翼の取り付け点を垂直尾翼の先端付近へドラッグして吸着させます。"],
@@ -326,14 +332,6 @@ export const messages: Record<string, readonly [string, string]> = {
  "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · 1 / 2 油门": [
   "W / S pitch · A / D roll · Q / E yaw · 1 / 2 throttle",
   "W / S ピッチ · A / D ロール · Q / E ヨー · 1 / 2 スロットル"
- ],
- "湖风 01 / 均衡型": [
-  "Lakewind 01 / Balanced",
-  "湖風 01 / バランス型"
- ],
- "14.0 m 翼展": [
-  "14.0 m wingspan",
-  "翼幅14.0 m"
  ],
  "参数化轻型滑空机": [
   "Parametric light glider",
@@ -1239,14 +1237,6 @@ export const messages: Record<string, readonly [string, string]> = {
   "Saved to the hangar, but not loaded: this challenge only allows unpowered Birdman designs.",
   "格納庫に保存しましたが、読み込みませんでした。このチャレンジでは無動力の鳥人間設計のみ使用できます。"
  ],
- "高山速降机动型": [
-  "Alpine agile",
-  "山岳機動型"
- ],
- "低空喷气巡航型": [
-  "Low-altitude jet cruiser",
-  "低空ジェット巡航型"
- ],
  "拖动四个顶点，或拖动 1–4 根弦、2–3 梢弦的外伸圆形手柄，同时移动两端。顶点过近时自动外移，虚线连接真实位置。垂直位置轻微吸附，按住 Ctrl 自由微调。数字输入可精确调整同一组顶点。": [
   "Drag four vertices, or the offset circular handles on root-chord 1–4 and tip-chord 2–3 to move both ends. Closely spaced handles move outward; dashed lines show their true positions. Soft vertical snapping; hold Ctrl for fine adjustment. Number fields edit the same vertices precisely.",
   "4頂点をドラッグするか、根弦1–4・翼端弦2–3の外側の丸ハンドルで両端を動かします。近いハンドルは自動で外へずらし、破線で実位置を示します。縦方向に軽く吸着し、Ctrlで自由に微調整できます。数値欄でも同じ頂点を精密に編集できます。"
@@ -1359,10 +1349,6 @@ export const messages: Record<string, readonly [string, string]> = {
   "Fuselage endpoints must be finite",
   "胴体端点は有限値で指定してください"
  ],
- "湖风 01": [
-  "Lakewind 01",
-  "湖風 01"
- ],
  "飞机数据必须是对象": [
   "Aircraft data must be an object",
   "機体データはオブジェクトで指定してください"
@@ -1434,30 +1420,6 @@ export const messages: Record<string, readonly [string, string]> = {
  "主翼翼根无法安装到当前机身，请调整机身或翼根": [
   "The main-wing root does not fit this fuselage. Adjust the fuselage or wing root.",
   "主翼の翼根を現在の胴体に取り付けられません。胴体か翼根を調整してください。"
- ],
- "默认均衡型": [
-  "Balanced default",
-  "標準バランス型"
- ],
- "高展弦比型": [
-  "High aspect ratio",
-  "高アスペクト比型"
- ],
- "高稳定型": [
-  "High stability",
-  "高安定型"
- ],
- "灵敏操纵型": [
-  "Agile controls",
-  "敏感操縦型"
- ],
- "重心过后不稳定型": [
-  "Unstable aft CG",
-  "後方重心・不安定型"
- ],
- "高翼载荷型": [
-  "High wing loading",
-  "高翼面荷重型"
  ],
  "云杉": [
   "Spruce",

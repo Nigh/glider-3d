@@ -37,7 +37,7 @@ it('exports lossless JSON and reproduces every recorded state after import', asy
 
 it.each(['birdman', 'downhill', 'low-altitude'] as const)('exports live %s flights without a fixed launch roll and restores their keyframes', async challenge => {
   vi.spyOn(Math, 'random').mockReturnValue(0.8);
-  const definition = challenge === 'birdman' ? defaultAircraft : presets.find(d => d.name === (challenge === 'downhill' ? '高山速降机动型' : '低空喷气巡航型'))!;
+  const definition = challenge === 'birdman' ? defaultAircraft : presets.find(d => d.name === (challenge === 'downhill' ? '高性能滑翔型' : '基础单发型'))!;
   const sim = new FlightSimulation(definition, challenge);
   const states = new Map<number, { position: number[]; quaternion: number[]; fuel: number }>();
   for (let frame = 0; frame <= 61; frame++) {

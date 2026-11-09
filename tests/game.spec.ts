@@ -176,9 +176,9 @@ test.describe('桌面完整交互', () => {
   test('机身、驾驶舱、四点拖翼、尾翼、安装位置、撤销和重做', async ({ page }) => {
     await enterDesign(page);
     await page.getByRole('tab', { name: '机身', exact: true }).click();
-    await resizeLength(page, 7.2);
+    await resizeLength(page, 8.2);
     await number(page, '驾驶舱位置精确值', 1.5);
-    expect((await aircraft(page)).fuselage.length).toBeCloseTo(7.2, 8);
+    expect((await aircraft(page)).fuselage.length).toBeCloseTo(8.2, 8);
     expect((await aircraft(page)).cockpit.position).toBe(1.5);
     await page.getByRole('tab', { name: '主翼', exact: true }).click();
     await page.getByRole('button', { name: '俯视', exact: true }).click();
@@ -228,17 +228,17 @@ test.describe('桌面完整交互', () => {
     await page.getByRole('button', { name: '重做', exact: true }).click();
     expect(await aircraft(page)).toEqual(final);
     await page.getByRole('tab', { name: '机身', exact: true }).click();
-    await resizeLength(page, 8);
+    await resizeLength(page, 9);
     await page.getByRole('heading', { name: '飞机工坊' }).click();
     await page.keyboard.press('ControlOrMeta+z');
-    expect((await aircraft(page)).fuselage.length).toBeCloseTo(7.2, 8);
+    expect((await aircraft(page)).fuselage.length).toBeCloseTo(8.2, 8);
     await page.keyboard.press('ControlOrMeta+Shift+z');
-    expect((await aircraft(page)).fuselage.length).toBeCloseTo(8, 8);
+    expect((await aircraft(page)).fuselage.length).toBeCloseTo(9, 8);
     await page.getByRole('button', { name: '机库', exact: true }).click();
-    const preset = page.locator('.saved-plane').filter({ hasText: '高展弦比型' });
+    const preset = page.locator('.saved-plane').filter({ hasText: '鸟人间滑翔基础型' });
     await expect(preset.getByRole('button', { name: '删除', exact: true })).toHaveCount(0);
     await preset.getByRole('button', { name: '加载', exact: true }).click();
-    expect((await aircraft(page)).mainWing.points[1].y).toBe(9.5);
+    expect((await aircraft(page)).name).toBe('鸟人间滑翔基础型');
     await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
     await expect.poll(() => page.evaluate(() => window.glider.metrics.quality)).toBe('Low');
   });
@@ -380,14 +380,15 @@ test('手机竖屏与横屏无页面溢出，保留相机操作并移除虚拟�
 
 test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ page }) => {
   await enterDesign(page);
+  const originalRoot=(await aircraft(page)).mainWing.points[0].x;
   await page.getByRole('button', { name: '俯视', exact: true }).click();
   await page.getByText('精确编辑四个顶点', { exact: true }).click();
   const root = page.getByRole('spinbutton', { name: '顶点1后向坐标', exact: true });
   await root.fill('2');
   await root.press('Tab');
-  await expect(root).toHaveValue('0');
+  await expect(root).toHaveValue(String(originalRoot));
   await expect(page.getByRole('alert')).toContainText('至少 0.15 m');
-  expect((await aircraft(page)).mainWing.points[0].x).toBe(0);
+  expect((await aircraft(page)).mainWing.points[0].x).toBe(originalRoot);
   const before = (await aircraft(page)).mainWing.points[1].y;
   await dragHandle(page, 1, 0, -7);
   expect((await aircraft(page)).mainWing.points[1].y).toBeCloseTo(before, 4);
@@ -395,7 +396,7 @@ test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ pa
   await page.getByRole('textbox', { name: '飞机名称', exact: true }).press('Tab');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('button', { name: '机库', exact: true }).click();
-  await page.locator('.saved-plane').filter({ hasText: '高展弦比型' }).getByRole('button', { name: '加载', exact: true }).click();
+  await page.locator('.saved-plane').filter({ hasText: '鸟人间滑翔基础型' }).getByRole('button', { name: '加载', exact: true }).click();
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('button', { name: '机库', exact: true }).click();
   const a = page.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名设计 A', exact: true }) });
@@ -1431,7 +1432,7 @@ test('低空2m导轨随真实滑跑移动，升力脱轨后断开连接，再次
     const { SceneView } = await import(scenePath) as typeof SceneModule;
     const { FlightSimulation } = await import(physicsPath) as typeof PhysicsModule;
     const { presets, clone } = await import(modelPath) as typeof ModelModule;
-    const definition = clone(presets.find(plane => plane.name === '低空喷气巡航型')!);
+    const definition = clone(presets.find(plane => plane.name === '基础单发型')!);
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;width:960px;height:600px';
     document.body.append(host);
@@ -1518,7 +1519,7 @@ test('地面X分两笔同步发声，计时门外侧随接近变红',async({page
   const scenePath='/src/scene.ts',physicsPath='/src/physics.ts',modelPath='/src/model.ts';
   const {SceneView}=await import(scenePath),{FlightSimulation}=await import(physicsPath),{presets}=await import(modelPath);
   const host=document.createElement('div');host.style.cssText='width:800px;height:600px';document.body.append(host);
-  const view=new SceneView(host),sim=new FlightSimulation(presets.find((p:any)=>p.name==='高山速降机动型'),'downhill',0);
+  const view=new SceneView(host),sim=new FlightSimulation(presets.find((p:any)=>p.name==='高性能滑翔型'),'downhill',0);
   try{
    view.setFlight(sim);sim.ended=true;sim.groundImpactPoint.copy(sim.position);
    const internals=view as any,gate=internals.mountainEnvironment.children.find((g:any)=>g.userData.gate),warning=gate.children.find((c:any)=>c.userData.warning);

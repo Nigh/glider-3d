@@ -59,7 +59,7 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  const fixture=await page.evaluate(async()=>{
   const {FlightSimulation}=await import('/src/physics.ts');const {presets,clone}=await import('/src/model.ts');const {exportReplay}=await import('/src/replay.ts');
-  const definition=clone(presets.find(p=>p.name==='低空喷气巡航型')!);const sim=new FlightSimulation(definition,'downhill',0);
+  const definition=clone(presets.find(p=>p.name==='基础单发型')!);const sim=new FlightSimulation(definition,'downhill',0);
   for(let i=0;i<4000&&!sim.ended;i++)sim.step({weight:0,elevator:0.5,aileron:0.12,rudder:0.08,throttle:1});
   if(!sim.ended)throw Error('Fixture did not finish');
   return {text:await exportReplay({definition,challenge:'downhill',recording:sim.getRecording()}),duration:sim.elapsedTime,result:sim.result};
