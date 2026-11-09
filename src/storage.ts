@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 刚性上反角旋转统一翼面、结构、惯量与接触几何，保留旧成绩但不混榜。
-export const PHYSICS_VERSION = 'adaptive-damped-v11';
+// 驾驶舱阻力、可变后舱与非对称引擎响应改变物理行为，保留旧成绩但不混榜。
+export const PHYSICS_VERSION = 'adaptive-damped-v12';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

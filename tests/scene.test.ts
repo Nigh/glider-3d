@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BackSide, Box3, Box3Helper, BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
 import type { Material } from 'three';
-import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin } from '../src/model';
+import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint } from '../src/model';
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
@@ -719,11 +719,12 @@ describe('工坊场景与直接选取', () => {
     original.engine.count = 1; original.fuelTank.capacity = 1;
     let commits = 0;
     const group = { style: { cursor: 'grabbing' } };
+    const dragX = target === 'fuselage' && index === 5 ? -0.2 : 0.2;
     Object.assign(view, {
       definition: clone(original), editDefinition: clone(original), editorTarget: target,
       editorPointerId: 7, editorDrag: index, editorSegmentDrag: -1, editorChanged: false,
       editorHandles: Array.from({ length: 8 }, () => ({ group })),
-      editStart: new Vector3(), editPoint: new Vector3(0.2, 0.1, 0),
+      editStart: new Vector3(), editPoint: new Vector3(dragX, 0.1, 0),
       editorSnap: { active: false, kind: null, value: null, disabled: false },
       intersectEditor: () => true,
       editorChange(next: typeof original) { this.definition = next; },
@@ -732,6 +733,12 @@ describe('工坊场景与直接选取', () => {
     });
     view.moveEditorDrag({ pointerId: 7, ctrlKey: true, preventDefault() {} });
     expect(view.definition).not.toEqual(original);
+    if (target === 'fuselage' && (index === 4 || index === 5)) {
+      const before = fuselageEnds(original), after = fuselageEnds(view.definition);
+      const end = index === 4 ? 'nose' : 'tail', fixed = index === 4 ? 'tail' : 'nose';
+      expect(after[end]).toBeCloseTo(before[end] + dragX, 12);
+      expect(after[fixed]).toBeCloseTo(before[fixed], 12);
+    }
     expect(view.editorChanged).toBe(true);
     view.endEditorDrag(true);
     expect(view.definition).toEqual(original);
@@ -764,5 +771,70 @@ describe('工坊场景与直接选取', () => {
       expect(last.referenceTip.distanceTo(first.referenceRoot)).toBeCloseTo(Math.hypot(wing.points[1].y, tipQuarter - rootQuarter), 10);
     }
     geometry.dispose(); view.wingNormalGeometry[0].dispose(); view.hingeLines[0].geometry.dispose();
+  });
+  it('负垂尾网格、手柄和结构梁共用正跨度与负高度', () => {
+    const definition=clone(defaultAircraft);editWingPoint(definition,'verticalTail',1,0.3,-0.48);
+    const view=Object.assign(Object.create(SceneView.prototype),{
+      definition,editorTarget:'verticalTail',wingSections:[[],[],[]],wingNormalGeometry:[],
+      wingNeutral:[],wingHinges:[],wingMovable:[],wingAxes:[],
+      hingeLines:Array.from({length:3},()=>({geometry:new BufferGeometry()})),
+    });
+    const origin=wingOrigin(definition,'verticalTail');
+    const geometry=view.wingGeometry(definition.verticalTail,origin.x,origin.y,0,2) as BufferGeometry;
+    const tip=view.wingEditorPoint(1,1,new Vector3()),sections=view.wingSections[2];
+    const last=sections.at(-1),rendered=new Vector3().fromBufferAttribute(geometry.getAttribute('position'),last.vertexStart+last.rows*32);
+    expect(rendered.distanceTo(tip)).toBeLessThan(1e-6);expect(tip.y).toBe(-0.48);
+    expect(last.spanEnd).toBe(0.48);expect(last.referenceTip.y).toBe(-0.48);
+    const simulation=new FlightSimulation(definition,'birdman',0);
+    expect(simulation.structure.sections.filter(section=>section.wingKey==='verticalTail').at(-1)!.referenceTip.y).toBe(-0.48);
+    geometry.dispose();view.wingNormalGeometry[2].dispose();for(const hinge of view.hingeLines)hinge.geometry.dispose();
+  });
+  it('平尾安装拖动吸附梢弦中心，脱离后回机身，Ctrl跳过吸附',()=>{
+    const view=designSceneView(),base=clone(defaultAircraft);
+    Object.assign(view,{
+      definition:base,editDefinition:clone(base),editorTarget:'horizontalTail',
+      editorSnap:{active:false,kind:null,value:null,disabled:false},editorPointerId:7,
+      editorChange(next:typeof base){this.definition=next;},
+    });
+    const origin=wingOrigin(base,'verticalTail'),p=base.verticalTail.points;
+    const x=origin.x-(p[1].x+p[2].x)/2-base.assembly.horizontalTail,y=p[1].y;
+    view.changeAssembly(1,x,y);
+    expect(view.definition.assembly.tailOnFin).toBe(true);expect(view.editorSnap.kind).toBe('mount');
+    expect(wingOrigin(view.definition,'horizontalTail').y).toBe(y);
+    view.editDefinition=clone(view.definition);view.changeAssembly(1,0.3,0);
+    expect(view.definition.assembly.tailOnFin).toBe(false);
+    view.editDefinition=clone(base);view.editorSnap.disabled=true;view.changeAssembly(1,x,y);
+    expect(view.definition.assembly.tailOnFin).toBe(false);
+  });
+  it('改变两端和重心不移动工坊中的机身原点或镜头',()=>{
+    const view=designSceneView();view.definition=clone(defaultAircraft);view.editorTarget='fuselage';
+    view.designCG.set(0.2,0.1,0);view.body.position.copy(view.designCG).negate();view.positionAtLaunch();
+    view.aircraft.updateMatrixWorld(true);
+    const origin=view.body.localToWorld(new Vector3()),camera=view.camera.position.clone(),target=view.controls.target.clone();
+    resizeFuselage(view.definition,'nose',4.19);resizeFuselage(view.definition,'tail',-4.17);
+    normalizeAircraftGeometry(view.definition);view.designCG.set(0.37,0.16,0);
+    view.body.position.copy(view.designCG).negate();view.positionAtLaunch();view.aircraft.updateMatrixWorld(true);
+    expect(view.body.localToWorld(new Vector3()).distanceTo(origin)).toBeLessThan(1e-10);
+    expect(view.camera.position.distanceTo(camera)).toBe(0);expect(view.controls.target.distanceTo(target)).toBe(0);
+  });
+  it('驾驶舱仅拉伸后半，前半全部顶点和舱盖不变，往返编辑不累积误差',()=>{
+    const definition=clone(defaultAircraft),cockpit=new Group();
+    const shell=new Mesh(new SphereGeometry(1,24,12),new MeshBasicMaterial());shell.name='streamlined-cockpit-shell';
+    const canopy=new Mesh(new SphereGeometry(1,12,6),new MeshBasicMaterial());canopy.position.set(0.12,0.2,0);
+    cockpit.add(shell,canopy);
+    const view=Object.assign(Object.create(SceneView.prototype),{definition,cockpit});
+    view.updateCockpitShell();
+    const positions=shell.geometry.getAttribute('position'),original=new Float32Array(positions.array);
+    const glass=new Float32Array(canopy.geometry.getAttribute('position').array),glassPosition=canopy.position.clone();
+    for(const rearLength of [0.2,2.71,1.45]){
+      definition.cockpit.rearLength=rearLength;view.updateCockpitShell();
+      for(let i=0;i<positions.count;i++){
+        const x=original[i*3];expect(positions.getX(i)).toBeCloseTo(x<0?x*rearLength/1.45:x,6);
+        if(x>=0)expect(positions.getX(i)).toBe(x);
+        expect(positions.getY(i)).toBe(original[i*3+1]);expect(positions.getZ(i)).toBe(original[i*3+2]);
+      }
+      expect(canopy.geometry.getAttribute('position').array).toEqual(glass);expect(canopy.position).toEqual(glassPosition);
+    }
+    expect(positions.array).toEqual(original);shell.geometry.dispose();canopy.geometry.dispose();
   });
 });

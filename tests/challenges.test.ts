@@ -749,7 +749,7 @@ describe('动力与燃油边界', () => {
   });
 
   it('每台引擎海平面静推力360N，转速平方积分保留1.8s响应', () => {
-    const s = new FlightSimulation(poweredAircraft, 'low-altitude', 0), dt = 1 / 60, tau = 1.8;
+    const s = new FlightSimulation(poweredAircraft, 'low-altitude', 0), dt = 1 / 60, tau = engineCatalog[poweredAircraft.engine.type].spoolUpTime;
     expect(engineCatalog[poweredAircraft.engine.type].maxThrust).toBe(360); expect(engineCatalog[poweredAircraft.engine.type].fuelFlow).toBe(0.012);
     s.step({ ...neutral, throttle: 1 }, dt);
     const integral = dt - 2 * tau * (1 - Math.exp(-dt / tau)) + tau / 2 * (1 - Math.exp(-2 * dt / tau));

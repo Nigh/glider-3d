@@ -92,9 +92,9 @@ export class WingStructure {
       const material = materialCatalog[wing.materialId], section = beamSection(wing.structure, wing.materialAmount);
       const origin = wingOrigin(definition, wingKey), incidence = surface.incidence;
       const reference = (span: number) => {
-        const fraction = span / wing.points[1].y;
+        const fraction = span / Math.abs(wing.points[1].y);
         const quarter = wing.points[0].x + (wing.points[1].x - wing.points[0].x) * fraction + (p.root + (p.tip - p.root) * fraction) / 4;
-        if (vertical) return new Vector3(origin.x - quarter, origin.y + span, 0);
+        if (vertical) return new Vector3(origin.x - quarter, origin.y + Math.sign(wing.points[1].y) * span, 0);
         const point = wingLocalPoint(wing, incidence, surface.side, -quarter, 0, span, new Vector3());
         point.x += origin.x; point.y += origin.y;
         return point;

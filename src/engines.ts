@@ -9,7 +9,8 @@ export const engineCatalog = {
     length: 0.55,
     radius: 0.14,
     fuelFlow: 0.012,
-    spoolTime: 1.8,
+    spoolUpTime: 1.8,
+    spoolDownTime: 0.9,
   },
 } as const;
 export type EngineType = keyof typeof engineCatalog;

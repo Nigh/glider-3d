@@ -3,7 +3,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
@@ -466,6 +466,7 @@ export class SceneView {
     const wasEditing = !!this.editorTarget;
     this.endEditorDrag();
     this.editorTarget = target;
+    if (!this.simulation && !!target !== wasEditing) this.positionAtLaunch();
     for (const handle of this.editorHandles) handle.x = handle.y = handle.ax = handle.ay = 0;
     for (const segment of this.editorSegments) segment.x = segment.y = segment.ax = segment.ay = 0;
     this.editorDirty = true;
@@ -639,7 +640,8 @@ export class SceneView {
   }
 
   private positionAtLaunch(): void {
-    this.aircraft.position.set(LAUNCH.startX, launchHeight(this.definition, this.designCG), 0);
+    if (this.editorTarget) this.aircraft.position.set(LAUNCH.startX + this.designCG.x, LAUNCH.height + 1 + this.designCG.y, this.designCG.z);
+    else this.aircraft.position.set(LAUNCH.startX, launchHeight(this.definition, this.designCG), 0);
   }
 
   private centerMarker(kind: 'cg' | 'lift' | 'drag' | 'thrust'): THREE.Group {
@@ -749,7 +751,7 @@ export class SceneView {
     this.environment.visible = !editing && this.environmentChallenge === 'birdman';
     this.mountainEnvironment.visible = !editing && this.environmentChallenge !== 'birdman';
     this.workshop.visible = editing;
-    this.workshop.position.copy(this.aircraft.position);
+    this.workshop.position.copy(this.aircraft.position).sub(this.designCG);
     this.scene.background = new THREE.Color(editing ? 0x07182d : 0xd4e3e4);
     this.controls.maxDistance = editing ? 72 : 700;
     this.controls.maxPolarAngle = editing ? Math.PI : Math.PI * 0.94;
@@ -1287,14 +1289,12 @@ export class SceneView {
       const base = this.editDefinition!;
       const incidence = (key === 'mainWing' ? base.assembly.mainIncidence : key === 'horizontalTail' ? base.assembly.tailIncidence : 0) * DEG;
       const point = base[key].points[handle.index];
-      // Tail root midpoints stay mounted, so changing one root end moves that end by half its chord change.
-      const rootScale = key !== 'mainWing' && this.editorSegmentDrag < 0 && (handle.index === 0 || handle.index === 3) ? 2 : 1;
       const dx = this.editPoint.x - this.editStart.x, dy = this.editPoint.y - this.editStart.y, dz = this.editPoint.z - this.editStart.z;
       const localX = key === 'verticalTail' ? dx : dx * Math.cos(incidence) + dy * Math.sin(incidence);
       const localHeight = -dx * Math.sin(incidence) + dy * Math.cos(incidence);
       let span = point.y + (key === 'verticalTail' ? dy
         : dz * handle.side * Math.cos(base[key].dihedral * DEG) + localHeight * Math.sin(base[key].dihedral * DEG));
-      let x = point.x - localX * rootScale;
+      let x = point.x - localX;
       if (key === 'verticalTail') {
         if (handle.index === 1 || handle.index === 2) span = this.snapEditor(span, handle.index, true);
       } else x = this.snapEditor(x, handle.index, false, this.editorSegmentDrag >= 0);
@@ -1309,7 +1309,7 @@ export class SceneView {
     event.preventDefault(); event.stopPropagation();
     this.editDefinition = clone(this.definition);
     this.resetSnap(event.ctrlKey);
-    const amount = event.shiftKey ? 0.1 : 0.025;
+    const amount = event.shiftKey ? 0.1 : 0.01;
     const horizontal = event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0;
     const vertical = event.key === 'ArrowUp' ? amount : event.key === 'ArrowDown' ? -amount : 0;
     const key = this.editorTarget;
@@ -1318,8 +1318,7 @@ export class SceneView {
     else if (key !== 'fuselage' && key !== 'propulsion') {
       const handle = segment ? this.editorSegments[index] : this.editorHandles[index];
       const p = this.definition[key].points[handle.index];
-      const rootScale = key !== 'mainWing' && !segment && (handle.index === 0 || handle.index === 3) ? 2 : 1;
-      let x = p.x - (key === 'verticalTail' ? horizontal : vertical) * rootScale;
+      let x = p.x - (key === 'verticalTail' ? horizontal : vertical);
       let span = p.y + (key === 'verticalTail' ? vertical : horizontal * handle.side);
       if (key === 'verticalTail') {
         if (handle.index === 1 || handle.index === 2) span = this.snapEditor(span, handle.index, true);
@@ -1341,7 +1340,7 @@ export class SceneView {
   private snapEditor(value: number, index: number, span: boolean, segment = false): number {
     if (this.editorSnap.disabled) return value;
     const tolerance = Math.min(0.02, (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / this.height * 5);
-    let best = Math.round(value * 10) / 10, distance = Math.abs(best - value);
+    let best = Math.round(value * 100) / 100, distance = Math.abs(best - value);
     let kind: 'grid' | 'vertex' = 'grid';
     const key = this.editorTarget;
     if (key && key !== 'fuselage' && key !== 'propulsion') {
@@ -1374,47 +1373,74 @@ export class SceneView {
     if (!key || key === 'fuselage' || key === 'propulsion') return;
     const next = clone(this.editDefinition ?? this.definition), p = next[key].points;
     const last = index === 0 ? 3 : 2;
-    let delta = clamp(x - p[index].x, -3 - Math.min(p[index].x, p[last].x), 6 - Math.max(p[index].x, p[last].x));
-    if (key !== 'mainWing' && index === 0) {
-      const ends = fuselageEnds(next), c = Math.cos((key === 'horizontalTail' ? next.assembly.tailIncidence : 0) * DEG);
-      delta = clamp(delta, (next.assembly[key] - Math.min(5, ends.nose)) / c, (next.assembly[key] - Math.max(-6, ends.tail)) / c);
-      next.assembly[key] -= delta * c;
+    let delta = Math.round((x - p[index].x) * 100) / 100;
+    delta = clamp(delta, -3 - Math.min(p[index].x, p[last].x), 6 - Math.max(p[index].x, p[last].x));
+    if (index === 0 && !(key === 'horizontalTail' && next.assembly.tailOnFin)) {
+      const limits = wingMountLimits(next, key);
+      const c = Math.cos((key === 'mainWing' ? next.assembly.mainIncidence : key === 'horizontalTail' ? next.assembly.tailIncidence : 0) * DEG);
+      delta = clamp(delta, (next.assembly[key] - limits.max) / c, (next.assembly[key] - limits.min) / c);
     }
-    p[index].x += delta; p[last].x += delta;
-    p[0].y = p[3].y = 0;
-    if (index === 1) p[1].y = p[2].y = clamp(span, 0.25, 12);
+    if (next[key].rootReference === undefined) next[key].rootReference = (p[0].x + p[3].x) / 2;
+    const firstX = p[index].x + delta, lastX = p[last].x + delta;
+    // Shift both chord ends together; point edits use the same stable origin.
+    if (key === 'horizontalTail' && next.assembly.tailOnFin && index === 0) {
+      next.verticalTail.points[1].x = firstX; next.verticalTail.points[2].x = lastX;
+    } else {
+      p[index].x = firstX; p[last].x = lastX;
+      if (index === 1) editWingPoint(next, key, 1, firstX, span);
+    }
+    normalizeAircraftGeometry(next);
     this.editorChange?.(next);
   }
 
   private changeWing(index: number, x: number, span: number): void {
     const key = this.editorTarget;
     if (!key || key === 'fuselage' || key === 'propulsion') return;
-    const next = clone(this.editDefinition ?? this.definition), wing = next[key], p = wing.points;
-    p[index].x = clamp(x, -3, 6);
-    if (index === 0 || index === 1) p[index].x = Math.min(p[index].x, p[index === 0 ? 3 : 2].x - 0.15);
-    else p[index].x = Math.max(p[index].x, p[index === 3 ? 0 : 1].x + 0.15);
-    if (index === 1 || index === 2) p[1].y = p[2].y = clamp(span, 0.25, 12);
-    p[0].y = p[3].y = 0;
+    const next = clone(this.editDefinition ?? this.definition);
+    editWingPoint(next, key, index, x, span);
     this.editorChange?.(next);
   }
 
   private changeAssembly(index: number, x: number, y: number): void {
     const next = clone(this.editDefinition ?? this.definition);
+    x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100;
     const ends = fuselageEnds(next);
     if (index === 0) {
       const limits = mainWingMountLimits(next);
       next.assembly.mainWing = clamp(next.assembly.mainWing + x, limits.min, limits.max);
       next.assembly.mainWingHeight = clamp(this.snapMountHeight(next.assembly.mainWingHeight + y), -0.5, 1);
-    } else if (index === 1) next.assembly.horizontalTail = clamp(next.assembly.horizontalTail + x, Math.max(-6, ends.tail), Math.min(5, ends.nose));
-    else if (index === 2) next.assembly.verticalTail = clamp(next.assembly.verticalTail + x, Math.max(-6, ends.tail), Math.min(5, ends.nose));
-    else if (index === 3) next.cockpit.position = clamp(next.cockpit.position + x, Math.max(-3, ends.tail), Math.min(4, ends.nose - 0.95));
+    } else if (index === 1) {
+      const base = this.editDefinition ?? this.definition, origin = wingOrigin(base, 'horizontalTail');
+      const middle = (base.horizontalTail.points[0].x + base.horizontalTail.points[3].x) / 2;
+      const cx = origin.x - middle * Math.cos(base.assembly.tailIncidence * DEG) + x;
+      const cy = origin.y - middle * Math.sin(base.assembly.tailIncidence * DEG) + y;
+      const fin = wingOrigin(next, 'verticalTail'), tip = next.verticalTail.points;
+      const fx = fin.x - (tip[1].x + tip[2].x) / 2, fy = tip[1].y;
+      const attach = !this.editorSnap.disabled && Math.hypot(cx - fx, cy - fy) <= this.mountSnapTolerance();
+      if (attach) {
+        next.assembly.tailOnFin = true;
+        this.editorSnap.active = true; this.editorSnap.kind = 'mount'; this.editorSnap.value = fy;
+      } else {
+        next.assembly.tailOnFin = false;
+        const limits = wingMountLimits(next, 'horizontalTail');
+        const reference = next.horizontalTail.rootReference ?? middle;
+        next.assembly.horizontalTail = clamp(cx + (middle - reference) * Math.cos(next.assembly.tailIncidence * DEG), limits.min, limits.max);
+      }
+    } else if (index === 2) {
+      const limits = wingMountLimits(next, 'verticalTail');
+      next.assembly.verticalTail = clamp(next.assembly.verticalTail + x, limits.min, limits.max);
+    } else if (index === 3) {
+      const limits = cockpitLimits(next);
+      next.cockpit.position = clamp(next.cockpit.position + x, limits.min, limits.max);
+    }
     else if (index === 6) {
-      next.engine.x = clamp(next.engine.x + x, Math.max(-6, ends.tail), Math.min(5, ends.nose));
+      next.engine.x = clamp(next.engine.x + x, ends.tail, ends.nose);
       next.engine.y = normalizeEngineHeight(next, next.engine.y + y);
     } else if (index === 7) {
       const limits = fuelTankLimits(next);
       next.fuelTank.x = clamp(next.fuelTank.x + x, limits.min, limits.max);
     } else resizeFuselage(next, index === 4 ? 'nose' : 'tail', (index === 4 ? ends.nose : ends.tail) + x);
+    normalizeAircraftGeometry(next);
     this.editorChange?.(next);
   }
 
@@ -1445,11 +1471,11 @@ export class SceneView {
       const horizontal = top || end ? size.z : size.x, vertical = top ? size.x : size.y;
       return Math.max(1.5, horizontal / (2 * aspect * 0.78), vertical / (2 * 0.78));
     }
-    if (key === 'fuselage') return Math.max(2.3, this.definition.fuselage.length / (2 * aspect * 0.8), this.definition.verticalTail.points[1].y + 0.7);
+    if (key === 'fuselage') return Math.max(2.3, this.definition.fuselage.length / (2 * aspect * 0.8), Math.abs(this.definition.verticalTail.points[1].y) + 0.7);
     const wing = this.definition[key], p = wing.points;
     const chord = Math.max(p[2].x, p[3].x) - Math.min(p[0].x, p[1].x);
     const horizontal = key === 'verticalTail' ? chord / 2 : p[1].y;
-    const vertical = key === 'verticalTail' ? p[1].y / 2 : chord / 2;
+    const vertical = key === 'verticalTail' ? Math.abs(p[1].y) / 2 : chord / 2;
     return Math.max(2.3, horizontal / (aspect * (this.width <= 700 ? 0.72 : 0.62)), vertical / (this.width <= 700 ? 0.32 : 0.62));
   }
 
@@ -1491,7 +1517,7 @@ export class SceneView {
       const span = Math.max(wing.points[1].y, 0.1);
       for (let vertex = 0; vertex < position.count; vertex++) {
         const moving = this.wingMovable[i][vertex] !== 0;
-        const orange = i === 2 ? !moving : moving || i === 0 && Math.abs(position.getZ(vertex)) > span * 0.82;
+        const orange = moving || i === 0 && Math.abs(position.getZ(vertex)) > span * 0.82;
         (orange ? this.wingTipColor : this.wingBaseColor).toArray(colors, vertex * 3);
       }
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -1514,6 +1540,7 @@ export class SceneView {
     this.nose.position.x = fuselageEnds(d).nose + BODY_GEOMETRY.nose.x;
     this.pilot.position.x = d.cockpit.position;
     this.cockpit.position.x = d.cockpit.position;
+    this.updateCockpitShell();
     this.pilot.visible = d.birdman;
     this.cockpit.visible = !d.birdman;
     this.updatePropulsionGeometry();
@@ -1528,6 +1555,23 @@ export class SceneView {
     this.updateCenters();
     if (this.hoverTarget) this.setHoveredPart(this.hoverTarget);
     this.metrics.geometryMs = performance.now() - start;
+  }
+
+  private updateCockpitShell(): void {
+    const shell = this.cockpit.getObjectByName('streamlined-cockpit-shell') as THREE.Mesh;
+    const geometry = shell.geometry, positions = geometry.getAttribute('position');
+    const rearLength = this.definition.cockpit.rearLength ?? BODY_GEOMETRY.shell.xRadius;
+    if (geometry.userData.rearLength === rearLength) return;
+    const original = geometry.userData.originalPositions ??= new Float32Array(positions.array);
+    const ratio = rearLength / BODY_GEOMETRY.shell.xRadius;
+    for (let i = 0; i < positions.count; i++) {
+      const x = original[i * 3];
+      positions.setX(i, x < 0 ? x * ratio : x);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    geometry.userData.rearLength = rearLength;
   }
 
   private wingChanged(index: number, wing: Wing, root: number, height: number, incidence: number): boolean {
@@ -1570,13 +1614,13 @@ export class SceneView {
     glass.name = 'cockpit-canopy';
     glass.scale.set(BODY_GEOMETRY.canopy.xRadius, BODY_GEOMETRY.canopy.yRadius, BODY_GEOMETRY.canopy.zRadius);
     glass.position.set(BODY_GEOMETRY.canopy.x, BODY_GEOMETRY.canopy.y, 0);
-    this.beam = this.mesh(new THREE.CylinderGeometry(0.085, BODY_GEOMETRY.beamRadius, 1, 8), graphite, this.body);
+    this.beam = this.mesh(new THREE.CylinderGeometry(0.025, BODY_GEOMETRY.beamRadius, 1, 16), ivory, this.body);
     this.beam.rotation.z = Math.PI / 2;
     this.support = this.mesh(new THREE.BoxGeometry(1, 1, 0.06), graphite, this.body);
     this.support.name = 'main-wing-support';
     this.support.matrixAutoUpdate = false;
     this.support.visible = false;
-    this.nose = this.mesh(new THREE.SphereGeometry(0.22, 10, 7), ivory, this.body);
+    this.nose = this.mesh(new THREE.SphereGeometry(0.22, 10, 7), orange, this.body);
     this.nose.position.set(0, BODY_GEOMETRY.nose.y, 0);
     this.nose.scale.set(BODY_GEOMETRY.nose.xRadius / 0.22, BODY_GEOMETRY.nose.yRadius / 0.22, BODY_GEOMETRY.nose.zRadius / 0.22);
     const seat = this.mesh(new THREE.BoxGeometry(1.65, 0.11, 0.46), graphite, this.pilot);
@@ -2003,7 +2047,7 @@ export class SceneView {
       if (inWater && !this.wasInWater) this.beginSplash(sim.telemetry.waterContact ? sim.telemetry.waterContactPoint : sim.position);
       this.wasInWater = inWater;
     }
-    if (!sim && this.editorTarget) this.workshop.position.copy(this.aircraft.position);
+    if (!sim && this.editorTarget) this.workshop.position.copy(this.aircraft.position).sub(this.designCG);
     if (this.crashAge >= 0) {
       const previous = this.crashAge; this.crashAge += seconds;
       if (previous < 0.4 && this.crashAge >= 0.4) this.crashStroke?.();
@@ -2096,13 +2140,13 @@ export class SceneView {
     const profileCount = 32, chordSteps = 16;
     const angle = incidence * DEG;
     const point = new THREE.Vector3(), hinge = new THREE.Vector3();
-    const halfSpan = wing.points[1].y;
+    const halfSpan = Math.abs(wing.points[1].y), spanSign = vertical ? Math.sign(wing.points[1].y) : 1;
     const rootChord = wing.points[3].x - wing.points[0].x, tipChord = wing.points[2].x - wing.points[1].x;
     const rootHinge = -wing.points[0].x - hingeFraction * rootChord;
     const tipHinge = -wing.points[1].x - hingeFraction * tipChord;
     const axes: THREE.Vector3[] = [];
     for (const side of vertical ? [1] : [-1, 1]) {
-      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, halfSpan, 0).normalize())
+      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, spanSign * halfSpan, 0).normalize())
         : wingLocalPoint(wing, angle, side, tipHinge - rootHinge, 0, halfSpan, new THREE.Vector3()).normalize());
       let previous: WingRenderSection | null = null;
       for (let start = 0; start < halfSpan - 1e-10; start += SURFACE_STEP) {
@@ -2126,7 +2170,7 @@ export class SceneView {
           const trailing = THREE.MathUtils.lerp(wing.points[3].x, wing.points[2].x, t), chord = trailing - leading;
           const hingeX = -leading - hingeFraction * chord;
           const hingeY = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * hingeFraction);
-          if (vertical) hinge.set(rootX + (fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX), height + span, 0);
+          if (vertical) hinge.set(rootX + (fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX), height + spanSign * span, 0);
           else {
             wingLocalPoint(wing, angle, side, hingeX, hingeY, span, hinge);
             hinge.x += rootX; hinge.y += height;
@@ -2134,7 +2178,7 @@ export class SceneView {
           if (row === 0 || row === rows) {
             const reference = row === 0 ? section.referenceRoot : section.referenceTip;
             const quarter = -leading - chord * 0.25;
-            if (vertical) reference.set(rootX + quarter, height + span, 0);
+            if (vertical) reference.set(rootX + quarter, height + spanSign * span, 0);
             else {
               wingLocalPoint(wing, angle, side, quarter, 0, span, reference);
               reference.x += rootX; reference.y += height;
@@ -2149,7 +2193,7 @@ export class SceneView {
             const thickness = 5 * 0.105 * chord * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
             const camber = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u);
             const x = -leading - u * chord, y = camber + (upper ? thickness : -thickness);
-            if (vertical) vertices.push(rootX + x, height + span, y);
+            if (vertical) vertices.push(rootX + x, height + spanSign * span, y);
             else {
               wingLocalPoint(wing, angle, side, x, y, span, point);
               vertices.push(rootX + point.x, height + point.y, point.z);
@@ -2161,7 +2205,7 @@ export class SceneView {
         for (let row = 0; row < rows; row++) {
           for (let k = 0; k < profileCount; k++) {
             const a = section.vertexStart + row * profileCount + k, b = section.vertexStart + row * profileCount + (k + 1) % profileCount;
-            if (vertical || side < 0) section.skin.push(a, b + profileCount, b, a, a + profileCount, b + profileCount);
+            if (vertical ? spanSign > 0 : side < 0) section.skin.push(a, b + profileCount, b, a, a + profileCount, b + profileCount);
             else section.skin.push(a, b, b + profileCount, a, b + profileCount, a + profileCount);
           }
         }
@@ -2177,7 +2221,7 @@ export class SceneView {
           }
           const capIndices = cap === 0 ? section.rootIndices : section.tipIndices;
           for (let k = 1; k < profileCount - 1; k++) {
-            const reverse = (cap === 0) !== (vertical || side < 0);
+            const reverse = (cap === 0) !== (vertical ? spanSign > 0 : side < 0);
             if (reverse) capIndices.push(base, base + k, base + k + 1);
             else capIndices.push(base, base + k + 1, base + k);
           }
