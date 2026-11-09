@@ -2798,6 +2798,11 @@ export function restoreReplayKeyframe(definition: AircraftDefinition, challenge:
   // by fractures/results. Typed buffers and class instances retain their methods.
   const checked = new Map<object, Set<object>>();
   const check = (value: unknown, base: unknown, key = '') => {
+    // Live flights leave the reset policy unset; replay templates pin their launch roll.
+    if (key === 'fixedLaunchRoll') {
+      if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > LAUNCH_ROLL_LIMIT)) fail();
+      return;
+    }
     if (base === null || base === undefined) {
       if (value === null || value === undefined) return;
       if (key === 'energyPerDistance') { if (typeof value !== 'number' || !Number.isFinite(value)) fail(); return; }

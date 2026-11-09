@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { clone, defaultAircraft } from '../src/model';
+import { clone, defaultAircraft, presets } from '../src/model';
 import { FlightSimulation, FRAME_WIDTH, MAX_FRAMES, validateRecording } from '../src/physics';
 import { exportReplay, importReplay, mapHash } from '../src/replay';
 import * as challenges from '../src/challenges';
+import { seekReplay } from '../src/playback';
 
 const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const sample = () => {
@@ -32,6 +33,31 @@ it('exports lossless JSON and reproduces every recorded state after import', asy
     expect(second.telemetry.controlInputs).toEqual(first.telemetry.controlInputs);
   }
   expect(second.getRecording()).toEqual(source.recording);
+});
+
+it.each(['birdman', 'downhill', 'low-altitude'] as const)('exports live %s flights without a fixed launch roll and restores their keyframes', async challenge => {
+  vi.spyOn(Math, 'random').mockReturnValue(0.8);
+  const definition = challenge === 'birdman' ? defaultAircraft : presets.find(d => d.name === (challenge === 'downhill' ? '高山速降机动型' : '低空喷气巡航型'))!;
+  const sim = new FlightSimulation(definition, challenge);
+  const states = new Map<number, { position: number[]; quaternion: number[]; fuel: number }>();
+  for (let frame = 0; frame <= 61; frame++) {
+    if (frame) sim.step({ ...neutral, throttle: 0.7 });
+    states.set(frame, { position: sim.position.toArray(), quaternion: sim.quaternion.toArray(), fuel: sim.telemetry.fuelRemaining });
+  }
+  const source = { definition, challenge, recording: sim.getRecording() };
+  const restored = await importReplay(await exportReplay(source));
+  expect(restored.recording.launchRoll).toBe(source.recording.launchRoll);
+  expect(restored.recording.frames).toEqual(source.recording.frames);
+  let cancelled = false;
+  try {
+    for (const point of restored.recording.keyframes!) {
+      const state = await seekReplay(restored, point.time, () => cancelled);
+      const expected = states.get(point.frame)!;
+      expect(state!.position.toArray()).toEqual(expected.position);
+      expect(state!.quaternion.toArray()).toEqual(expected.quaternion);
+      expect(state!.telemetry.fuelRemaining).toBe(expected.fuel);
+    }
+  } finally { cancelled = true; }
 });
 
 it('rejects incompatible versions, maps and invalid file envelopes', async () => {
@@ -78,6 +104,8 @@ it('rejects unsafe keyframe references, field names and mismatched state binding
     (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.changes = [[0, ['constructor', 1]]]; },
     (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.changes = [[0, ['position', [999999]]]]; },
     (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.extra.push(['o', ['__proto__'], [null]]); },
+    (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.changes = [[0, ['fixedLaunchRoll', 1]]]; },
+    (state: NonNullable<typeof source.recording.keyframes>[number]['state']) => { state.changes = [[0, ['fixedLaunchRoll', true]]]; },
   ];
   for (const mutate of invalid) {
     const data = structuredClone(envelope);
