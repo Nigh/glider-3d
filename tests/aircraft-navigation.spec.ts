@@ -81,7 +81,7 @@ for (const challenge of ['鸟人间挑战', '高山速降', '低空飞行']) {
   const before = await current(page);
   const definition = await page.evaluate(async mode => {
    const { clone, defaultAircraft, presets } = await import('/src/model.ts');
-   const definition = clone(mode === '鸟人间挑战' ? defaultAircraft : presets.find(item => item.name === '低空喷气巡航型')!);
+   const definition = clone(mode === '鸟人间挑战' ? defaultAircraft : presets.find(item => item.name === '基础单发型')!);
    definition.name = '导入原样保留机';
    return definition;
   }, challenge);
@@ -103,7 +103,7 @@ for (const challenge of ['鸟人间挑战', '高山速降', '低空飞行']) {
  });
 }
 
-for (const preset of ['高山速降机动型', '低空喷气巡航型']) {
+for (const preset of ['高性能滑翔型', '基础单发型']) {
  test(`鸟人间导入${preset}只入库不改当前飞机，关闭机库并提示`, async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
   await page.goto('/');

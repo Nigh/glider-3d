@@ -21,9 +21,9 @@ test('持久化日语后切换语言，声音、翼面、参数和已有错误�
   await expect(page.locator('.audio-settings > summary')).toHaveAttribute('aria-label', value.sound);
   await expect(page.locator('.audio-settings > summary')).toHaveAttribute('title', value.sound);
   await expect(page.getByRole('checkbox', { name: value.mute })).not.toBeChecked();
-  await expect(page.getByRole('combobox', { name: value.material, exact: true })).toHaveValue('carbon-epoxy');
-  await expect(page.getByRole('slider', { name: value.amount, exact: true })).toHaveValue('100');
-  await expect(page.getByRole('spinbutton', { name: value.precise, exact: true })).toHaveValue('100');
+  await expect(page.getByRole('combobox', { name: value.material, exact: true })).toHaveValue(definition.mainWing.materialId);
+  await expect(page.getByRole('slider', { name: value.amount, exact: true })).toHaveValue(String(definition.mainWing.materialAmount*100));
+  await expect(page.getByRole('spinbutton', { name: value.precise, exact: true })).toHaveValue(String(definition.mainWing.materialAmount*100));
   await expect(page.locator('.field-error')).toHaveText(value.error);
   expect(await page.evaluate(() => window.glider.aircraft)).toEqual(definition);
  }
@@ -44,4 +44,30 @@ test('Vite多时间戳模块复用语言store，不产生界面和场景语言�
  await expect(page).toHaveTitle(/Aero Formula/);
  await expect(page.locator('.audio-settings > summary')).toHaveAttribute('aria-label', 'Sound settings');
  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+});
+
+test('系统名称随语言切换，用户同名飞机不翻译，动力预设显示巡航参数', async ({ page }) => {
+ await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
+ await page.goto('/');
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ const definition = await page.evaluate(() => window.glider.aircraft);
+ await page.getByRole('button', { name: '保存', exact: true }).click();
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ const systems = page.locator('.saved-plane[data-aircraft-id^="system:"]');
+ await expect(systems).toHaveCount(4);
+ for (const locale of ['en', 'ja', 'zh']) {
+  await page.locator('select:has(option[value="ja"])').selectOption(locale);
+  const translated = await page.evaluate(async () => {
+   // UI assertions need Vite's browser store, not a separate Node module instance.
+   const { t } = await import('/src/i18n.ts');
+   const { presets } = await import('/src/model.ts');
+   return presets.map(plane => ({ id:`system:${plane.name}`, name:t(plane.name) }));
+  });
+  for (const plane of translated) await expect(page.locator(`[data-aircraft-id="${plane.id}"] h3`)).toHaveText(plane.name);
+  await expect(page.locator('.saved-plane:not([data-aircraft-id^="system:"]) input')).toHaveValue(definition.name);
+  const twin = page.locator('[data-aircraft-id="system:基础双发型"] p').first();
+  const single = page.locator('[data-aircraft-id="system:基础单发型"] p').first();
+  await expect(twin).toContainText('72%'); await expect(twin).toContainText('30 m/s');
+  await expect(single).toContainText('55%'); await expect(single).toContainText('17 m/s');
+ }
 });

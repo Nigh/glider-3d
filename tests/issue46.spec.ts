@@ -91,7 +91,7 @@ for (const mode of ['高山速降', '低空飞行']) {
   expect(before.birdman).toBe(false);
   await expect(page.getByRole('combobox', { name: '飞机类型', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '机库', exact: true }).click();
-  const system = page.locator('[data-aircraft-id="system:默认均衡型"]');
+  const system = page.locator('[data-aircraft-id="system:鸟人间滑翔基础型"]');
   await expect(system).toHaveClass(/incompatible/);
   await expect(system.getByRole('button', { name: '加载', exact: true })).toBeDisabled();
   await expect(system.getByRole('button', { name: '删除', exact: true })).toHaveCount(0);
@@ -119,16 +119,16 @@ for (const mode of ['高山速降', '低空飞行']) {
 test('系统预设直接入库，保存系统同名设计与复制不改变系统飞机', async ({ page }) => {
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
  await page.getByRole('button', { name: '机库', exact: true }).click();
- const system = page.locator('[data-aircraft-id="system:高稳定型"]');
+ const system = page.locator('[data-aircraft-id="system:鸟人间滑翔基础型"]');
  await system.getByRole('button', { name: '加载', exact: true }).click();
  await page.getByRole('spinbutton', { name: '主翼上反角精确值', exact: true }).fill('-8');
  await page.getByRole('spinbutton', { name: '主翼上反角精确值', exact: true }).press('Tab');
  await page.getByRole('button', { name: '保存', exact: true }).click();
  await page.getByRole('button', { name: '机库', exact: true }).click();
- await expect(page.getByRole('textbox', { name: '重命名高稳定型', exact: true })).toBeVisible();
- expect(await page.evaluate(async () => (await import('/src/storage.ts')).loadAircraft('system:高稳定型').definition.mainWing.dihedral)).toBe(12);
+ await expect(page.getByRole('textbox', { name: '重命名鸟人间滑翔基础型', exact: true })).toBeVisible();
+ expect(await page.evaluate(async () => (await import('/src/storage.ts')).loadAircraft('system:鸟人间滑翔基础型').definition.mainWing.dihedral)).toBe(5.9);
  await system.getByRole('button', { name: '复制', exact: true }).click();
- await expect(page.getByRole('textbox', { name: '重命名高稳定型 副本', exact: true })).toBeVisible();
+ await expect(page.getByRole('textbox', { name: '重命名鸟人间滑翔基础型 副本', exact: true })).toBeVisible();
  await expect(system.getByRole('button', { name: '加载', exact: true })).toBeEnabled();
 });
 
@@ -139,8 +139,8 @@ test('浏览器存储不可用时保留系统机库与错误提示', async ({ pa
  await page.getByRole('button', { name: '机库', exact: true }).click();
  await expect(page.getByRole('region', { name: '本地机库', exact: true })).toBeVisible();
  await expect(page.locator('.toast')).toContainText('无法访问浏览器本地存储');
- await page.locator('[data-aircraft-id="system:高稳定型"]').getByRole('button', { name: '加载', exact: true }).click();
- await expect.poll(() => page.evaluate(() => window.glider.aircraft.name)).toBe('高稳定型');
+ await page.locator('[data-aircraft-id="system:鸟人间滑翔基础型"]').getByRole('button', { name: '加载', exact: true }).click();
+ await expect.poll(() => page.evaluate(() => window.glider.aircraft.name)).toBe('鸟人间滑翔基础型');
 });
 
 test('连续拖动回放进度时同步更新飞机，不等待停止拖动', async ({ page }) => {

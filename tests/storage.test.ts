@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clone, defaultAircraft, presets } from '../src/model';
+import { defaultStructures } from '../src/materials';
 import {
   deleteAircraft, duplicateAircraft, exportAircraft, History, importAircraft,
   listAircraft as listAllAircraft, loadAircraft, isAircraftCompatible, readBest, renameAircraft, saveAircraft, writeBest, PHYSICS_VERSION,
@@ -44,7 +45,7 @@ describe('飞机 JSON 信任边界', () => {
     const imported = importAircraft(exportAircraft(definition));
     expect(imported).toEqual(definition);
     imported.mainWing.points[0].x = 0.1;
-    expect(definition.mainWing.points[0].x).toBe(0);
+    expect(definition.mainWing.points[0].x).toBe(defaultAircraft.mainWing.points[0].x);
   });
 
   it('拒绝坏 JSON 和不完整对象', () => {
@@ -175,6 +176,7 @@ describe('系统机库与飞机类型隔离', () => {
   it('空机库直接列出全部系统预设，不写浏览器存储', () => {
     const records = listAllAircraft();
     expect(records.map(record => record.definition)).toEqual(presets);
+    expect(records).toHaveLength(4);
     expect(records.every(record => record.builtIn && record.updatedAt === 0)).toBe(true);
     expect(new Set(records.map(record => record.id)).size).toBe(presets.length);
     expect(storage.length).toBe(0);
@@ -366,9 +368,11 @@ describe('结构设计持久化',()=>{
   const saved=saveAircraft(defaultAircraft),legacy:any=clone(saved);
   for(const key of ['mainWing','horizontalTail','verticalTail']){delete legacy.definition[key].materialId;delete legacy.definition[key].materialAmount;delete legacy.definition[key].structure;}
   const key=keyFor(saved.id),raw=JSON.stringify(legacy);storage.setItem(key,raw);
-  expect(listAircraft()[0].definition).toEqual(defaultAircraft);
+  const expected=clone(defaultAircraft);
+  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){expected[key].materialId='carbon-epoxy';expected[key].materialAmount=1;expected[key].structure={...defaultStructures[key]};}
+  expect(listAircraft()[0].definition).toEqual(expected);
   expect(storage.getItem(key)).toBe(raw);
-  expect(importAircraft(JSON.stringify(legacy.definition))).toEqual(defaultAircraft);
+  expect(importAircraft(JSON.stringify(legacy.definition))).toEqual(expected);
  });
  it('未知材料与坏截面不能导入导出保存，也不覆盖有效记录',()=>{
   const saved=saveAircraft(defaultAircraft);

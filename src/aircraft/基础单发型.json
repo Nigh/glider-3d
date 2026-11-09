@@ -1,0 +1,127 @@
+{
+  "name": "基础单发型",
+  "birdman": false,
+  "fuselage": {
+    "length": 6.5,
+    "center": 0
+  },
+  "cockpit": {
+    "position": 1.95
+  },
+  "mainWing": {
+    "points": [
+      {
+        "x": -0.62,
+        "y": 0
+      },
+      {
+        "x": -0.28,
+        "y": 4.8
+      },
+      {
+        "x": 0.30000000000000016,
+        "y": 4.8
+      },
+      {
+        "x": 0.86,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.425,
+    "dihedral": 5.9,
+    "controlSurface": 0.15000000000000002,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.06,
+      "height": 0.14,
+      "wallThickness": 0.0025
+    }
+  },
+  "horizontalTail": {
+    "points": [
+      {
+        "x": -0.2,
+        "y": 0
+      },
+      {
+        "x": 0.1,
+        "y": 1.5
+      },
+      {
+        "x": 0.5,
+        "y": 1.5
+      },
+      {
+        "x": 0.65,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.325,
+    "dihedral": 0,
+    "controlSurface": 0.4,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.03,
+      "height": 0.065,
+      "wallThickness": 0.0015
+    }
+  },
+  "verticalTail": {
+    "points": [
+      {
+        "x": -0.12,
+        "y": 0
+      },
+      {
+        "x": 0.15,
+        "y": 1.2
+      },
+      {
+        "x": 0.5,
+        "y": 1.2
+      },
+      {
+        "x": 0.7,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.35,
+    "dihedral": 0,
+    "controlSurface": 0.45,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.03,
+      "height": 0.065,
+      "wallThickness": 0.0015
+    }
+  },
+  "assembly": {
+    "mainWing": 0.9400000000000001,
+    "mainWingHeight": -0.29,
+    "horizontalTail": -2.92,
+    "verticalTail": -2.9,
+    "mainIncidence": 0,
+    "tailIncidence": 0,
+    "tailOnFin": false
+  },
+  "pilot": {
+    "mass": 60
+  },
+  "controls": {
+    "travel": 0.3,
+    "lateralTravel": 0.1
+  },
+  "engine": {
+    "type": "jet-01",
+    "count": 1,
+    "x": 0.0500000000000001,
+    "y": 0.29
+  },
+  "fuelTank": {
+    "x": 0.73,
+    "capacity": 12
+  }
+}

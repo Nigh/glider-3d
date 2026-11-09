@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BackSide, Box3, Box3Helper, BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
-import type { Material } from 'three';
+import { BackSide, Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, RepeatWrapping, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
+import type { Material, MeshStandardMaterial } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint } from '../src/model';
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
 import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
+import { TEST_SPACE, testSpaceTerrainHeight } from '../src/laboratory';
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 describe('camera clearance', () => {
@@ -51,6 +52,134 @@ describe('camera clearance', () => {
     view.restoreCameraClearance();
     view.constrainCamera();
     expect(view.camera.position.toArray()).toEqual([500, 10, 0]);
+  });
+});
+
+function testSpaceView() {
+  const scene = new Scene(), mountainEnvironment = new Group(), environment = new Group();
+  scene.background = new Color(); scene.add(environment, mountainEnvironment);
+  const view = Object.assign(Object.create(SceneView.prototype), {
+    scene, mountainEnvironment, environment, definition: clone(defaultAircraft), simulation: null,
+    environmentChallenge: 'birdman', environmentFog: new FogExp2(), metrics: {},
+    perspective: new PerspectiveCamera(), orthographic: new OrthographicCamera(), controls: {},
+    renderer: { capabilities: { getMaxAnisotropy: () => 4 } }, waterTime: { value: 0 },
+  });
+  view.setEnvironmentChallenge('test-space');
+  scene.updateMatrixWorld(true);
+  return view;
+}
+
+describe('测试空间渲染', () => {
+  it('使用重复纹理、动态水纹和真实地形三角面，不改碰撞高度', () => {
+    const view = testSpaceView();
+    try {
+      const terrain = view.mountainEnvironment.getObjectByName('test-space-terrain') as Mesh<BufferGeometry, MeshStandardMaterial>;
+      const ocean = view.mountainEnvironment.getObjectByName('test-space-ocean') as Mesh<BufferGeometry, MeshStandardMaterial>;
+      for (const surface of [terrain, ocean]) {
+        expect(surface.receiveShadow).toBe(true); expect(surface.castShadow).toBe(false);
+        const texture = surface.material.map!;
+        expect(texture).toBeTruthy(); expect(texture.wrapS).toBe(RepeatWrapping); expect(texture.wrapT).toBe(RepeatWrapping);
+        const pixels = Array.from(texture.image.data as Uint8Array).filter((_, index) => index % 4 === 0);
+        expect(new Set(pixels).size).toBeGreaterThan(10);
+        expect(surface.geometry.getAttribute('uv').count).toBe(surface.geometry.getAttribute('position').count);
+      }
+      const ray = new Raycaster();
+      for (const [x, z] of [[-1993.2, -1017.7], [326.7, -3612.3], [195.3, 73.2]]) {
+        ray.set(new Vector3(x, 6000, z), new Vector3(0, -1, 0));
+        const hit = ray.intersectObject(terrain)[0];
+        expect(hit.point.y).toBeCloseTo(testSpaceTerrainHeight(x, z), 3);
+        expect(hit.uv!.x).toBeCloseTo(x / 24, 4);
+        expect(hit.uv!.y).toBeCloseTo(z / 24, 4);
+      }
+    } finally { view.release(view.scene); }
+  });
+
+  it('0m平台仅调整渲染深度，海岸前后保持正确遮挡和物理水线', () => {
+    const view = testSpaceView();
+    try {
+      const sim = new FlightSimulation(defaultAircraft, 'test-space', 0, { height: 0, catapult: true, speed: 50 });
+      view.laboratoryScene.update(sim); view.scene.updateMatrixWorld(true);
+      const deck = view.mountainEnvironment.getObjectByName('test-platform-deck') as Mesh<BufferGeometry, MeshStandardMaterial>;
+      const ocean = view.mountainEnvironment.getObjectByName('test-space-ocean') as Mesh<BufferGeometry, MeshStandardMaterial>;
+      const terrain = view.mountainEnvironment.getObjectByName('test-space-terrain') as Mesh;
+      expect(view.laboratoryScene.platform.position.y).toBe(0);
+      expect(new Box3().setFromObject(deck).max.y).toBeCloseTo(0, 7);
+      expect(testSpaceTerrainHeight(TEST_SPACE.platformX, 0)).toBe(0);
+      expect(deck.castShadow && deck.receiveShadow).toBe(true);
+      for (const surface of [deck, ocean]) {
+        expect(surface.material.polygonOffset).toBe(true);
+        expect(surface.material.polygonOffsetFactor).toBeLessThan(0);
+        expect(surface.material.polygonOffsetUnits).toBeLessThan(0);
+      }
+      expect(ocean.material.transparent).toBe(false);
+      const ray = new Raycaster();
+      for (const [z, visible] of [[TEST_SPACE.beachHalfWidth + 0.1, terrain], [TEST_SPACE.beachHalfWidth + 1, ocean]] as const) {
+        ray.set(new Vector3(0, 100, z), new Vector3(0, -1, 0));
+        expect(ray.intersectObjects([terrain, ocean])[0].object).toBe(visible);
+        expect(challengeCollisionHeight('test-space', 0, z)).toBe(0);
+      }
+      expect(sim.testSpace.height).toBe(0);
+    } finally { view.release(view.scene); }
+  });
+
+  it('绿地树木用两组实例绘制，贴合地形并投射阴影', () => {
+    const view = testSpaceView();
+    try {
+      const trunks = view.mountainEnvironment.getObjectByName('tree-trunks') as InstancedMesh;
+      const trees = view.mountainEnvironment.getObjectByName('tree-canopies') as InstancedMesh;
+      expect(trunks).toBeInstanceOf(InstancedMesh); expect(trees).toBeInstanceOf(InstancedMesh);
+      expect(trunks.count).toBe(48); expect(trees.count).toBe(trunks.count);
+      expect(trunks.castShadow && trunks.receiveShadow && trees.castShadow && trees.receiveShadow).toBe(true);
+      const matrix = new Matrix4(), position = new Vector3();
+      for (let i = 0; i < trunks.count; i++) {
+        trunks.getMatrixAt(i, matrix); position.setFromMatrixPosition(matrix);
+        const ground = testSpaceTerrainHeight(position.x, position.z);
+        expect(position.y - 2.4).toBeCloseTo(ground, 3);
+        expect(position.z).toBeLessThan(-TEST_SPACE.beachHalfWidth);
+        expect(ground).toBeLessThan(1800);
+      }
+      trunks.getMatrixAt(0, matrix); position.setFromMatrixPosition(matrix);
+      expect(Math.hypot(position.x - TEST_SPACE.platformX, position.z)).toBeLessThan(500);
+    } finally { view.release(view.scene); }
+  });
+
+  it('阴影随飞机覆盖高空投向地面的位置，不跟随自由镜头且保持米制深度偏移', () => {
+    const light = new DirectionalLight(), aircraft = new Group();
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      light, aircraft, vector: new Vector3(), environmentChallenge: 'test-space', camera: new PerspectiveCamera(),
+    });
+    for (const height of [0, 100, 5000]) {
+      aircraft.position.set(-2000, height, 0); view.camera.position.set(2000, 6000, -4000);
+      view.updateLight(); light.updateMatrixWorld(true); light.target.updateMatrixWorld(true); light.shadow.updateMatrices(light);
+      const receiver = new Vector3(-2000 + height * 55 / 110, 0, -height * 65 / 110).project(light.shadow.camera);
+      expect(Math.abs(receiver.x)).toBeLessThan(1e-8); expect(Math.abs(receiver.y)).toBeLessThan(1e-8);
+      expect(Math.abs(receiver.z)).toBeLessThan(1);
+      expect(light.target.position.equals(aircraft.position)).toBe(true);
+      expect(light.shadow.bias * light.shadow.camera.far).toBeCloseTo(-0.0805, 10);
+    }
+    view.environmentChallenge = 'birdman'; view.updateLight();
+    expect(light.shadow.camera.far).toBe(230); expect(light.shadow.bias).toBeCloseTo(-0.00035, 10);
+    light.shadow.dispose();
+  });
+
+  it('重建测试空间释放各自纹理，不释放常驻湖面或复用已释放纹理', () => {
+    const view = testSpaceView();
+    const lake = new Mesh(new BoxGeometry(), view.waterMaterial(0x7bada6, 2400, 2000));
+    view.environment.add(lake);
+    const terrain = view.mountainEnvironment.getObjectByName('test-space-terrain') as Mesh<BufferGeometry, MeshStandardMaterial>;
+    const ocean = view.mountainEnvironment.getObjectByName('test-space-ocean') as Mesh<BufferGeometry, MeshStandardMaterial>;
+    const groundTexture = terrain.material.map!, waterTexture = ocean.material.map!;
+    let groundDisposed = 0, waterDisposed = 0, lakeDisposed = 0;
+    groundTexture.addEventListener('dispose', () => groundDisposed++);
+    waterTexture.addEventListener('dispose', () => waterDisposed++);
+    lake.material.map!.addEventListener('dispose', () => lakeDisposed++);
+    try {
+      view.setEnvironmentChallenge('test-space');
+      expect(groundDisposed).toBe(1); expect(waterDisposed).toBe(1); expect(lakeDisposed).toBe(0);
+      const next = view.mountainEnvironment.getObjectByName('test-space-ocean') as Mesh<BufferGeometry, MeshStandardMaterial>;
+      expect(next.material.map).not.toBe(waterTexture); expect(next.material.map).not.toBe(lake.material.map);
+    } finally { view.release(view.scene); }
+    expect(groundDisposed).toBe(1); expect(waterDisposed).toBe(1); expect(lakeDisposed).toBe(1);
   });
 });
 
