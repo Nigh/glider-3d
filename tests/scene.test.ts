@@ -8,6 +8,28 @@ import { FlightSimulation, LAUNCH } from '../src/physics';
 import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
 import { TEST_SPACE, testSpaceTerrainHeight } from '../src/laboratory';
 
+it('renders every wing of a combined fin/tail fragment and removes only parts whose owner changed', () => {
+  const geometry = () => new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(9), 3)).setIndex([0, 1, 2]);
+  const body = { id: 1, position: new Vector3(10, 20, 30), quaternion: new Quaternion(), cg: new Vector3() };
+  const view = Object.assign(Object.create(SceneView.prototype), {
+    simulation: { fragments: [body] }, fragments: [], scene: new Scene(),
+    wingSections: [[], [{ physics: { bodyId: 1 } }], [{ physics: { bodyId: 1 } }]],
+    wingMeshes: [0, 1, 2].map(() => new Mesh(geometry())),
+    hingeLines: [0, 1, 2].map(() => new Mesh(geometry(), new MeshBasicMaterial())),
+    aircraftMaterials: { main: new MeshBasicMaterial() },
+  });
+  expect(view.ensureFragments()).toBe(true);
+  expect(view.fragments.map((f: any) => [f.id, f.wingIndex])).toEqual([[1, 1], [1, 2]]);
+  expect(view.ensureFragments()).toBe(false);
+  view.wingSections[1][0].physics.bodyId = 2;
+  view.simulation.fragments.push({ ...body, id: 2 });
+  expect(view.ensureFragments()).toBe(true);
+  expect(view.fragments.map((f: any) => [f.id, f.wingIndex])).toEqual([[1, 2], [2, 1]]);
+  expect(view.wingMeshes[1].geometry.getAttribute('position').count).toBe(3);
+  view.simulation.fragments.length = 0; expect(view.ensureFragments()).toBe(true);
+  expect(view.fragments).toHaveLength(0);
+});
+
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 describe('camera clearance', () => {
   it.each(['design', 'birdman', 'result'])('bounds push and restores the original camera in %s', screen => {

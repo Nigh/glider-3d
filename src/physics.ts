@@ -771,6 +771,8 @@ export class FlightSimulation {
   readonly id = 0;
   readonly structure: WingStructure;
   readonly fragments: WingFragment[] = [];
+  private readonly sectionContacts: number[][];
+  private readonly branchContacts: { key: WingKey; side: number; indices: number[] }[];
   get cg() { return this.aircraft.cg; }
   get mass() { return this.aircraft.mass; }
   get inertiaTensor() { return this.aircraft.inertiaTensor; }
@@ -947,6 +949,13 @@ export class FlightSimulation {
     this.structure = new WingStructure(this.definition, this.surfaces);
     this.aerodynamics = new AerodynamicSummary(this.surfaces, this.definition);
     this.contacts = makeContacts(this.definition, this.structure);
+    this.sectionContacts = this.structure.sections.map(() => []);
+    this.contacts.forEach((point, index) => { if (point.sectionId !== undefined) this.sectionContacts[point.sectionId].push(index); });
+    this.branchContacts = [];
+    for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) for (const side of [-1, 1]) {
+      const indices = this.contacts.flatMap((point, index) => point.sectionId !== undefined && this.structure.branchContains(this.structure.sections[point.sectionId], key, side) ? [index] : []);
+      if (indices.length) this.branchContacts.push({ key, side, indices });
+    }
     this.wingContactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
     this.wingImpactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
     const shell = this.cockpitShape;
@@ -1186,7 +1195,7 @@ export class FlightSimulation {
   checkpoint(): FlightSimulation {
     const seen = new Map<object, object>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, this.definition], [this.keyframes, this.keyframes]]);
     // Contact solver workspaces are rebuilt before every use; synchronous steps may share them.
-    for (const buffer of [this.platformFaces, this.platformGaps, this.platformImpulses, this.platformFriction, this.platformAxes, this.groundNormals, this.platformActive]) seen.set(buffer, buffer);
+    for (const buffer of [this.platformFaces, this.platformGaps, this.platformImpulses, this.platformFriction, this.platformAxes, this.groundNormals, this.platformActive, this.sectionContacts, this.branchContacts]) seen.set(buffer, buffer);
     if (this.replay) seen.set(this.replay, this.replay);
     let bytes = 0;
     const copy = (value: unknown): unknown => {
@@ -1921,12 +1930,16 @@ export class FlightSimulation {
     return point.sectionId === undefined || this.structure.sections[point.sectionId].bodyId === 0;
   }
 
-  private syncContacts() {
-    for (const point of this.contacts) {
-      if (point.sectionId === undefined || !point.reference) continue;
-      const section = this.structure.sections[point.sectionId], node = point.tip ? section.tip : section.root;
-      point.copy(point.reference).sub(point.tip ? section.referenceTip : section.referenceRoot).applyQuaternion(node.quaternion).add(node.position);
-    }
+  private syncContacts(bodyId?: number) {
+    if (bodyId !== undefined) {
+      for (const section of this.structure.sectionsForBody(bodyId)) for (const index of this.sectionContacts[section.id]) this.syncContact(this.contacts[index]);
+    } else for (const point of this.contacts) this.syncContact(point);
+  }
+
+  private syncContact(point: ContactPoint) {
+    if (point.sectionId === undefined || !point.reference) return;
+    const section = this.structure.sections[point.sectionId], node = point.tip ? section.tip : section.root;
+    point.copy(point.reference).sub(point.tip ? section.referenceTip : section.referenceRoot).applyQuaternion(node.quaternion).add(node.position);
   }
 
   private blockedWingGeometry(key: WingKey, side: number) {
@@ -1934,27 +1947,29 @@ export class FlightSimulation {
       const index = this.platformActive[i], point = this.contacts[Math.floor(index / CONTACT_SLOTS)];
       if (point.sectionId === undefined || this.platformGaps[index] >= -CONTACT_TOLERANCE) continue;
       const s = this.structure.sections[point.sectionId];
-      if (s.bodyId === 0 && s.wingKey === key && s.side === side) return true;
+      if (s.bodyId === 0 && this.structure.branchContains(s, key, side)) return true;
     }
     return false;
   }
 
   private constrainWingGeometry() {
-    this.syncContacts(); this.preparePlatformContacts();
+    this.syncContacts(0);
     // The rigid-body sweep used the previous elastic shape. Limit only a new
     // shape change that would enter a solid; do not teleport the mass or alter
     // the contact energy ledger. Stress remains unbounded for real fractures.
-    for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) for (const side of [-1, 1]) {
+    for (const { key, side, indices } of this.branchContacts) {
+      this.preparePlatformContacts(indices);
       if (!this.blockedWingGeometry(key, side)) continue;
       let low = 0, high = 1;
       for (let iteration = 0; iteration < 20; iteration++) {
         const fraction = (low + high) / 2;
         this.structure.blendContactGeometry(key, side, fraction);
-        this.syncContacts(); this.preparePlatformContacts();
+        for (const index of indices) this.syncContact(this.contacts[index]);
+        this.preparePlatformContacts(indices);
         if (this.blockedWingGeometry(key, side)) high = fraction; else low = fraction;
       }
       this.structure.blendContactGeometry(key, side, low);
-      this.syncContacts(); this.preparePlatformContacts();
+      for (const index of indices) this.syncContact(this.contacts[index]);
     }
   }
 
@@ -2003,13 +2018,13 @@ export class FlightSimulation {
   private fragmentMass(fragment: WingFragment) {
     let mass = 0;
     fragment.cg.set(0, 0, 0);
-    for (const section of this.structure.sections) if (section.bodyId === fragment.id) {
+    for (const section of this.structure.sectionsForBody(fragment.id)) {
       mass += section.mass; fragment.cg.addScaledVector(section.center, section.mass);
     }
     fragment.mass = mass;
     fragment.cg.multiplyScalar(1 / mass);
     let ix = 0, iy = 0, iz = 0, ixy = 0, ixz = 0, iyz = 0;
-    for (const section of this.structure.sections) if (section.bodyId === fragment.id) {
+    for (const section of this.structure.sectionsForBody(fragment.id)) {
       const x = section.center.x - fragment.cg.x, y = section.center.y - fragment.cg.y, z = section.center.z - fragment.cg.z;
       const e = section.inertia.elements, m = section.mass;
       ix += e[0] + m * (y * y + z * z); iy += e[4] + m * (x * x + z * z); iz += e[8] + m * (x * x + y * y);
@@ -2060,8 +2075,8 @@ export class FlightSimulation {
     if (this.challenge === 'wind-tunnel') this.bodyVelocity.add(this.laboratoryState.windVelocity);
     this.bodyVelocity.applyQuaternion(this.inverse);
     fragment.force.set(0, 0, 0); fragment.drag.set(0, 0, 0); fragment.torque.set(0, 0, 0); fragment.aeroPower = 0;
-    for (const surface of this.surfaces) {
-      if (surface.bodyId !== fragment.id) continue;
+    for (const section of this.structure.sectionsForBody(fragment.id)) {
+      const surface = section.surface as AerodynamicSurface;
       this.arm.copy(surface.point).sub(fragment.cg);
       this.cross.copy(this.arm).applyQuaternion(orientation).add(position);
       surface.clearance = this.cross.y - challengeCollisionHeight(this.challenge, this.cross.x, this.cross.z);
@@ -2084,8 +2099,8 @@ export class FlightSimulation {
       const room = windTunnelRoom(this.definition);
       return Math.abs(position.x) >= room.halfX || Math.abs(position.z) >= room.halfZ || Math.abs(position.y - room.centerY) >= room.halfY;
     }
-    for (const point of this.contacts) {
-      if (point.sectionId === undefined || this.structure.sections[point.sectionId].bodyId !== fragment.id) continue;
+    for (const section of this.structure.sectionsForBody(fragment.id)) for (const index of this.sectionContacts[section.id]) {
+      const point = this.contacts[index];
       this.platformStart.copy(point).sub(fragment.cg).applyQuaternion(fragment.quaternion).add(fragment.position);
       this.platformEnd.copy(point).sub(fragment.cg).applyQuaternion(orientation).add(position);
       const a = this.platformStart, b = this.platformEnd;
@@ -2186,7 +2201,7 @@ export class FlightSimulation {
     fragment.position.copy(fragment.midpointPosition); fragment.quaternion.copy(fragment.midpointQuaternion);
     this.telemetry.dissipatedEnergy -= fragment.aeroPower * dt;
     this.structure.update(fragment, fragment.force, fragment.torque);
-    this.syncContacts();
+    this.syncContacts(fragment.id);
     if (collision) this.stopFragment(fragment);
   }
 
@@ -2198,10 +2213,11 @@ export class FlightSimulation {
     out.set(PLATFORM_COS * x - PLATFORM_SIN * y, PLATFORM_SIN * x + PLATFORM_COS * y, out.z);
   }
 
-  private preparePlatformContacts() {
+  private preparePlatformContacts(pointIndices?: readonly number[]) {
     this.platformCount = 0;
     this.platformFaces.fill(-1);
-    for (let point = this.challenge === 'birdman' ? 0 : 2; point < this.contacts.length; point++) {
+    for (let cursor = (pointIndices || this.challenge === 'birdman') ? 0 : 2; cursor < (pointIndices?.length ?? this.contacts.length); cursor++) {
+      const point = pointIndices ? pointIndices[cursor] : cursor;
       if (!this.mainContact(this.contacts[point])) continue;
       this.platformPoint(this.contacts[point], this.position, this.quaternion, this.platformStart);
       const p = this.platformStart;
@@ -2717,7 +2733,7 @@ export class FlightSimulation {
 
 // Snapshots are deltas against a trusted constructor graph. Static geometry and
 // untouched scratch buffers cost no file space; aliases and every changed value survive.
-const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformFriction', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount'];
+const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformFriction', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount', 'sectionContacts', 'branchContacts'];
 const unsafeSnapshotKeys = ['__proto__', 'prototype', 'constructor'];
 type StateRecord = Record<string, unknown>;
 // Object traversal needs indexed access, after runtime object checks.
@@ -2915,7 +2931,20 @@ export function restoreReplayKeyframe(definition: AircraftDefinition, challenge:
     if (Array.isArray(base)) {
       if (!Array.isArray(value)) fail();
       if (value.length > 20_000) fail();
-      if (key === 'fragments') {
+      if (key === 'owned') {
+        // Ownership is a derived acceleration index, never a second source of
+        // topology. Reject duplicates, omissions and references to other strips.
+        if (value.length > sim.structure.sections.length + 1) fail();
+        const seen = new Set<unknown>();
+        for (let id = 0; id < value.length; id++) {
+          const sections = value[id]; if (!Array.isArray(sections)) fail();
+          for (const section of sections) {
+            if (!section || sim.structure.sections[section.id] !== section || section.bodyId !== id || seen.has(section)) fail();
+            seen.add(section);
+          }
+        }
+        if (seen.size !== sim.structure.sections.length) fail();
+      } else if (key === 'fragments') {
         if (value.length > sim.structure.sections.length) fail();
         for (const item of value) {
           if (!item || typeof item !== 'object' || Object.keys(item).length !== fragmentSnapshotKeys.length || fragmentSnapshotKeys.some(name => !Object.hasOwn(item, name))) fail();
@@ -2949,6 +2978,13 @@ export function restoreReplayKeyframe(definition: AircraftDefinition, challenge:
     }
   };
   check(sim, template.simulation);
+  // Support topology is fixed by the aircraft definition. A keyframe may change
+  // ownership and shape, but must never introduce a forged parent or cycle.
+  const expectedSections = template.simulation.structure.sections;
+  const ordered = stateRecord(sim.structure).ordered as typeof sim.structure.sections;
+  const expectedOrder = stateRecord(template.simulation.structure).ordered as typeof expectedSections;
+  if (sim.structure.sections.some((section, index) => section.id !== index || section.parentId !== expectedSections[index].parentId || section.depth !== expectedSections[index].depth)
+    || ordered.some((section, index) => section !== sim.structure.sections[expectedOrder[index].id])) fail();
   if (Math.abs(sim.elapsedTime - point.time) > 1e-8 || sim.challenge !== challenge || stateRecord(sim).launchRoll !== recording.launchRoll || sim.telemetry.cg !== sim.aircraft.cg || sim.telemetry.aerodynamics !== stateRecord(sim).aerodynamics || sim.structure.definition !== sim.definition || sim.structure.sections.some((section, index) => section.surface !== sim.surfaces[index])) fail();
   if (!Number.isInteger(point.frame) || point.frame < 0 || point.frame > recording.length || !Number.isFinite(point.time) || point.time < 0 || sim.mass <= 0 || sim.telemetry.fuelRemaining < 0 || sim.telemetry.fuelRemaining > sim.definition.fuelTank.capacity + 1e-8 || sim.ended !== (sim.result !== null)) fail();
   const bodies = new Set([0, ...sim.fragments.map(fragment => fragment.id)]);

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
 import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight } from '../src/physics';
@@ -34,9 +35,12 @@ function pitchSlope(d: AircraftDefinition) {
   const high = probe(d, s => { s.velocity.set(12 * Math.cos(DEG), -12 * Math.sin(DEG), 0); });
   return high.telemetry.torque.z - low.telemetry.torque.z;
 }
-function fly(d = definition(), dt = 1 / 60) {
+async function fly(d = definition(), dt = 1 / 60) {
   const s = new FlightSimulation(d, d.birdman ? 'birdman' : 'downhill', 0);
-  for (let i = 0; i < 90 / dt && !s.ended; i++) s.step(neutral, dt);
+  for (let i = 0; i < 90 / dt && !s.ended; i++) {
+    s.step(neutral, dt);
+    if (i % 240 === 0) await yieldTurn(0);
+  }
   return s;
 }
 function budget(s: FlightSimulation) {
@@ -512,15 +516,20 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(coarse.quaternion.angleTo(fine.quaternion)).toBeLessThan(1e-7);
   });
 
-  it.each(presets.map(d => ({ name: d.name, d })))('$name 可完整飞行至真实接触，代表性预设不靠平台碰撞结束', ({ d }) => {
-    const s = fly(d); expect(s.ended).toBe(true); expect(s.result).not.toBeNull(); budget(s);
+  // Includes a complete flight and its deterministic replay. Keep the wall-clock
+  // allowance separate from the reproducible contact-performance benchmark.
+  it.each(presets.map(d => ({ name: d.name, d })))('$name 可完整飞行至真实接触，代表性预设不靠平台碰撞结束', async ({ d }) => {
+    const s = await fly(d); expect(s.ended).toBe(true); expect(s.result).not.toBeNull(); budget(s);
     expect(Number.isFinite(s.result!.distance)).toBe(true); expect(s.result!.distance).toBeGreaterThanOrEqual(0);
     if (d.birdman) { expect(s.result!.landing).toBe('water'); expect(s.result!.distance).toBeGreaterThan(20); }
     const replay = new FlightSimulation(d, d.birdman ? 'birdman' : 'downhill', DEG); replay.loadReplay(s.getRecording());
-    while (!replay.ended && !replay.replayFinished) replay.step(neutral);
+    for (let i = 0; !replay.ended && !replay.replayFinished; i++) {
+      replay.step(neutral);
+      if (i % 240 === 0) await yieldTurn(0);
+    }
     expect(replay.result).toEqual(s.result);
     const position = s.position.clone(); s.step(neutral); expect(s.position.equals(position)).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   // 极端展长包含最多梁段、断片及碰撞子步；这是正确性检查，不以CI机器的5秒墙钟作性能门槛。
   it.each([{ name: '最小弦与半展', span: 0.5, chord: 0.15 }, { name: '最大展长与大弦', span: 24, chord: 5.8 }])('$name 的三翼分段受力保持有限并满足真实能量账本', ({ span, chord }) => {

@@ -2020,9 +2020,9 @@ export class SceneView {
         section.previousTipRotation.copy(physical.tip.quaternion);
       }
     }
-    for (const body of sim.fragments) {
-      const fragment = this.fragmentRender(body.id);
-      if (!fragment) continue;
+    for (const fragment of this.fragments) {
+      const body = sim.fragments.find(body => body.id === fragment.id);
+      if (!body) continue;
       fragment.previousPosition.copy(body.position);
       fragment.previousQuaternion.copy(body.quaternion);
       fragment.previousCG.copy(body.cg);
@@ -2318,8 +2318,8 @@ export class SceneView {
     }
   }
 
-  private fragmentRender(id: number): FragmentRender | undefined {
-    for (const fragment of this.fragments) if (fragment.id === id) return fragment;
+  private fragmentRender(id: number, wingIndex?: number): FragmentRender | undefined {
+    for (const fragment of this.fragments) if (fragment.id === id && (wingIndex === undefined || fragment.wingIndex === wingIndex)) return fragment;
     return undefined;
   }
 
@@ -2331,18 +2331,13 @@ export class SceneView {
       const fragment = this.fragments[index];
       let present = false;
       for (const body of sim.fragments) if (body.id === fragment.id) { present = true; break; }
-      if (present) continue;
+      if (present && this.wingSections[fragment.wingIndex].some(section => section.physics?.bodyId === fragment.id)) continue;
       this.removeFragment(fragment);
       this.fragments.splice(index, 1);
       changed = true;
     }
-    for (const body of sim.fragments) {
-      if (this.fragmentRender(body.id)) continue;
-      let wingIndex = -1;
-      for (let index = 0; index < 3 && wingIndex < 0; index++) {
-        for (const section of this.wingSections[index]) if (section.physics?.bodyId === body.id) { wingIndex = index; break; }
-      }
-      if (wingIndex < 0) continue;
+    for (const body of sim.fragments) for (let wingIndex = 0; wingIndex < 3; wingIndex++) {
+      if (this.fragmentRender(body.id, wingIndex) || !this.wingSections[wingIndex].some(section => section.physics?.bodyId === body.id)) continue;
       const source = this.wingMeshes[wingIndex].geometry;
       const geometry = new THREE.BufferGeometry();
       for (const name in source.attributes) geometry.setAttribute(name, source.getAttribute(name));
@@ -2350,7 +2345,7 @@ export class SceneView {
       const hingeGeometry = new THREE.BufferGeometry().setAttribute('position', source.getAttribute('position'))
         .setIndex(new THREE.BufferAttribute(new Uint32Array(this.hingeLines[wingIndex].geometry.index!.count), 1).setUsage(THREE.DynamicDrawUsage));
       const mesh = this.mesh(geometry, this.aircraftMaterials.main, this.scene);
-      mesh.name = `wing-fragment-${body.id}`;
+      mesh.name = `wing-fragment-${body.id}-${wingIndex}`;
       const hinge = new THREE.LineSegments(hingeGeometry, this.hingeLines[wingIndex].material);
       hinge.name = `${mesh.name}-hinge`;
       this.scene.add(hinge);
@@ -2379,9 +2374,9 @@ export class SceneView {
     const sim = this.simulation, controls = sim?.controlDeflections;
     let topologyChanged = this.ensureFragments();
     if (sim) {
-      for (const body of sim.fragments) {
-        const fragment = this.fragmentRender(body.id);
-        if (!fragment) continue;
+      for (const fragment of this.fragments) {
+        const body = sim.fragments.find(body => body.id === fragment.id);
+        if (!body) continue;
         const blend = fragment.captured ? this.renderBlend : 1;
         fragment.mesh.position.lerpVectors(fragment.previousPosition, body.position, blend);
         fragment.mesh.quaternion.slerpQuaternions(fragment.previousQuaternion, body.quaternion, blend);
@@ -2415,7 +2410,7 @@ export class SceneView {
           section.rootRotation.identity();
           section.tipRotation.identity();
         }
-        const fragment = bodyId === 0 ? undefined : this.fragmentRender(bodyId);
+        const fragment = bodyId === 0 ? undefined : this.fragmentRender(bodyId, index);
         const sideIndex = index === 2 || section.side < 0 ? 0 : 1;
         const direction = index === 0 ? -1 : index === 1 ? -section.side : 1;
         this.deformationAxis.copy(this.wingAxes[index][sideIndex]);
