@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { BODY_GEOMETRY, defaultAircraft, DEG, type Controls } from '../src/model';
+import { BODY_GEOMETRY, clone, defaultAircraft, DEG, type Controls } from '../src/model';
 import { FlightSimulation, WATER } from '../src/physics';
 import { CHALLENGE_RIVER, challengeRiverCenter, challengeRiverHeight, challengeTerrainHeight, type ChallengeMode } from '../src/challenges';
 
@@ -32,7 +32,12 @@ function state(s: FlightSimulation) {
   };
 }
 function banked(side: number, speed: number, dry = false) {
-  const s = new FlightSimulation(defaultAircraft, 'birdman', 0);
+  const definition = clone(defaultAircraft);
+  // 对照组只改变是否触水；碳梁保证16m/s空气载荷本身不会先破坏木梁。
+  for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
+    definition[key].materialId = 'carbon-epoxy'; definition[key].materialAmount = 1;
+  }
+  const s = new FlightSimulation(definition, 'birdman', 0);
   s.launching = false; s.position.set(40, dry ? 80 : 1.2, 0);
   s.quaternion.setFromAxisAngle(rollAxis, side * 25 * DEG);
   s.velocity.set(speed, -speed / 20, 0); s.omega.set(0, 0, 0);

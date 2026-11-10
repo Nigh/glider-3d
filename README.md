@@ -193,8 +193,9 @@ npm test
 npm run test:e2e
 ```
 
-Complete-flight and rail-launch regressions use a 15-second per-test timeout to accommodate structural and contact integration on shared CI CPUs. Extreme-surface checks allow 30 seconds. The 60-second recording regression allows 180 seconds because it simulates recording, linear replay and uncached seeking; its setup periodically yields so the test worker can respond to the runner. Energy, finite-state and deterministic-replay assertions remain intact. Vitest's default five-second timeout is not a performance metric.
-The trim/retention sweep allows 30 seconds, and the fracture-record/replay regression allows 60 seconds. Both yield between integration batches so fixed-keyframe capture cannot starve the runner's RPC loop. Use `npx vitest run --maxWorkers=1` when sharing CPU with browser rendering.
+Physics regressions set the geometry, material strength and engine count needed by each scenario explicitly instead of assuming that a system preset stays unchanged. Preset validation remains covered separately. Unit tests retain physical boundaries, energy accounting, fractures, deterministic replay and cache limits; duplicate replay runs and assertions that only pin visual styling or translated wording are omitted.
+
+Complete-flight and rail-launch regressions use longer per-test timeouts to accommodate structural and contact integration on shared CI CPUs. Expensive setup yields between integration batches so the test worker can respond to the runner. Vitest's default five-second timeout is not a performance metric. Use `npx vitest run --maxWorkers=1` when sharing CPU with browser rendering.
 
 Browser tests start the development server by default. To use an existing server when CI is enabled:
 

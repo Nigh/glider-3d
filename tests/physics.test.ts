@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
-import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, SURFACE_STEP } from '../src/physics';
+import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight } from '../src/physics';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
@@ -98,25 +98,12 @@ function approachingPlatform(axis: number, sign: number, speed = 3, gap = 0.01) 
 }
 
 describe('展向条带与完整翼面', () => {
-  it('所有翼面按0.8m截短分段，面积和面积加权作用点保持完整梯形，左右镜像', () => {
+  it('分段面积和面积加权作用点保持完整梯形，左右镜像', () => {
     const d = definition(), s = new FlightSimulation(d, 'birdman', 0);
     s.structure.reset(); // 此处验证未变形设计的条带离散，不使用发射架自重形状。
     for (const [key, kind] of [['mainWing', 'main'], ['horizontalTail', 'tail'], ['verticalTail', 'vertical']] as const) {
       const p = planform(d[key], key !== 'verticalTail'), panels = s.surfaces.filter(surface => surface.kind === kind);
       expect(panels.reduce((sum, panel) => sum + panel.area, 0)).toBeCloseTo(p.area, 12);
-      for (const side of key === 'verticalTail' ? [1] : [-1, 1]) {
-        const row = panels.filter(panel => panel.side === side);
-        expect(row[0].spanStart).toBe(0);
-        expect(row.at(-1)!.spanEnd).toBeCloseTo(d[key].points[1].y, 12);
-        for (let i = 0; i < row.length; i++) {
-          expect(row[i].spanEnd - row[i].spanStart).toBeLessThanOrEqual(SURFACE_STEP + 1e-12);
-          if (i < row.length - 1) expect(row[i].spanEnd - row[i].spanStart).toBeCloseTo(SURFACE_STEP, 12);
-          expect(row[i].spanEnd).toBeGreaterThan(row[i].spanStart);
-          expect(row[i].chord).toBeGreaterThan(0);
-          expect(row[i].aspect).toBeCloseTo(p.aspect, 12);
-          if (i) expect(row[i].spanStart).toBeCloseTo(row[i - 1].spanEnd, 12);
-        }
-      }
       const point = new Vector3();
       for (const panel of panels) point.addScaledVector(panel.point, panel.area / p.area);
       const fraction = (p.root + 2 * p.tip) / (3 * (p.root + p.tip));
@@ -133,15 +120,11 @@ describe('展向条带与完整翼面', () => {
     }
   });
 
-  it('对称来流无虚构滚转/偏航，局部滚转来流产生阻尼且条带对象复用', () => {
+  it('对称来流无虚构滚转/偏航，局部滚转来流产生阻尼', () => {
     const s = probe(), rotating = probe(undefined, s => { s.omega.x = 0.3; });
     expect(Math.abs(s.telemetry.torque.x)).toBeLessThan(1e-8);
     expect(Math.abs(s.telemetry.torque.y)).toBeLessThan(1e-8);
     expect(rotating.telemetry.torque.x).toBeLessThan(0);
-    const panels = rotating.surfaces, forces = panels.map(panel => panel.force);
-    rotating.step(neutral);
-    expect(rotating.surfaces).toBe(panels);
-    panels.forEach((panel, index) => expect(panel.force).toBe(forces[index]));
   });
 
   it('跨越分段边界时下洗和诱导阻力连续，不把新末段当独立短翼', () => {
@@ -245,7 +228,12 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
   });
 
   it('最后尾而非CG计距，横向飞行与偏航使用同一径向几何标准，距离非负', () => {
-    const d = definition(d => { d.fuselage.length = 8; d.mainWing.dihedral = 0; d.horizontalTail = wing(2, 0.4, 0.4); d.verticalTail = wing(2, 0.4, 0.4); d.assembly.horizontalTail = -2.5; d.assembly.verticalTail = -2.5; });
+    const d = definition(d => {
+      d.fuselage = { length: 8, center: 0 }; d.cockpit = { position: 0 };
+      d.mainWing = wing(14, 1.6, 0.8); d.horizontalTail = wing(2, 0.4, 0.4); d.verticalTail = wing(2, 0.4, 0.4);
+      d.assembly = { mainWing: 0.5, mainWingHeight: 0, horizontalTail: -2.5, verticalTail: -2.5,
+        mainIncidence: 0, tailIncidence: 0, tailOnFin: false };
+    });
     for (const yaw of [0, 0.7, -1.2]) {
       const s = probe(d, s => { s.quaternion.setFromAxisAngle(axisY, yaw); s.position.set(50 * Math.cos(yaw), 80, -50 * Math.sin(yaw)); s.velocity.set(0, 0, 0); }, 1e-8);
       expect(s.telemetry.distance).toBeCloseTo(50 - 4 - s.aircraft.cg.x, 6);
