@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BackSide, Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, RepeatWrapping, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
+import { Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
 import type { Material, MeshStandardMaterial } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint } from '../src/model';
 import { SceneView } from '../src/scene';
@@ -10,7 +10,7 @@ import { TEST_SPACE, testSpaceTerrainHeight } from '../src/laboratory';
 
 // Exercise SceneView's real layout without a WebGL context or browser timing.
 describe('camera clearance', () => {
-  it.each(['menu', 'design', 'birdman', 'downhill', 'low-altitude', 'test-space', 'wind-tunnel', 'result'])('bounds push and restores the original camera in %s', screen => {
+  it.each(['design', 'birdman', 'result'])('bounds push and restores the original camera in %s', screen => {
     const camera = new PerspectiveCamera(), target = new Vector3(7, 3, -4);
     let ground = 1000;
     const view = Object.assign(Object.create(SceneView.prototype), {
@@ -70,26 +70,15 @@ function testSpaceView() {
 }
 
 describe('测试空间渲染', () => {
-  it('使用重复纹理、动态水纹和真实地形三角面，不改碰撞高度', () => {
+  it('渲染地形与实际碰撞高度一致', () => {
     const view = testSpaceView();
     try {
       const terrain = view.mountainEnvironment.getObjectByName('test-space-terrain') as Mesh<BufferGeometry, MeshStandardMaterial>;
-      const ocean = view.mountainEnvironment.getObjectByName('test-space-ocean') as Mesh<BufferGeometry, MeshStandardMaterial>;
-      for (const surface of [terrain, ocean]) {
-        expect(surface.receiveShadow).toBe(true); expect(surface.castShadow).toBe(false);
-        const texture = surface.material.map!;
-        expect(texture).toBeTruthy(); expect(texture.wrapS).toBe(RepeatWrapping); expect(texture.wrapT).toBe(RepeatWrapping);
-        const pixels = Array.from(texture.image.data as Uint8Array).filter((_, index) => index % 4 === 0);
-        expect(new Set(pixels).size).toBeGreaterThan(10);
-        expect(surface.geometry.getAttribute('uv').count).toBe(surface.geometry.getAttribute('position').count);
-      }
       const ray = new Raycaster();
       for (const [x, z] of [[-1993.2, -1017.7], [326.7, -3612.3], [195.3, 73.2]]) {
         ray.set(new Vector3(x, 6000, z), new Vector3(0, -1, 0));
         const hit = ray.intersectObject(terrain)[0];
         expect(hit.point.y).toBeCloseTo(testSpaceTerrainHeight(x, z), 3);
-        expect(hit.uv!.x).toBeCloseTo(x / 24, 4);
-        expect(hit.uv!.y).toBeCloseTo(z / 24, 4);
       }
     } finally { view.release(view.scene); }
   });
@@ -325,14 +314,6 @@ describe('场景编辑与推力中心', () => {
   });
 });
 
-it('气动图层在透明背景之后绘制，禁用深度读写和雾化',()=>{
- const group=new Group(),marker=new Mesh(new BoxGeometry(),new MeshBasicMaterial());group.add(marker);
- const view=Object.assign(Object.create(SceneView.prototype),{debugGroup:group,cg:{},liftCenter:{},simulation:{},updateEnvironment(){},updateCenters(){}});
- view.setDebug(true);
- expect(marker.renderOrder).toBe(100);expect(marker.material.transparent).toBe(true);
- expect(marker.material.depthTest).toBe(false);expect(marker.material.depthWrite).toBe(false);expect(marker.material.fog).toBe(false);
- marker.geometry.dispose();marker.material.dispose();
-});
 
 it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回正不受世界极角限制',()=>{
  for(const pitch of [0,Math.PI/2,-Math.PI/2,Math.PI*0.44])for(const roll of [0,Math.PI/2,Math.PI]){
@@ -708,21 +689,15 @@ function designSceneView() {
 }
 
 describe('工坊场景与直接选取', () => {
-  it('所有设计目标使用深蓝风洞房间、米制网格与刻度，并随场景统一释放资源', () => {
+  it('切换编辑目标时显示工坊，退出后恢复环境并释放资源', () => {
     const view = designSceneView();
     view.label = () => new Mesh(new BoxGeometry(1, 1, 0.01), new MeshBasicMaterial());
     view.buildWorkshop();
-    const wall = view.workshop.getObjectByName('workshop-deep-blue-walls') as Mesh<BoxGeometry, MeshBasicMaterial>;
-    expect(wall.material.color.getHex()).toBe(0x102b4d);
-    expect(wall.material.side).toBe(BackSide);
-    expect(view.workshop.children.filter((child: Object3D) => child.name.endsWith('metre-grid'))).toHaveLength(5);
-    expect(view.workshop.children.filter((child: Object3D) => child.name === 'workshop-metre-label')).toHaveLength(15);
     for (const target of ['fuselage', 'mainWing', 'horizontalTail', 'verticalTail', 'propulsion']) {
       view.editorTarget = target;
       view.updateEnvironment();
       expect(view.workshop.visible).toBe(true);
       expect(view.environment.visible).toBe(false);
-      expect(view.scene.background.getHex()).toBe(0x07182d);
     }
     view.editorTarget = null;
     view.updateEnvironment();

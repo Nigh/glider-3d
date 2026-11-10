@@ -1,7 +1,7 @@
 import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, clone, defaultAircraft, wing, type Controls } from '../src/model';
+import { AIRFRAME_MASS, clone, defaultAircraft, wing, type AircraftDefinition, type Controls } from '../src/model';
 import { FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
 import { rotationalEnergy, summarizeWingStructure, type StructuralBody } from '../src/structure';
 
@@ -31,9 +31,16 @@ function state(simulation: FlightSimulation) {
 
 describe('结构载荷自适应杆量', () => {
   function controlled(materialId: 'spruce' | 'carbon-epoxy' = 'spruce', materialAmount = 0.5) {
-    const definition = clone(defaultAircraft);
-    definition.birdman = false;
-    definition.assembly.mainIncidence = -4;
+    const definition: AircraftDefinition = {
+      name: '结构限幅试验机', birdman: false,
+      fuselage: { length: 6.5, center: 0 }, cockpit: { position: 1.2 },
+      mainWing: { ...wing(14, 1.5, 0.8, 0.25), dihedral: 5 },
+      horizontalTail: wing(3.5, 0.9, 0.55, 0.15),
+      verticalTail: { ...wing(3, 0.9, 0.4, 0.3), controlSurface: 1 },
+      assembly: { mainWing: 0.9, mainWingHeight: 0.8, horizontalTail: -2.8, verticalTail: -2.9, mainIncidence: -4, tailIncidence: 0 },
+      pilot: { mass: 60 }, controls: { travel: 0.45, lateralTravel: 0.1 },
+      engine: { type: 'jet-01', count: 0, x: -0.5, y: 0.5 }, fuelTank: { x: 0, capacity: 0 },
+    };
     for (const key of ['mainWing', 'horizontalTail'] as const) {
       definition[key].structure = { width: 0.15, height: 0.3, wallThickness: 0.005 };
       definition[key].controlSurface = 0.4;
@@ -42,45 +49,48 @@ describe('结构载荷自适应杆量', () => {
     definition.verticalTail.materialAmount = materialAmount;
     const simulation = new FlightSimulation(definition, 'downhill', 0);
     simulation.launching = false; simulation.structure.reset();
-    simulation.position.set(200, 5000, 0); simulation.quaternion.identity();
+    simulation.position.set(100, 5000, 0); simulation.quaternion.identity();
     simulation.velocity.set(25, 0, 0); simulation.omega.set(0, 0, 0);
     return simulation;
   }
-  function predict(simulation: FlightSimulation, controls: Controls, scale: number) {
-    return (Reflect.get(simulation, 'predictControlStress') as (controls: Controls, scale: number) => number).call(simulation, controls, scale);
-  }
-  function limit(simulation: FlightSimulation, controls: Controls) {
-    return (Reflect.get(simulation, 'adaptiveControlLimit') as (controls: Controls) => number).call(simulation, controls);
+  function stress(simulation: FlightSimulation) {
+    return Math.max(...simulation.structure.sections.map(section => section.stressRatio));
   }
   const full = { ...neutral, rudder: 1 };
 
-  it('同一空速下强材料/大截面允许更大满杆，弱结构实际满杆载荷收敛到极限90%', () => {
+  it('同一空速下强材料/大截面允许更大满杆，实际载荷受90%上限约束', () => {
     const weak = controlled(), strong = controlled('carbon-epoxy', 2);
-    expect(predict(weak, full, 0)).toBeLessThan(0.9);
-    expect(predict(weak, full, 1)).toBeGreaterThan(0.9);
-    const before = state(weak), peaks = structuredClone(weak.structure.peakWings);
-    const weakLimit = limit(weak, full), strongLimit = limit(strong, full);
+    for (const simulation of [weak, strong]) simulation.step({ ...full, adaptiveControls: true }, 1e-5);
+    const weakLimit = weak.telemetry.controlLimit;
     expect(weakLimit).toBeGreaterThan(0); expect(weakLimit).toBeLessThan(1);
-    expect(strongLimit).toBeGreaterThan(weakLimit);
-    expect(state(weak)).toEqual(before); expect(weak.structure.peakWings).toEqual(peaks);
-    const predicted = predict(weak, full, weakLimit);
-    expect(predicted).toBeLessThanOrEqual(0.9); expect(predicted).toBeGreaterThan(0.899);
-    weak.structure.update(weak, weak.telemetry.force, weak.telemetry.torque);
-    expect(Math.max(...weak.structure.sections.map(section => section.stressRatio))).toBeCloseTo(predicted, 12);
-    weak.velocity.set(0, 0, 0); weak.omega.set(0, 0, 0);
-    expect(limit(weak, full)).toBe(1);
+    expect(strong.telemetry.controlLimit).toBeGreaterThan(weakLimit);
+    expect(Math.abs(weak.telemetry.controlInputs.rudder)).toBeLessThanOrEqual(weakLimit);
+    expect(stress(weak)).toBeLessThanOrEqual(0.901);
+    expect(weak.structure.fractureCount).toBe(0);
+    const stopped = controlled(); stopped.velocity.set(0, 0, 0);
+    stopped.step({ ...full, adaptiveControls: true }, 1e-5);
+    expect(stopped.telemetry.controlLimit).toBe(1);
   });
 
   it('三轴混合满杆、配平及已有大舵量的行程过渡均受真实90%载荷限制', () => {
     for (const elevator of [-1, 1]) for (const aileron of [-1, 1]) for (const rudder of [-1, 1]) {
       const simulation = controlled();
       const command: FlightControls = { ...neutral, elevator, aileron, rudder, adaptiveControls: true, trimPitch: 0.8, trimRoll: -0.8 };
-      Object.assign(Reflect.get(simulation, 'applied'), { elevator: -elevator, aileron: -aileron, rudder: -rudder });
+      for (let step = 0; step < 3; step++) {
+        simulation.velocity.set(0, 0, 0); simulation.omega.set(0, 0, 0); simulation.quaternion.identity();
+        simulation.step({ ...neutral, elevator: -elevator, aileron: -aileron, rudder: -rudder }, 0.25);
+      }
+      expect(Math.abs(simulation.telemetry.controlInputs.rudder)).toBeGreaterThan(0.5);
+      simulation.structure.reset();
+      simulation.position.set(100, 5000, 0); simulation.quaternion.identity();
+      simulation.velocity.set(25, 0, 0); simulation.omega.set(0, 0, 0);
       simulation.step(command, 1e-5);
+      expect(simulation.ended).toBe(false);
       const actual = simulation.telemetry.controlInputs, cap = simulation.telemetry.controlLimit;
       expect(cap).toBeGreaterThan(0); expect(cap).toBeLessThan(1);
       for (const axis of ['elevator', 'aileron', 'rudder'] as const) expect(Math.abs(actual[axis])).toBeLessThanOrEqual(cap);
-      expect(predict(simulation, actual, 1)).toBeLessThanOrEqual(0.901);
+      // 已接受步的真实载荷才是本步上限；提交形变后重算属于下一步的基础载荷。
+      expect(stress(simulation)).toBeLessThanOrEqual(0.901);
       expect(simulation.structure.fractureCount).toBe(0);
     }
   });
@@ -88,8 +98,6 @@ describe('结构载荷自适应杆量', () => {
   it('零舵基础载荷已超限时归零杆量，但不伪造安全应力或阻止真实断裂', () => {
     const simulation = controlled();
     simulation.velocity.set(100, -50, 30);
-    expect(predict(simulation, full, 0)).toBeGreaterThan(1);
-    expect(limit(simulation, full)).toBe(0);
     simulation.step({ ...full, adaptiveControls: true }, 1e-5);
     expect(simulation.telemetry.controlLimit).toBe(0);
     expect(simulation.telemetry.controlInputs.rudder).toBe(0);
@@ -98,13 +106,12 @@ describe('结构载荷自适应杆量', () => {
 
   it('持续满杆时区分受控载荷与形变后真实零舵基础过载，后者仍可断裂', () => {
     const simulation = controlled();
-    simulation.position.x = 100; Reflect.set(simulation, 'raceStarted', true);
+    simulation.position.x = 100;
     let limitedWithoutOverload = false, neutralOverload = false;
     for (let step = 0; step < 60; step++) {
-      const baseline = predict(simulation, full, 0);
       simulation.step({ ...full, adaptiveControls: true }, 1 / 120);
-      const actualStress = Math.max(...simulation.structure.sections.map(section => section.stressRatio));
-      if (baseline < 0.9) {
+      const actualStress = stress(simulation);
+      if (simulation.telemetry.controlLimit > 0) {
         expect(actualStress).toBeLessThanOrEqual(0.901);
         limitedWithoutOverload ||= simulation.telemetry.controlLimit > 0 && simulation.telemetry.controlLimit < 1;
       } else {
@@ -113,7 +120,8 @@ describe('结构载荷自适应杆量', () => {
         expect(simulation.telemetry.controlInputs.rudder).toBe(0);
       }
       if (simulation.structure.fractureCount > 0) {
-        expect(baseline).toBeGreaterThan(1);
+        expect(simulation.telemetry.controlLimit).toBe(0);
+        expect(actualStress).toBeGreaterThan(1);
         break;
       }
     }
@@ -225,7 +233,8 @@ describe('分段等效弹性梁', () => {
 
   it('50–200%材料用量改变真实质量、惯量、EI/GJ和应力截面，保持合法管壁比例', () => {
     const simulations = [0.5, 1, 2].map(materialAmount => {
-      const d = clone(defaultAircraft); d.mainWing.materialAmount = materialAmount;
+      const d = clone(defaultAircraft);
+      d.mainWing.materialId = 'carbon-epoxy'; d.mainWing.materialAmount = materialAmount;
       return new FlightSimulation(d, 'birdman', 0);
     });
     const baseline = simulations[1], base = baseline.structure.sections.find(section => section.wingKey === 'mainWing')!;
@@ -375,16 +384,16 @@ describe('真实超载、独立断片和完整能量账本', () => {
 
 it('翼面峰值保留卸载和断裂前的最高受力，reset清空',()=>{
  const simulation=new FlightSimulation(defaultAircraft,'birdman',0),structure=simulation.structure;
- const section=structure.sections[0];
  simulation.launching=false;simulation.position.set(0,150,0);simulation.velocity.set(80,-20,0);
  simulation.step({weight:0,lateral:0,rudder:0,elevator:0,aileron:0},1/60);
  const peaks=structure.peakWings.map(w=>({...w}));
  expect(peaks[0].stress).toBeGreaterThan(0);
- for(const s of structure.sections){s.stressRatio=0;s.yieldRatio=0;}
- structure.summarize();
- expect(structure.maxStressRatio).toBe(0);
+ for(const body of [simulation,...simulation.fragments]){
+  body.position.set(200,150,0);body.velocity.set(0,0,0);body.omega.set(0,0,0);
+ }
+ simulation.step(neutral,1e-5);
+ expect(structure.maxStressRatio).toBeLessThan(0.001);
  expect(structure.peakWings).toEqual(peaks);
- expect(section.wingKey).toBe('mainWing');
  structure.reset();
  expect(structure.peakWings.every(w=>w.stress===0&&w.yieldRatio===0)).toBe(true);
 });

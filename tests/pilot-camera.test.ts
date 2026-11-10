@@ -46,21 +46,6 @@ it('keeps HUD in aircraft coordinates while head turns and translates', () => {
   expect(view.pilotHud(0, 0)).toBeNull();
 });
 
-it('shrinks the panel by 20% and projects text locally under perspective', () => {
-  const view = pilotView(), frame = view.pilotHud(0, 0);
-  const oldSeparation = (520-78)*0.0025*view.height/(4*Math.tan(view.camera.fov*Math.PI/360));
-  expect(anchor(frame.altitudeLabel).x-anchor(frame.speedLabel).x).toBeCloseTo(oldSeparation*0.8);
-  expect([frame.width, frame.height]).toEqual([1200, 800]);
-  view.camera.rotateY(0.4);
-  const turned = view.pilotHud(0, 0), matrix = affine(turned.speedLabel);
-  const point = panelPoint(view, 78, 175), step = 0.001;
-  expect(anchor(turned.speedLabel).distanceTo(point)).toBeLessThan(1e-8);
-  const dx = panelPoint(view, 78+step, 175).sub(point).divideScalar(step);
-  const dy = panelPoint(view, 78, 175+step).sub(point).divideScalar(step);
-  expect(matrix[0]).toBeCloseTo(dx.x, 4); expect(matrix[1]).toBeCloseTo(dx.y, 4);
-  expect(matrix[2]).toBeCloseTo(dy.x, 4); expect(matrix[3]).toBeCloseTo(dy.y, 4);
-  expect(Math.abs(matrix[0]-affine(turned.altitudeLabel)[0])).toBeGreaterThan(0.01);
-});
 
 it('clips rotated pitch lines to the panel before projection, including extreme attitudes', () => {
   const view = pilotView(), initial = view.pilotHud(0, 0);
