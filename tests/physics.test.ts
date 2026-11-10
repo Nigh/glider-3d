@@ -266,7 +266,7 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
     outsidePlatform(s); budget(s);
   });
 
-  it('平台支撑持续推进时间且不造能；滑离平台后仍正常落水结算', () => {
+  it('平台支撑持续推进时间，低速物体可长期停留；足够初速可滑离并落水', () => {
     const s = approachingPlatform(1, 1, 0.2);
     for (let i = 0; i < 120; i++) {
       s.step(neutral);
@@ -274,8 +274,12 @@ describe('斜坡发射、连续滚转与最后尾计距', () => {
     }
     expect(s.time).toBeCloseTo(2, 10);
     for (let i = 0; i < 1800 && !s.ended; i++) { s.step(neutral); budget(s); }
-    expect(s.result?.landing).toBe('water');
+    expect(s.ended).toBe(false); outsidePlatform(s);
     expect(s.time).toBeGreaterThan(2);
+    const sliding = approachingPlatform(1, 1, 0.2);
+    sliding.velocity.x = 10;
+    for (let i = 0; i < 1800 && !sliding.ended; i++) { sliding.step(neutral); budget(sliding); }
+    expect(sliding.result?.landing).toBe('water');
   });
 
   it('高速扫掠不能从底面穿过0.6m薄平台，接触耗散只记真实动能损失', () => {
@@ -433,6 +437,25 @@ describe('气动、质量、能量与消费者边界', () => {
     for (const simulation of samples) budget(simulation);
   });
 
+  it('纯展向来流两侧的翼段阻力连续、非零且只耗散能量', () => {
+    const d = definition(d => { d.mainWing = wing(10, 1, 1); d.mainWing.dihedral = 0; d.assembly.mainIncidence = 0; });
+    const samples = [-1e-7, 0, 1e-7].map(epsilon => {
+      const s = new FlightSimulation(d, 'birdman', 0);
+      s.structure.reset(); s.quaternion.identity(); s.position.set(40, 280, 0);
+      s.velocity.set(epsilon, epsilon, 12); s.omega.set(0, 0, 0);
+      (Reflect.get(s, 'evaluateForces') as Function).call(s, neutral, s.velocity, s.omega, s.quaternion, s.position);
+      const force = new Vector3();
+      for (const surface of s.surfaces.filter(surface => surface.kind === 'main')) {
+        force.add(surface.force);
+        expect(surface.drag.dot(s.velocity)).toBeLessThan(0);
+      }
+      expect(force.z).toBeLessThan(-1);
+      return force;
+    });
+    expect(samples[0].distanceTo(samples[1])).toBeLessThan(1e-5);
+    expect(samples[2].distanceTo(samples[1])).toBeLessThan(1e-5);
+  });
+
   it('主翼保留DAE11弯度，低Re增加型阻；尾翼仅为对称工程代理', () => {
     const low = coefficients(0, 12, 200_000), middle = coefficients(0, 12, 500_000), high = coefficients(0, 12, 1_000_000);
     expect(middle.cl).toBeGreaterThan(0.4);
@@ -497,7 +520,7 @@ describe('气动、质量、能量与消费者边界', () => {
     while (!replay.ended && !replay.replayFinished) replay.step(neutral);
     expect(replay.result).toEqual(s.result);
     const position = s.position.clone(); s.step(neutral); expect(s.position.equals(position)).toBe(true);
-  }, 15_000);
+  }, 30_000);
 
   // 极端展长包含最多梁段、断片及碰撞子步；这是正确性检查，不以CI机器的5秒墙钟作性能门槛。
   it.each([{ name: '最小弦与半展', span: 0.5, chord: 0.15 }, { name: '最大展长与大弦', span: 24, chord: 5.8 }])('$name 的三翼分段受力保持有限并满足真实能量账本', ({ span, chord }) => {

@@ -318,7 +318,7 @@ test.describe('桌面完整交互', () => {
     const stopped = await page.evaluate(() => window.glider.telemetry?.distance);
     await page.waitForTimeout(200);
     expect(await page.evaluate(() => window.glider.telemetry?.distance)).toBe(stopped);
-    await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption('侧面');
+    await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption('侧追尾');
     await page.getByRole('button', { name: '继续飞行', exact: true }).click();
     const first = await waitResult(page);
     const energy = await page.evaluate(() => {
@@ -438,7 +438,7 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   await beginFlight(page);
   await expect.poll(() => page.evaluate(() => window.glider.telemetry?.distance ?? 0), { timeout: 20_000 }).toBeGreaterThan(30);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
-  for (const camera of ['追尾', '侧追尾', '侧面', '驾驶员', '自由']) {
+  for (const camera of ['追尾', '锁定', '侧追尾', '驾驶员']) {
     await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(camera);
     await expect.poll(() => page.evaluate(() => {
       const s = window.glider.scene;
@@ -448,8 +448,9 @@ test('相机轨道与飞行视角保持在地表以上，低画质保留湖面�
   expect(await page.evaluate(() => window.glider.scene.shadowVisible)).toBe(true);
 });
 
-test('飞行视角拖动回正，锁定禁止拖动，自由视角保持环绕并支持滚轮缩放', async ({ page, isMobile }) => {
+test('实时飞行视角允许拖动并自动回正，锁定限幅，驾驶员上下方向正确', async ({ page, isMobile }) => {
   test.skip(isMobile, '鼠标拖动在桌面验证');
+  await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
   await enterDesign(page);
   await page.getByRole('button', { name: '前往挑战' }).click();
   type CameraPoint = { x: number; y: number; z: number };
@@ -459,43 +460,23 @@ test('飞行视角拖动回正，锁定禁止拖动，自由视角保持环绕�
   });
   const distance = (a: CameraPoint[], b: CameraPoint[]) =>
     a.reduce((sum, point, index) => sum + Math.hypot(point.x - b[index].x, point.y - b[index].y, point.z - b[index].z), 0);
-  for (const name of ['追尾', '锁定', '侧追尾', '侧面', '驾驶员', '自由']) {
+  for (const name of ['追尾', '锁定', '侧追尾', '驾驶员']) {
     await page.getByRole('combobox', { name: '飞行相机', exact: true }).selectOption(name);
     const before = await snapshot();
     await page.mouse.move(1000, 420); await page.mouse.down();
     await page.mouse.move(1120, 470, { steps: 8 }); await page.mouse.up();
     const dragged = await snapshot();
-    if (name === '锁定') {
-      expect(distance(before, dragged)).toBeLessThan(0.001);
-      continue;
-    }
-    expect(distance(before, dragged)).toBeGreaterThan(1);
-    expect(name === '驾驶员' ? dragged[1].y : dragged[0].y).toBeGreaterThan(name === '驾驶员' ? before[1].y : before[0].y);
-    if (name === '自由') {
-      let settled = dragged;
-      // Orbit damping advances per rendered frame; wait for convergence on slow hosts.
-      await expect.poll(async () => {
-        const previous = settled;
-        await page.waitForTimeout(1_000);
-        settled = await snapshot();
-        return distance(previous, settled);
-      }, { timeout: 25_000, intervals: [100] }).toBeLessThan(0.005);
-      expect(distance(before, settled)).toBeGreaterThan(1);
-      await page.waitForTimeout(4_000);
-      expect(distance(settled, await snapshot())).toBeLessThan(0.05);
-      const radius = Math.hypot(settled[0].x - settled[1].x, settled[0].y - settled[1].y, settled[0].z - settled[1].z);
-      await page.mouse.wheel(0, 400);
-      await expect.poll(async () => {
-        const points = await snapshot();
-        return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y, points[0].z - points[1].z);
-      }).toBeGreaterThan(radius * 1.1);
-      continue;
-    }
+    expect(distance(before, dragged)).toBeGreaterThan(name === '锁定' ? 0.1 : 1);
+    if (name === '锁定') expect(distance(before, dragged)).toBeLessThan(10);
+    if (name === '驾驶员') expect(dragged[1].y).toBeLessThan(before[1].y);
+    else expect(dragged[0].y).toBeGreaterThan(before[0].y);
     if (name === '追尾') {
       await page.waitForTimeout(4_000);
       expect(distance(before, await snapshot())).toBeGreaterThan(distance(before, dragged) * 0.5);
     }
-    await expect.poll(async () => distance(before, await snapshot()), { timeout: 25_000 }).toBeLessThan(0.3);
+    // Return advances with capped render dt; software WebGL can take longer
+    // than wall-clock time while preserving the same final-position tolerance.
+    await expect.poll(async () => distance(before, await snapshot()), { timeout: 40_000 }).toBeLessThan(0.3);
   }
 });
 
@@ -634,7 +615,7 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await expect(page.locator('.pause-banner')).toBeVisible();
   const stopped = await page.evaluate(() => window.glider.time);
   const camera = page.getByRole('combobox', { name: '飞行相机', exact: true });
-  for (const view of ['锁定', '侧追尾', '侧面', '驾驶员', '自由', '追尾']) {
+  for (const view of ['锁定', '侧追尾', '驾驶员', '追尾']) {
     await page.keyboard.press('c');
     await expect(camera).toHaveValue(view);
   }
@@ -642,7 +623,7 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await camera.selectOption('驾驶员');
   await page.locator('.flight-hud').click();
   await page.keyboard.press('c');
-  await expect(camera).toHaveValue('自由');
+  await expect(camera).toHaveValue('追尾');
   await page.keyboard.press('Space');
   await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(stopped);
   await page.getByRole('button', { name: '返回设计', exact: true }).click();
@@ -652,10 +633,10 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await name.press('c');
   await expect(name).toHaveValue('测试 c');
   // Issue #39 keeps the selected flight camera across new flights.
-  expect(await page.evaluate(() => localStorage.getItem('aero-formula.flight-camera'))).toBe('自由');
+  expect(await page.evaluate(() => localStorage.getItem('aero-formula.flight-camera'))).toBe('追尾');
   await page.getByRole('navigation', { name: '游戏流程' }).getByRole('button', { name: '试飞', exact: true }).click();
   await expectWaiting(page);
-  await expect(camera).toHaveValue('自由');
+  await expect(camera).toHaveValue('追尾');
 });
 
 test('主视图持续展示三翼结果，安装角滑条实时改变气动数值', async ({ page }) => {

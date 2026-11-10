@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 驾驶舱阻力、可变后舱与非对称引擎响应改变物理行为，保留旧成绩但不混榜。
-export const PHYSICS_VERSION = 'adaptive-damped-v12';
+// 地面摩擦、独立翼段失效及展向阻力改变物理行为，保留旧成绩但不混榜。
+export const PHYSICS_VERSION = 'ground-friction-segment-fracture-v13';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

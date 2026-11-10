@@ -302,18 +302,17 @@ export class WingStructure {
     else out.copy(base);
   }
 
-  /** 返回每条连续链最危险的仍连接边界；自由断片的首端没有连接。 */
+  /** Every overloaded joint may break in this accepted step. Process outboard
+   * joints first so an inboard break cannot hide another overloaded boundary. */
   fractureCandidates(bodyId: number) {
     const result = this.candidates;
     result.length = 0;
     for (const s of this.sections) {
       if (s.bodyId !== bodyId || s.stressRatio < 1) continue;
       if (bodyId !== 0 && !this.hasInnerSection(s)) continue;
-      const previous = result.findIndex(other => other.wingKey === s.wingKey && other.side === s.side);
-      if (previous < 0) result.push(s);
-      else if (result[previous].stressRatio < s.stressRatio) result[previous] = s;
+      result.push(s);
     }
-    return result;
+    return result.sort((a, b) => b.spanStart - a.spanStart || a.id - b.id);
   }
 
   detach(boundary: StructureSection, id: number) {

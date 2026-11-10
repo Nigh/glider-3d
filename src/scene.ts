@@ -377,7 +377,7 @@ export class SceneView {
     this.scene.add(this.splash, this.ring);
     this.controls = this.createControls();
     this.renderer.domElement.addEventListener('pointerdown', event => {
-      if (this.controls.enabled || this.view === 'locked' && !this.resultOrbit || event.button !== 0) return;
+      if (this.controls.enabled || event.button !== 0) return;
       this.cameraPointer = event.pointerId;
       this.cameraPointerX = event.clientX; this.cameraPointerY = event.clientY;
       this.cameraDragging = true;
@@ -386,8 +386,10 @@ export class SceneView {
     this.renderer.domElement.addEventListener('pointermove', event => {
       if (event.pointerId !== this.cameraPointer) return;
       if (!this.resultOrbit) this.cameraYaw -= (event.clientX - this.cameraPointerX) * 0.006;
-      this.cameraPitch -= (event.clientY - this.cameraPointerY) * 0.006;
-      this.cameraPitch = clamp(this.cameraPitch, -1.35, 1.35);
+      this.cameraPitch += (event.clientY - this.cameraPointerY) * (this.view === 'pilot' && !this.resultOrbit ? 0.006 : -0.006);
+      const limit = this.view === 'locked' && !this.resultOrbit ? 0.12 : 1.35;
+      this.cameraPitch = clamp(this.cameraPitch, -limit, limit);
+      if (this.view === 'locked' && !this.resultOrbit) this.cameraYaw = clamp(this.cameraYaw, -0.18, 0.18);
       this.cameraPointerX = event.clientX; this.cameraPointerY = event.clientY;
     });
     const releaseCamera = (event: PointerEvent) => {
@@ -1910,7 +1912,9 @@ export class SceneView {
       this.controls.update();
     } else {
       this.cameraYaw -= yaw;
-      this.cameraPitch = clamp(this.cameraPitch - pitch, -1.35, 1.35);
+      const limit = this.view === 'locked' && !this.resultOrbit ? 0.12 : 1.35;
+      this.cameraPitch = clamp(this.cameraPitch - pitch, -limit, limit);
+      if (this.view === 'locked' && !this.resultOrbit) this.cameraYaw = clamp(this.cameraYaw, -0.18, 0.18);
     }
   }
 
@@ -3390,14 +3394,22 @@ export class SceneView {
     if (this.width !== previousWidth || this.height !== previousHeight) this.renderer.setSize(this.width, this.height, false);
   }
 
-  /** Project native SVG at viewport resolution from a body-fixed 1.2 x 0.8 m plane. */
+  /** Project native SVG from the pilot's body-fixed plane or the locked camera's instrument plane. */
   pilotHud(pitch: number, roll: number): PilotHudFrame | null {
-    if (!this.simulation || this.view !== 'pilot' || this.simulation.ended) return null;
+    if (!this.simulation || !['pilot', 'locked'].includes(this.view) || this.simulation.ended) return null;
     this.body.updateWorldMatrix(true, false);
     this.camera.updateMatrixWorld();
     this.hudMatrix.set(0, 0, 0, this.definition.cockpit.position + 2.79,
       0, -0.002, 0, 0.72, 0.002, 0, 0, -0.6, 0, 0, 0, 1);
-    this.hudMatrix.premultiply(this.body.matrixWorld).premultiply(this.camera.matrixWorldInverse).premultiply(this.camera.projectionMatrix);
+    if (this.view === 'locked') {
+      // A restrained camera-space instrument plane; body-axis load response
+      // shifts it independently of the gently delayed tracking camera.
+      const scale = Math.min(1, this.width / this.height * 1.2);
+      this.hudMatrix.set(0.002 * scale, 0, 0, -0.6 * scale + this.headOffset.z * 0.4,
+        0, -0.002 * scale, 0, 0.4 * scale + this.headOffset.y * 0.4,
+        0, 0, 0, -2 + this.headOffset.x * 0.4, 0, 0, 0, 1);
+    } else this.hudMatrix.premultiply(this.body.matrixWorld).premultiply(this.camera.matrixWorldInverse);
+    this.hudMatrix.premultiply(this.camera.projectionMatrix);
     const e = this.hudMatrix.elements;
     // Hide the panel if any corner crosses the camera's near plane.
     for (const x of [0, 600]) for (const y of [0, 400]) if (e[3] * x + e[7] * y + e[15] <= 0.1) return null;
@@ -3502,13 +3514,22 @@ export class SceneView {
     const sim = this.simulation;
     if (!sim) return;
     const pilot = this.view === 'pilot';
+    if (pilot || this.view === 'locked') {
+      const headDt = Math.max(0, Math.min(0.1, sim.elapsedTime - this.headTime));
+      this.headTime = sim.elapsedTime;
+      this.vector.copy(sim.telemetry.specificForce ?? this.vector.copy(sim.telemetry.force).divideScalar(sim.mass)).applyQuaternion(this.headInverse.copy(this.aircraft.quaternion).invert());
+      this.vector.y -= 9.81;
+      this.vector.multiplyScalar(-0.0018).clampScalar(-0.06, 0.06);
+      if (this.reducedMotion) this.headOffset.set(0, 0, 0);
+      else this.headOffset.lerp(this.vector, 1 - Math.exp(-headDt * 8));
+    }
     if (this.view === 'chase' || this.view === 'locked') {
       this.vector.set(1, 0, 0).applyQuaternion(this.aircraft.quaternion);
       this.vector2.copy(UP).applyQuaternion(this.aircraft.quaternion);
       const distance = Math.max(23, this.definition.mainWing.points[1].y * 1.8 / Math.max(0.65, this.width / this.height));
       this.desiredPosition.copy(this.aircraft.position).addScaledVector(this.vector, -distance).addScaledVector(this.vector2, distance * 0.065);
       this.desiredTarget.copy(this.aircraft.position).addScaledVector(this.vector, 6).add(this.vector2);
-      const blend = immediate || this.view === 'locked' || this.reducedMotion ? 1 : 1 - Math.exp(-dt * 3.5);
+      const blend = immediate || this.reducedMotion ? 1 : 1 - Math.exp(-dt * (this.view === 'locked' ? 12 : 3.5));
       this.camera.position.lerp(this.desiredPosition, blend);
       this.target.lerp(this.desiredTarget, blend);
       this.camera.up.lerp(this.vector2, blend).normalize();
@@ -3516,13 +3537,6 @@ export class SceneView {
       return;
     }
     if (pilot) {
-      const headDt = Math.max(0, Math.min(0.1, sim.elapsedTime - this.headTime));
-      this.headTime = sim.elapsedTime;
-      this.vector.copy(sim.telemetry.force).divideScalar(sim.mass).applyQuaternion(this.headInverse.copy(this.aircraft.quaternion).invert());
-      this.vector.y -= 9.81;
-      this.vector.multiplyScalar(-0.0018).clampScalar(-0.06, 0.06);
-      if (this.reducedMotion) this.headOffset.set(0, 0, 0);
-      else this.headOffset.lerp(this.vector, 1 - Math.exp(-headDt * 8));
       this.desiredPosition.set(this.definition.cockpit.position + 0.79, 0.32, 0).add(this.headOffset);
       this.desiredTarget.copy(this.desiredPosition).add(this.vector.set(35, 0, 0));
     } else if (this.view === 'flight-side' || this.view === 'side-flight') {
@@ -3546,7 +3560,7 @@ export class SceneView {
   private updateCameraInteraction(dt: number): void {
     // Editing disables OrbitControls; do not mistake that for a flight camera orbit.
     if (!this.simulation || this.editorPointerId >= 0) return;
-    if ((this.view === 'free' || this.view === 'locked') && !this.resultOrbit) return;
+    if (this.view === 'free' && !this.resultOrbit) return;
     const returning = !this.cameraDragging && this.elapsed - this.cameraReleasedAt > 3;
     const blend = 1 - Math.exp(-dt * 0.35);
     if (this.controls.enabled) {

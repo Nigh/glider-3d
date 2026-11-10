@@ -22,6 +22,8 @@ export const PLATFORM = { thickness: 0.6, width: 13, slotWidth: 0.6, slotDepth: 
 const PLATFORM_COS = Math.cos(LAUNCH.slope), PLATFORM_SIN = Math.sin(LAUNCH.slope);
 const CONTACT_SLOTS = 5; // three launcher boxes, terrain, ruin
 const CONTACT_TOLERANCE = 2e-6;
+// Dry sliding contact of airframe/wing skin against ground, not rail rolling resistance.
+export const GROUND_FRICTION = 0.35;
 const PLATFORM_NORMALS = [
   new Vector3(-PLATFORM_COS, PLATFORM_SIN, 0), new Vector3(PLATFORM_COS, -PLATFORM_SIN, 0),
   new Vector3(-PLATFORM_SIN, -PLATFORM_COS, 0), new Vector3(PLATFORM_SIN, PLATFORM_COS, 0),
@@ -188,6 +190,8 @@ export interface FlightResult {
 export interface FlightTelemetry {
   /** Proper acceleration magnitude at the CG, including launch/support loads; 1 G at rest. */
   gForce: number;
+  /** World-axis proper acceleration, including gravity-balanced support and impacts. */
+  specificForce: Vector3;
   speed: number; altitude: number; distance: number;
   alpha: number; pitch: number; roll: number; sink: number; glide: number;
   stall: boolean; physicsMs: number; cg: Vector3; mass: number;
@@ -504,8 +508,12 @@ function evaluateSurface(surface: AerodynamicSurface, input: Controls, mainDownw
   // 按全来流速度缩放，纯展向来流连续归零；叉积保证升力始终与局部来流正交。
   liftDirection.crossVectors(surface.normal, surface.chordDirection);
   liftDirection.crossVectors(velocity, liftDirection).multiplyScalar(speed > 1e-9 ? 1 / speed : 0);
-  // 型阻仍使用全来流动压；诱导阻力与产生升力的有效动压一致。
-  const dragPressure = coefficient.profileCd * speed * speed + pressureSpeedSq * (coefficient.cd - coefficient.profileCd);
+  // At pure spanwise flow alpha is undefined. Weight its profile drag by the
+  // chord/normal dynamic pressure, blending into a finite skin-drag proxy for
+  // the remaining spanwise flow. Otherwise a tumbling strip can jump between
+  // attached and reverse-flow Cd at virtually identical velocity.
+  const spanwiseCd = 0.012 / clamp(speed * surface.chord / AIR_VISCOSITY / 500_000, 0.05, 1) ** 0.75;
+  const dragPressure = coefficient.cd * pressureSpeedSq + spanwiseCd * Math.max(0, speed * speed - pressureSpeedSq);
   surface.drag.copy(velocity).multiplyScalar(speed > 1e-9 ? -0.5 * AIR_DENSITY * surface.area * dragPressure / speed : 0);
   surface.force.copy(liftDirection).multiplyScalar(lift).add(surface.drag);
   // 下洗需要全来流动压下的等效 CL，而非后掠法向截面的 CL。
@@ -862,6 +870,10 @@ export class FlightSimulation {
   private readonly platformFaces: Int8Array;
   private readonly platformGaps: Float64Array;
   private readonly platformImpulses: Float64Array;
+  private readonly platformFriction: Vector3[];
+  private readonly frictionDirection = new Vector3();
+  private readonly frictionDelta = new Vector3();
+  private readonly frictionAxis = new Vector3();
   private readonly platformAxes: Vector3[];
   private readonly groundNormals: Vector3[];
   private readonly platformActive: Int32Array;
@@ -953,6 +965,7 @@ export class FlightSimulation {
     this.platformFaces = new Int8Array(contactCount);
     this.platformGaps = new Float64Array(contactCount);
     this.platformImpulses = new Float64Array(contactCount);
+    this.platformFriction = Array.from({ length: contactCount }, () => new Vector3());
     this.groundNormals = Array.from({ length: contactCount }, () => new Vector3());
     this.platformAxes = Array.from({ length: contactCount }, () => new Vector3());
     this.platformActive = new Int32Array(contactCount);
@@ -960,7 +973,7 @@ export class FlightSimulation {
     this.launchCg.copy(this.aircraft.cg);
     evaluateReference(this.aircraft);
     this.telemetry = { gForce: 1, speed: 10, altitude: 10, distance: 0, alpha: 0, pitch: 0, roll: 0, sink: 0, glide: 0,
-      stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), drag: new Vector3(), torque: new Vector3(),
+      stall: false, physicsMs: 0, cg: this.aircraft.cg, mass: 0, force: new Vector3(), specificForce: new Vector3(), drag: new Vector3(), torque: new Vector3(),
       aeroPower: 0, energy: 0, staticMargin: 0, energyPerDistance: null, potentialEnergy: 0, kineticEnergy: 0,
       dissipatedEnergy: 0, initialEnergy: 0, liftDragRatio: 0, aerodynamics: this.aerodynamics,
       challengeProgress: 0, groundClearance: 0, score: 0, completed: false, timingStarted: false, controlWork: 0,
@@ -1030,6 +1043,7 @@ export class FlightSimulation {
     // 此处只恢复静载形状，断裂仍在接受物理步时提交。
     this.supportForce.set(0, this.mass * GRAVITY, 0);
     this.telemetry.gForce = 1;
+    this.telemetry.specificForce.set(0, GRAVITY, 0);
     this.supportTorque.set(0, 0, 0);
     this.structure.update(this, this.supportForce, this.supportTorque);
     this.structure.summarize();
@@ -1172,7 +1186,7 @@ export class FlightSimulation {
   checkpoint(): FlightSimulation {
     const seen = new Map<object, object>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, this.definition], [this.keyframes, this.keyframes]]);
     // Contact solver workspaces are rebuilt before every use; synchronous steps may share them.
-    for (const buffer of [this.platformFaces, this.platformGaps, this.platformImpulses, this.platformAxes, this.groundNormals, this.platformActive]) seen.set(buffer, buffer);
+    for (const buffer of [this.platformFaces, this.platformGaps, this.platformImpulses, this.platformFriction, this.platformAxes, this.groundNormals, this.platformActive]) seen.set(buffer, buffer);
     if (this.replay) seen.set(this.replay, this.replay);
     let bytes = 0;
     const copy = (value: unknown): unknown => {
@@ -1798,10 +1812,18 @@ export class FlightSimulation {
       const index = this.platformActive[i], normal = this.groundNormals[index];
       const contactSpeed = normal.dot(this.midpointVelocity) + this.platformAxes[index].dot(this.midpointOmega);
       this.telemetry.dissipatedEnergy -= 2 * this.platformImpulses[index] * contactSpeed;
+      const friction = this.platformFriction[index];
+      this.arm.copy(this.contacts[Math.floor(index / CONTACT_SLOTS)]).sub(this.aircraft.cg);
+      this.cross.crossVectors(this.midpointOmega, this.arm).applyQuaternion(this.midpointQuaternion);
+      const halfAngle = this.midpointOmega.length() * dt / 2;
+      const sinc = halfAngle > 1e-8 ? Math.sin(halfAngle) / halfAngle : 1 - halfAngle ** 2 / 6;
+      this.telemetry.dissipatedEnergy -= 2 * (friction.dot(this.midpointVelocity) + sinc * friction.dot(this.cross));
       if (!onRail) {
         this.contactNormal.copy(normal).applyQuaternion(this.inverse.copy(this.midpointQuaternion).invert());
         // The constraint solves a half-step velocity; its full-step impulse is 2J.
         this.addWingContactImpulse(index, this.contactNormal, 2 * this.platformImpulses[index]);
+        this.contactNormal.copy(friction).applyQuaternion(this.inverse);
+        this.addWingContactImpulse(index, this.contactNormal, 2);
       }
     }
     if (onRail) {
@@ -1863,6 +1885,7 @@ export class FlightSimulation {
   private advanceStructure(dt: number, force: Vector3, torque: Vector3) {
     // Measure before fracturing can change the mass represented by this force.
     this.telemetry.gForce = force.length() / (this.mass * GRAVITY);
+    this.telemetry.specificForce.copy(force).divideScalar(this.mass);
     this.maxG = Math.max(this.maxG, this.telemetry.gForce);
     // 仅接受步提交形变和拓扑；已有片先积分，刚产生的片不重复推进本步。
     const fragmentCount = this.fragments.length;
@@ -2115,7 +2138,8 @@ export class FlightSimulation {
     if (this.fragmentCollision(fragment, fragment.position, fragment.quaternion)) { this.stopFragment(fragment); return; }
     fragment.midpointVelocity.copy(fragment.velocity); fragment.midpointOmega.copy(fragment.omega);
     let converged = false;
-    for (let iteration = 0; iteration < 40; iteration++) {
+    let previousResidual = Infinity, relaxation = 1;
+    for (let iteration = 0; iteration < 80; iteration++) {
       fragment.midpointQuaternion.copy(fragment.quaternion);
       const angle = fragment.midpointOmega.length() * dt / 2;
       if (angle > 0) {
@@ -2132,8 +2156,14 @@ export class FlightSimulation {
       fragment.candidateOmega.copy(fragment.omega).addScaledVector(this.angularAcceleration, dt / 2);
       const residual = fragment.candidateVelocity.distanceToSquared(fragment.midpointVelocity) + fragment.candidateOmega.distanceToSquared(fragment.midpointOmega);
       if (!Number.isFinite(residual)) break;
-      if (residual <= 1e-28 * (1 + fragment.midpointVelocity.lengthSq() + fragment.midpointOmega.lengthSq())) { converged = true; break; }
-      fragment.midpointVelocity.copy(fragment.candidateVelocity); fragment.midpointOmega.copy(fragment.candidateOmega);
+      // Small independent strips can have stiff rotational aero response. Damp
+      // an oscillating fixed-point iteration, retaining the same midpoint
+      // equations and work accounting. A relative 1e-12 velocity tolerance
+      // avoids recursively subdividing at floating-point noise near equilibrium.
+      if (residual <= 1e-24 * (1 + fragment.midpointVelocity.lengthSq() + fragment.midpointOmega.lengthSq())) { converged = true; break; }
+      if (residual > previousResidual * 0.9) relaxation = 0.5;
+      previousResidual = residual;
+      fragment.midpointVelocity.lerp(fragment.candidateVelocity, relaxation); fragment.midpointOmega.lerp(fragment.candidateOmega, relaxation);
     }
     const angle = fragment.midpointOmega.length() * dt;
     if (!converged || angle > 0.1) {
@@ -2238,10 +2268,41 @@ export class FlightSimulation {
     load.moment.addScaledVector(this.localDrag.crossVectors(point, localNormal), impulse);
   }
 
-  /** 无摩擦、完全非弹性冲量；每次冲量的动能损失直接进入耗散账本。 */
+  /** Project the tangential impulse onto the Coulomb disk. Returns exact impact work. */
+  private solveContactFriction(index: number, velocity: Vector3, omega: Vector3, orientation: Quaternion, limit: number, sinc = 1) {
+    const normal = this.groundNormals[index], accumulated = this.platformFriction[index];
+    this.inverse.copy(orientation).invert();
+    this.arm.copy(this.contacts[Math.floor(index / CONTACT_SLOTS)]).sub(this.aircraft.cg);
+    this.frictionDirection.crossVectors(omega, this.arm).applyQuaternion(orientation).multiplyScalar(sinc).add(velocity);
+    this.frictionDirection.addScaledVector(normal, -this.frictionDirection.dot(normal));
+    const speed = this.frictionDirection.length();
+    this.frictionDelta.copy(accumulated);
+    if (speed > 1e-12) {
+      this.frictionDirection.multiplyScalar(1 / speed);
+      this.contactNormal.copy(this.frictionDirection).applyQuaternion(this.inverse);
+      this.frictionAxis.crossVectors(this.arm, this.contactNormal).multiplyScalar(sinc);
+      this.angularAcceleration.copy(this.frictionAxis).applyMatrix3(this.inverseInertia);
+      const inverseMass = 1 / this.mass + this.frictionAxis.dot(this.angularAcceleration);
+      accumulated.addScaledVector(this.frictionDirection, -speed / inverseMass);
+    }
+    accumulated.clampLength(0, limit);
+    this.frictionDelta.subVectors(accumulated, this.frictionDelta);
+    this.contactNormal.copy(this.frictionDelta).applyQuaternion(this.inverse);
+    this.frictionAxis.crossVectors(this.arm, this.contactNormal).multiplyScalar(sinc);
+    this.angularAcceleration.copy(this.frictionAxis).applyMatrix3(this.inverseInertia);
+    const work = this.frictionDelta.dot(velocity) + this.frictionAxis.dot(omega)
+      + (this.frictionDelta.lengthSq() / this.mass + this.frictionAxis.dot(this.angularAcceleration)) / 2;
+    velocity.addScaledVector(this.frictionDelta, 1 / this.mass); omega.add(this.angularAcceleration);
+    return work;
+  }
+
+  /** Inelastic normal impact and bounded dry friction; each impulse records its actual work. */
   private resolvePlatformImpact(initial = false) {
     const mass = this.aircraft.mass;
     this.inverse.copy(this.quaternion).invert();
+    for (let i = 0; i < this.platformCount; i++) {
+      const index = this.platformActive[i]; this.platformImpulses[index] = 0; this.platformFriction[index].set(0, 0, 0);
+    }
     for (let iteration = 0; iteration < 32; iteration++) {
       let closing = false;
       for (let i = 0; i < this.platformCount; i++) {
@@ -2265,9 +2326,20 @@ export class FlightSimulation {
           this.finalImpactTorque.addScaledVector(this.cross, impulse);
         }
         this.telemetry.dissipatedEnergy += -(impulse * speed + 0.5 * impulse ** 2 * inverseMass);
+        this.platformImpulses[index] += impulse;
+        this.telemetry.dissipatedEnergy -= this.solveContactFriction(index, this.velocity, this.omega, this.quaternion, GROUND_FRICTION * this.platformImpulses[index]);
+        this.addWingContactImpulse(index, this.contactNormal, 1, true);
+        const impactForce = initial ? this.initialImpactImpulse : this.finalImpactImpulse;
+        const impactTorque = initial ? this.initialImpactTorque : this.finalImpactTorque;
+        impactForce.add(this.frictionDelta); impactTorque.add(this.frictionAxis);
         closing = true;
       }
       if (!closing) break;
+    }
+    // Impacts have already been committed. Midpoint/rail work must not count
+    // their temporary impulse budgets a second time.
+    for (let i = 0; i < this.platformCount; i++) {
+      const index = this.platformActive[i]; this.platformImpulses[index] = 0; this.platformFriction[index].set(0, 0, 0);
     }
   }
 
@@ -2284,6 +2356,7 @@ export class FlightSimulation {
       this.contactNormal.copy(this.groundNormals[index]).applyQuaternion(this.inverse);
       this.platformAxes[index].crossVectors(this.arm, this.contactNormal).multiplyScalar(sinc);
       this.platformImpulses[index] = 0;
+      this.platformFriction[index].set(0, 0, 0);
     }
     for (let iteration = 0; iteration < 128; iteration++) {
       let change = 0;
@@ -2299,6 +2372,8 @@ export class FlightSimulation {
         this.candidateVelocity.addScaledVector(normal, delta / mass);
         this.candidateOmega.addScaledVector(this.angularAcceleration, delta);
         change = Math.max(change, Math.abs(delta));
+        this.solveContactFriction(index, this.candidateVelocity, this.candidateOmega, this.midpointQuaternion, GROUND_FRICTION * impulse, sinc);
+        change = Math.max(change, this.frictionDelta.length());
       }
       if (change < 1e-12) break;
     }
@@ -2642,7 +2717,7 @@ export class FlightSimulation {
 
 // Snapshots are deltas against a trusted constructor graph. Static geometry and
 // untouched scratch buffers cost no file space; aliases and every changed value survive.
-const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount'];
+const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformFriction', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount'];
 const unsafeSnapshotKeys = ['__proto__', 'prototype', 'constructor'];
 type StateRecord = Record<string, unknown>;
 // Object traversal needs indexed access, after runtime object checks.

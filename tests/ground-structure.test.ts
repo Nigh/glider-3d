@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { clone, presets } from '../src/model';
-import { FlightSimulation, GRAVITY } from '../src/physics';
+import { FlightSimulation, GRAVITY, GROUND_FRICTION } from '../src/physics';
 import * as challenges from '../src/challenges';
 import { cacheFlight, cacheRecording, seekReplay } from '../src/playback';
 
@@ -23,6 +23,38 @@ function grazing(downward = 0.3, weak = false) {
   sim.position.y = 20 - Math.min(...contacts.map(point => point.clone().sub(sim.cg).applyQuaternion(sim.quaternion).y));
   return sim;
 }
+
+it('ground friction opposes sliding and accounts for its work without injecting energy', () => {
+  vi.spyOn(challenges, 'challengeTerrainHeight').mockReturnValue(20);
+  for (const direction of [new Vector3(8, 0, 0), new Vector3(0, 0, -8)]) {
+    const sim = grazing(0); sim.velocity.copy(direction);
+    const free = sim.checkpoint(); free.position.y += 100;
+    (sim as any).updateTelemetry();
+    const initial = sim.telemetry.energy;
+    const friction = vi.spyOn(sim as any, 'solveContactFriction');
+    for (let frame = 0; frame < 10; frame++) { sim.step({ ...neutral, throttle: 0 }); free.step({ ...neutral, throttle: 0 }); }
+    expect(sim.ended).toBe(false);
+    // A wingtip only supports part of the weight while the body rolls toward
+    // the ground; compare with the same aerodynamic motion in free air.
+    expect(sim.velocity.dot(direction.clone().normalize())).toBeLessThan(free.velocity.dot(direction.clone().normalize()) - 0.01);
+    expect(friction.mock.calls.some(call => Number(call[4]) > 0)).toBe(true);
+    expect(GROUND_FRICTION).toBeGreaterThan(0);
+    const t = sim.telemetry;
+    expect(t.dissipatedEnergy).toBeGreaterThan(0);
+    expect(t.energy + t.dissipatedEnergy - t.propulsionWork - t.controlWork - t.waterWork + t.fuelEnergyRemoved).toBeCloseTo(initial, 5);
+  }
+});
+
+it('gravity rolls a banked aircraft about its grounded wing instead of freezing its attitude', () => {
+  vi.spyOn(challenges, 'challengeTerrainHeight').mockReturnValue(20);
+  const sim = grazing(0); sim.velocity.set(0, 0, 0);
+  const initial = sim.quaternion.clone();
+  for (let frame = 0; frame < 12; frame++) sim.step({ ...neutral, throttle: 0 });
+  expect(sim.ended).toBe(false);
+  expect(sim.quaternion.angleTo(initial)).toBeGreaterThan(0.005);
+  expect(sim.omega.x).toBeLessThan(-0.01);
+  expect(sim.structure.sections.some(s => s.load.y < -0.01)).toBe(true);
+});
 
 it('transmits the actual contact force and chordwise moment through only the contacted strip and inboard joints', () => {
   for (const fraction of [0, 0.5, 1]) {

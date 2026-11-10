@@ -14,6 +14,8 @@ function pilotView() {
     headOffset: new Vector3(), headInverse: new Quaternion(), headTime: 0,
     desiredPosition: new Vector3(), desiredTarget: new Vector3(), target: new Vector3(),
     vector: new Vector3(), vector2: new Vector3(), controls: { enabled: false }, followInitialized: false,
+    followPosition: new Vector3(), followTarget: new Vector3(),
+    cameraYaw: 0, cameraPitch: 0,
   });
 }
 function affine(transform: string): number[] {
@@ -44,6 +46,35 @@ it('keeps HUD in aircraft coordinates while head turns and translates', () => {
   expect(anchor(view.pilotHud(0, 0).clearance).distanceTo(turned)).toBeLessThan(1e-8);
   view.camera.rotateY(Math.PI);
   expect(view.pilotHud(0, 0)).toBeNull();
+});
+
+it('locked view adds brief tracking lag, a bounded load-sensitive HUD and limited look offsets', () => {
+  const view = pilotView(); view.view = 'locked'; view.camera.up.set(0, 1, 0);
+  view.followCamera(1 / 60, true);
+  const start = view.camera.position.clone();
+  view.aircraft.position.x += 12;
+  view.followCamera(1 / 60, false);
+  expect(view.camera.position.x).toBeGreaterThan(start.x);
+  expect(view.camera.position.x).toBeLessThan(start.x + 12);
+  for (let frame = 0; frame < 60; frame++) view.followCamera(1 / 60, false);
+  expect(view.camera.position.x).toBeCloseTo(start.x + 12, 3);
+  const neutral = view.pilotHud(0, 0);
+  expect(neutral).not.toBeNull();
+  // Supported/impact loads are not present in the aerodynamic force alone.
+  view.simulation.telemetry.specificForce = new Vector3(100, 200, -100);
+  for (let frame = 0; frame < 60; frame++) { view.simulation.elapsedTime += 1 / 60; view.followCamera(1 / 60, false); }
+  const loaded = view.pilotHud(0, 0);
+  expect(loaded.marker).not.toBe(neutral.marker);
+  expect(anchor(loaded.speed).distanceTo(anchor(neutral.speed))).toBeGreaterThan(1);
+  expect(anchor(loaded.speed).distanceTo(anchor(neutral.speed))).toBeLessThan(25);
+  view.lookInput(100, 100, 1);
+  expect(Math.abs(view.cameraYaw)).toBeLessThanOrEqual(0.18);
+  expect(Math.abs(view.cameraPitch)).toBeLessThanOrEqual(0.12);
+  const frozen = view.headOffset.clone();
+  view.followCamera(1 / 60, false);
+  expect(view.headOffset.toArray()).toEqual(frozen.toArray());
+  view.reducedMotion = true; view.followCamera(1 / 60, false);
+  expect(view.headOffset.length()).toBe(0);
 });
 
 

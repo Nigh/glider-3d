@@ -348,19 +348,19 @@ function flightCameraView() {
   aircraft.position.set(100, 500, 30);
   return Object.assign(Object.create(SceneView.prototype), {
     aircraft, camera, perspective: camera, orthographic: new OrthographicCamera(), definition: defaultAircraft,
-    simulation: { ended: false }, controls: { enabled: false, target: new Vector3(), update() {} },
+    simulation: { ended: false, elapsedTime: 0, mass: 100, telemetry: { force: new Vector3(0, 981, 0) } }, controls: { enabled: false, target: new Vector3(), update() {} },
     desiredPosition: new Vector3(), desiredTarget: new Vector3(), target: new Vector3(),
     vector: new Vector3(), vector2: new Vector3(), cameraHome: new Vector3(), targetHome: new Vector3(),
     followPosition: new Vector3(), followTarget: new Vector3(), followInitialized: false,
     cameraYaw: 0, cameraPitch: 0, cameraPointer: -1, cameraDragging: false, cameraReleasedAt: -Infinity,
     view: 'chase', width: 1440, height: 900, editorPointerId: -1, elapsed: 10, resultOrbit: false,
     cameraClearanceOffset: new Vector3(), cameraClearanceOrigin: new Vector3(), cameraClearancePoint: new Vector3(),
-    designOrbitRotation: new Quaternion(), renderCG: new Vector3(), headOffset: new Vector3(), headInverse: new Quaternion(),
+    designOrbitRotation: new Quaternion(), renderCG: new Vector3(), headOffset: new Vector3(), headInverse: new Quaternion(), headTime: 0,
     resize() {}, refreshControlsUp() {}, surfaceHeight() { return 0; },
   });
 }
 
-it('锁定与追尾初始位置相同，严格跟随且不响应拖动，碰撞推挤仍有界', () => {
+it('锁定与追尾初始位置相同，短暂迟滞后收敛并允许小幅拖动，碰撞推挤仍有界', () => {
   const view = flightCameraView();
   view.cameraView('追尾');
   const position = view.camera.position.clone(), rotation = view.camera.quaternion.clone();
@@ -375,17 +375,22 @@ it('锁定与追尾初始位置相同，严格跟随且不响应拖动，碰撞�
     view.aircraft.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), pitch)
       .multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), roll));
     view.followCamera(1 / 240, false);
-    expect(view.camera.position.distanceTo(view.desiredPosition)).toBeLessThan(1e-10);
-    expect(view.target.distanceTo(view.desiredTarget)).toBeLessThan(1e-10);
-    expect(view.camera.up.distanceTo(new Vector3(0, 1, 0).applyQuaternion(view.aircraft.quaternion))).toBeLessThan(1e-10);
+    expect(view.camera.position.distanceTo(view.desiredPosition)).toBeGreaterThan(0.001);
+    view.cameraYaw = view.cameraPitch = 0;
+    for (let frame = 0; frame < 240; frame++) { view.updateCameraInteraction(1 / 240); view.followCamera(1 / 240, false); }
+    expect(view.camera.position.distanceTo(view.desiredPosition)).toBeLessThan(0.001);
+    expect(view.target.distanceTo(view.desiredTarget)).toBeLessThan(0.001);
+    expect(view.camera.up.distanceTo(new Vector3(0, 1, 0).applyQuaternion(view.aircraft.quaternion))).toBeLessThan(0.001);
     const lockedPosition = view.camera.position.clone();
-    view.cameraYaw = 0.8; view.cameraPitch = 0.4;
+    view.lookInput(0.1, 0.1, 1);
     view.updateCameraInteraction(1);
+    expect(view.camera.position.distanceTo(lockedPosition)).toBeGreaterThan(0.1);
+    const dragged = view.camera.position.clone();
     view.surfaceHeight = () => 1000;
     view.constrainCamera();
-    expect(view.camera.position.distanceTo(lockedPosition)).toBeCloseTo(8, 10);
+    expect(view.camera.position.distanceTo(dragged)).toBeCloseTo(8, 10);
     view.restoreCameraClearance();
-    expect(view.camera.position.distanceTo(lockedPosition)).toBeLessThan(1e-10);
+    expect(view.camera.position.distanceTo(dragged)).toBeLessThan(1e-10);
   }
   view.surfaceHeight = () => 0;
   view.cameraView('自由');

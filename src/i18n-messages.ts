@@ -63,7 +63,7 @@ export const messages: Record<string, readonly [string, string]> = {
  "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · X 鼠标操纵 · C 镜头 · Space 开始/暂停": ["W / S pitch · A / D roll · Q / E yaw · X mouse stick · C camera · Space start/pause", "W / S ピッチ · A / D ロール · Q / E ヨー · X マウス操縦 · C カメラ · Space 開始/一時停止"],
  "航迹滑翔比": ["Flight path glide ratio", "飛行経路滑空比"],
  "本次飞行翼面峰值": ["Wing load peaks this flight", "今回の飛行の翼面最大負荷"],
- "50% 中立 · 鼠标吸附中点 · 快捷键每格 5%": ["50% neutral · Mouse snaps to center · Keys step 5%", "50%で中立 · マウスは中央に吸着 · キーは5%刻み"],
+ "50% 中立 · 鼠标吸附中点 · 快捷键每格 1% · 长按连续调节": ["50% neutral · Mouse snaps to center · Keys step 1% · Hold to repeat", "50%で中立 · マウスは中央に吸着 · キーは1%刻み · 長押しで連続調整"],
  "副翼配平": ["Roll trim", "ロールトリム"],
  "升降舵配平": ["Pitch trim", "ピッチトリム"],
  "配平控制": ["Trim controls", "トリム操作"],
@@ -1897,9 +1897,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Locked",
   "固定"
  ],
- "C 键切换视角 · 锁定视角不可拖动 · 自由视角拖动环绕、滚轮缩放，不自动回中": [
-  "C to change view · Locked view cannot be dragged · Free view: drag to orbit, scroll to zoom, no automatic recentering",
-  "Cで視点切替 · 固定視点はドラッグ不可 · 自由視点：ドラッグで旋回、ホイールでズーム、自動復帰なし"
+ "C 键切换视角 · 锁定视角可小幅拖动 · 回放支持全部视角": [
+  "C to change view · Drag slightly in locked view · All views available in replay",
+  "Cで視点切替 · 固定視点も小範囲でドラッグ可能 · リプレイでは全視点を選択可能"
  ],
  "重心操纵输入": [
   "Pitch / weight-shift input",

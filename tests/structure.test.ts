@@ -293,6 +293,22 @@ describe('分段等效弹性梁', () => {
 });
 
 describe('真实超载、独立断片和完整能量账本', () => {
+  it('splits every overloaded segment joint in one accepted step instead of retaining a folded wing chain', () => {
+    const simulation = airborne();
+    simulation.step(neutral, 1e-4);
+    const chain = simulation.structure.sections.filter(s => s.wingKey === 'mainWing' && s.side === 1);
+    const overloaded = chain.filter(s => s.stressRatio >= 1);
+    expect(overloaded.length).toBeGreaterThan(3);
+    expect(new Set(overloaded.map(s => s.bodyId)).size).toBe(overloaded.length);
+    expect(overloaded.every(s => s.bodyId !== 0)).toBe(true);
+    expect(simulation.fragments.some(f => simulation.structure.sections.filter(s => s.bodyId === f.id).length === 1)).toBe(true);
+    const count = simulation.structure.fractureCount;
+    // A detached one-strip body has no internal joint to break repeatedly.
+    for (const fragment of simulation.fragments) {
+      if (simulation.structure.sections.filter(s => s.bodyId === fragment.id).length === 1) expect(simulation.structure.fractureCandidates(fragment.id)).toHaveLength(0);
+    }
+    expect(simulation.structure.fractureCount).toBe(count);
+  });
   it('高动压通过公开step断开三类翼面，主体继续，质量/全张量动能不丢失', () => {
     const simulation = airborne(), mass = simulation.mass, initial = energy(simulation), area = simulation.aircraft.wingArea;
     const momentum = simulation.velocity.clone().multiplyScalar(mass);
@@ -315,7 +331,9 @@ describe('真实超载、独立断片和完整能量账本', () => {
 
   it('非对称断裂保留非对角惯量，片体继续使用局部来流且可再次超载断裂', () => {
     const d = clone(defaultAircraft); d.mainWing.materialId = 'spruce';
-    const simulation = airborne(new Vector3(65, -18, 8), d);
+    // Moderate initial loading leaves a multi-strip fragment; higher loading
+    // now correctly breaks all its overloaded joints in the first step.
+    const simulation = airborne(new Vector3(20, -8, 8), d);
     simulation.omega.set(3, 0.2, -0.1);
     simulation.step(neutral, 1e-4);
     const fragment = simulation.fragments.find(body => simulation.structure.sections.filter(section => section.bodyId === body.id && section.wingKey === 'mainWing').length > 2);
