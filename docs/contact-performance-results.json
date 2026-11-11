@@ -1,122 +1,189 @@
 {
-  "node": "v24.19.0",
-  "platform": "win32",
-  "scenarios": "10 frames at 60 Hz, 24 m wing, one warmup and three measured trials",
+  "node": "v24.9.0",
+  "platform": "linux",
+  "scenarios": "1/6 s at fixed 60 Hz, 24 m wing, one warmup and three measured trials",
   "results": [
     {
-      "root": "65737ca",
+      "root": "/home/xianii/repos/glider-3d/",
       "scenarios": [
         {
           "name": "shallow-bank-breakup",
           "samplesMs": [
-            618.24,
-            967.18,
-            1004.2
+            68.64,
+            52.58,
+            54.48
           ],
-          "medianMs": 967.18,
+          "medianMs": 54.48,
+          "dt": 0.016666666666666666,
           "frames": 10,
+          "elapsed": 0.16666666666666666,
           "contacts": 3047,
-          "fragments": 26,
-          "energyError": 6.196869816952056E-15,
+          "fragments": 2,
+          "energyError": 1.0764555630024259e-15,
+          "maxPenetration": 0,
+          "elasticRotationValid": true,
+          "firstFracture": {
+            "time": 0.016666666666666666,
+            "sectionId": 1,
+            "wing": "mainWing",
+            "side": 1,
+            "span": 0,
+            "stress": 11.555598544097686,
+            "damage": 1,
+            "measurement": 2,
+            "previousBody": 0,
+            "bodyId": 1
+          },
+          "fractures": [
+            {
+              "time": 0.016666666666666666,
+              "sectionId": 1,
+              "wing": "mainWing",
+              "side": 1,
+              "span": 0,
+              "stress": 11.555598544097686,
+              "damage": 1,
+              "measurement": 2,
+              "previousBody": 0,
+              "bodyId": 1
+            },
+            {
+              "time": 0.016666666666666666,
+              "sectionId": 19,
+              "wing": "mainWing",
+              "side": 1,
+              "span": 7.199999999999999,
+              "stress": 2.8419035899691485,
+              "damage": 1,
+              "measurement": 4,
+              "previousBody": 1,
+              "bodyId": 2
+            }
+          ],
           "position": [
-            51.506793757359375,
-            58.18824217211007,
-            99.99629072502432
+            51.41332591080628,
+            57.77136380594999,
+            99.35735000512528
           ]
         },
         {
           "name": "banked-breakup",
           "samplesMs": [
-            799.96,
-            700.42,
-            755.95
+            49.28,
+            52.54,
+            52.99
           ],
-          "medianMs": 755.95,
+          "medianMs": 52.54,
+          "dt": 0.016666666666666666,
           "frames": 10,
+          "elapsed": 0.16666666666666666,
           "contacts": 3047,
-          "fragments": 27,
-          "energyError": 1.0201303870289485E-15,
+          "fragments": 3,
+          "energyError": 6.153342687256145e-16,
+          "maxPenetration": 0,
+          "elasticRotationValid": true,
+          "firstFracture": {
+            "time": 0.016666666666666666,
+            "sectionId": 1,
+            "wing": "mainWing",
+            "side": 1,
+            "span": 0,
+            "stress": 14.583900847078079,
+            "damage": 1,
+            "measurement": 2,
+            "previousBody": 0,
+            "bodyId": 1
+          },
+          "fractures": [
+            {
+              "time": 0.016666666666666666,
+              "sectionId": 1,
+              "wing": "mainWing",
+              "side": 1,
+              "span": 0,
+              "stress": 14.583900847078079,
+              "damage": 1,
+              "measurement": 2,
+              "previousBody": 0,
+              "bodyId": 1
+            },
+            {
+              "time": 0.016666666666666666,
+              "sectionId": 19,
+              "wing": "mainWing",
+              "side": 1,
+              "span": 7.199999999999999,
+              "stress": 3.26676869810222,
+              "damage": 1,
+              "measurement": 4,
+              "previousBody": 1,
+              "bodyId": 2
+            },
+            {
+              "time": 0.016666666666666666,
+              "sectionId": 25,
+              "wing": "mainWing",
+              "side": 1,
+              "span": 9.6,
+              "stress": 1.2774525529802985,
+              "damage": 1,
+              "measurement": 6,
+              "previousBody": 2,
+              "bodyId": 3
+            }
+          ],
           "position": [
-            51.49453942943714,
-            61.10404384055079,
-            100.01362930782192
+            51.409717711253656,
+            61.0030812625979,
+            99.41959594226486
           ]
         },
         {
           "name": "intact-supported-wing",
           "samplesMs": [
-            1000.19,
-            1202.6,
-            1045.11
+            124.8,
+            129.27,
+            122.21
           ],
-          "medianMs": 1045.11,
+          "medianMs": 124.8,
+          "dt": 0.016666666666666666,
           "frames": 10,
+          "elapsed": 0.16666666666666666,
           "contacts": 3047,
           "fragments": 0,
-          "energyError": 1.1788537245348627E-16,
+          "energyError": 1.1788537245348627e-16,
+          "maxPenetration": 0.0000019883625910210867,
+          "elasticRotationValid": true,
+          "firstFracture": null,
+          "fractures": [],
           "position": [
-            51.27692447305238,
-            56.4962673243714,
-            99.96552223167835
-          ]
-        }
-      ]
-    },
-    {
-      "root": "connected-tail-contact-v14",
-      "scenarios": [
-        {
-          "name": "shallow-bank-breakup",
-          "samplesMs": [
-            820.47,
-            815.29,
-            755.71
-          ],
-          "medianMs": 815.29,
-          "frames": 10,
-          "contacts": 3047,
-          "fragments": 26,
-          "energyError": 6.196869816952056E-15,
-          "position": [
-            51.506793757359375,
-            58.18824217211007,
-            99.99629072502432
+            51.276924472824746,
+            56.496267324821424,
+            99.96552223156314
           ]
         },
         {
-          "name": "banked-breakup",
+          "name": "intact-banked-wing",
           "samplesMs": [
-            572.23,
-            607.47,
-            545.66
+            126.68,
+            124.37,
+            122.85
           ],
-          "medianMs": 572.23,
+          "medianMs": 124.37,
+          "dt": 0.016666666666666666,
           "frames": 10,
-          "contacts": 3047,
-          "fragments": 27,
-          "energyError": 1.0201303870289485E-15,
-          "position": [
-            51.49453942943714,
-            61.10404384055079,
-            100.01362930782192
-          ]
-        },
-        {
-          "name": "intact-supported-wing",
-          "samplesMs": [
-            834.16,
-            703.27,
-            663.53
-          ],
-          "medianMs": 703.27,
-          "frames": 10,
+          "elapsed": 0.16666666666666666,
           "contacts": 3047,
           "fragments": 0,
-          "energyError": 1.1788537245348627E-16,
+          "energyError": 6.699808263382477e-16,
+          "maxPenetration": 0.000001998428729166335,
+          "elasticRotationValid": true,
+          "firstFracture": null,
+          "fractures": [],
           "position": [
-            51.27692447305238,
-            56.4962673243714,
-            99.96552223167835
+            51.25534971159503,
+            59.857482718835804,
+            99.95749093642893
           ]
         }
       ]

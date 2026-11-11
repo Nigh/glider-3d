@@ -53,7 +53,7 @@ it.each([true, false])('fin fracture preserves the actual tail support and rigid
  const mass = sim.mass, initial = energy(sim), momentum = sim.velocity.clone().multiplyScalar(mass);
  const world = sections.map(s => s.root.position.clone().sub(sim.cg).applyQuaternion(sim.quaternion).add(sim.position));
  const boundary = sections.filter(s => s.wingKey === 'verticalTail')[1];
- boundary.stressRatio = 2;
+ boundary.stressRatio = 2; boundary.fractureDamage = 1;
  (sim as any).commitFractures(sim);
  const fragment = sim.fragments.find(f => f.id === boundary.bodyId)!;
  expect(fragment).toBeDefined(); expect(fragment.id).not.toBe(0);
@@ -68,7 +68,7 @@ it.each([true, false])('fin fracture preserves the actual tail support and rigid
  }
  if (mounted) {
   // Horizontal roots remain real joints while their fin support is a fragment.
-  tails[0].stressRatio = 2;
+  tails[0].stressRatio = 2; tails[0].fractureDamage = 1;
   expect(sim.structure.fractureCandidates(fragment.id)).toContain(tails[0]);
   (sim as any).commitFractures(fragment);
   expect(tails[0].bodyId).not.toBe(fragment.id);
@@ -81,7 +81,7 @@ it.each([true, false])('fin fracture preserves the actual tail support and rigid
 
 it('a combined fin/tail fragment collides using its tail envelope and restores deterministically', () => {
  const sim = fixture();
- const fin = sim.structure.sections.find(s => s.wingKey === 'verticalTail')!; fin.stressRatio = 2;
+ const fin = sim.structure.sections.find(s => s.wingKey === 'verticalTail')!; fin.stressRatio = 2; fin.fractureDamage = 1;
  (sim as any).commitFractures(sim); (sim as any).syncContacts();
  const copy = sim.checkpoint();
  for (const s of [sim, copy]) {
@@ -113,4 +113,10 @@ it('a combined fin/tail fragment collides using its tail envelope and restores d
  const section = cycle.structure.sections.find(section => section.parentId !== null)!;
  section.parentId = section.id;
  expect(() => restoreReplayKeyframe(sim.definition, 'birdman', recording, captureReplayKeyframe(cycle, recording))).toThrow('回放关键帧状态无效');
+ for (const frozen of [false, true]) {
+  const folded = sim.checkpoint(), fin = folded.structure.sections.find(s => s.wingKey === 'verticalTail')!;
+  const rotation = frozen ? fin.baseTipRotation : fin.tip.quaternion;
+  rotation.setFromAxisAngle(new Vector3(1, 0, 0), 0.251);
+  expect(() => restoreReplayKeyframe(sim.definition, 'birdman', recording, captureReplayKeyframe(folded, recording))).toThrow('回放关键帧状态无效');
+ }
 });

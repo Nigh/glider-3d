@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// T 型尾翼支撑拓扑改变载荷与断裂行为，保留旧成绩但不混榜。
-export const PHYSICS_VERSION = 'connected-tail-contact-v14';
+// 固定60Hz与连续超限累积改变失效时序，保留旧成绩但不混榜。
+export const PHYSICS_VERSION = 'fixed60-accumulated-fracture-v16';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

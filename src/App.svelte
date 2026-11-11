@@ -17,6 +17,7 @@
  import InputReadout from './InputReadout.svelte';
  import { InputManager } from './input';
  import { trimStep, trimFromPointer } from './trim';
+ import { FixedGameClock } from './game-clock';
  import { energyCostScale } from './flight-chart';
  import { exportReplay, importReplay, MAX_REPLAY_BYTES, type Replay } from './replay';
  import { summarizeWingStructure } from './structure';
@@ -261,9 +262,29 @@ onMount(()=>{
  const unlock=()=>audio.unlock();
  const click=(e:MouseEvent)=>{const target=e.target instanceof Element?e.target:null;if(target?.closest('button:not(:disabled),summary')&&!target.closest('.flight-controls'))audio.ui('click');};
  document.addEventListener('pointerdown',unlock,true);document.addEventListener('keydown',unlock,true);document.addEventListener('click',click,true);
-const fixedDt=1/60;
-let previous=performance.now(),accumulator=0,lastInstruments=0,request=0;
- const visibility=()=>{clearControls();input.suspended=inputSettingsOpen||document.hidden||!document.hasFocus();previous=performance.now();accumulator=0;scene.captureFlightState();syncAudio();};
+const clock=new FixedGameClock();
+let previous=performance.now(),lastInstruments=0,request=0;
+ const visibility=()=>{clearControls();input.suspended=inputSettingsOpen||document.hidden||!document.hasFocus();previous=performance.now();clock.reset();scene.captureFlightState();syncAudio();};
+const stepFlight=(dt:number)=>{
+ const pitchInput=stickPointer!==null||stick?stickY:input.value('pitch');
+ const rollInput=stickPointer!==null||stick?stickX:input.value('roll');
+ controls.weight=lastDefinition.birdman?clamp(trimPitch+pitchInput,-1,1):0;
+ controls.lateral=lastDefinition.birdman?clamp(trimRoll+rollInput,-1,1):0;
+ controls.rudder=yawPointer!==null||yawInput!==0?yawInput:input.value('yaw');
+ controls.elevator=lastDefinition.birdman?0:clamp(pitchInput,-1,1);
+ controls.aileron=lastDefinition.birdman?0:clamp(rollInput,-1,1);
+ controls.throttle=throttle;controls.trimPitch=trimPitch;controls.trimRoll=trimRoll;
+ controls.autoTrim=autoTrim&&!lastDefinition.birdman;controls.adaptiveControls=adaptiveControls;
+ scene.captureFlightState();
+ const wasLaunching=simulation!.launching;
+ simulation!.step(controls,dt);if(isReplay&&activeReplay)cacheReplay(activeReplay,simulation!);else if(!isLaboratory(lastChallenge))cacheFlight(simulation!);flightElapsed=simulation!.elapsedTime;if(isReplay)replayPosition=flightElapsed;sampleFlight();
+ if(autoTrim&&!isReplay)trimPitch=simulation!.telemetry.trimPitch;
+ syncAudio();
+ if(lastChallenge!=='low-altitude'&&lastChallenge!=='wind-tunnel'&&wasLaunching&&!simulation!.launching)audio.release();
+ if(simulation!.ended){finish();return false;}
+ if(simulation!.replayFinished){paused=true;clearControls();notify('回放结束','success');return false;}
+ return true;
+};
 const tick=(now:number)=>{
   const elapsed=Math.min(Math.max((now-previous)/1000,0),0.1);previous=now;
   if(!document.hidden){
@@ -275,35 +296,13 @@ const tick=(now:number)=>{
      throttle=clamp(throttle+(input.value('throttleUp')-input.value('throttleDown'))*elapsed*0.35,0,1);
     }
     const running=screen==='flight'&&simulation&&flightReady&&!paused&&!seeking&&!inputSettingsOpen;
+    let alpha=1;
     if(running){
-      accumulator+=elapsed;
-      let steps=0;
-      while(accumulator>=fixedDt&&steps<5){
-        const pitchInput=stickPointer!==null||stick?stickY:input.value('pitch');
-        const rollInput=stickPointer!==null||stick?stickX:input.value('roll');
-        controls.weight=lastDefinition.birdman?clamp(trimPitch+pitchInput,-1,1):0;
-        controls.lateral=lastDefinition.birdman?clamp(trimRoll+rollInput,-1,1):0;
-        controls.rudder=yawPointer!==null||yawInput!==0?yawInput:input.value('yaw');
-        controls.elevator=lastDefinition.birdman?0:clamp(pitchInput,-1,1);
-        controls.aileron=lastDefinition.birdman?0:clamp(rollInput,-1,1);
-        controls.throttle=throttle;controls.trimPitch=trimPitch;controls.trimRoll=trimRoll;
-        controls.autoTrim=autoTrim&&!lastDefinition.birdman;controls.adaptiveControls=adaptiveControls;
-        scene.captureFlightState();
-         const wasLaunching=simulation!.launching;
-         simulation!.step(controls,fixedDt);if(isReplay&&activeReplay)cacheReplay(activeReplay,simulation!);else if(!isLaboratory(lastChallenge))cacheFlight(simulation!);flightElapsed=simulation!.elapsedTime;if(isReplay)replayPosition=flightElapsed;sampleFlight();
-         if(autoTrim&&!isReplay)trimPitch=simulation!.telemetry.trimPitch;
-         syncAudio();
-         if(lastChallenge!=='low-altitude'&&lastChallenge!=='wind-tunnel'&&wasLaunching&&!simulation!.launching)audio.release();
-        accumulator-=fixedDt;steps++;
-        if(simulation!.ended){finish();accumulator=0;break;}
-        if(simulation!.replayFinished){paused=true;clearControls();notify('回放结束','success');accumulator=0;break;}
-      }
-      // 过载时只丢弃整步积压，保留渲染插值所需的小数余量。
-      if(accumulator>=fixedDt)accumulator%=fixedDt;
+      alpha=clock.advance(elapsed,stepFlight);
     }else{
-      accumulator=0;scene.captureFlightState();
+      clock.reset();scene.captureFlightState();
     }
-    if(!seeking)scene.render(elapsed,running?accumulator/fixedDt:1);
+    if(!seeking)scene.render(elapsed,alpha);
      syncAudio();
     if(screen==='flight')refreshHud();
     if(flightCamera==='驾驶员'||flightCamera==='锁定')pilotHud=scene.pilotHud(hud.pitch,hud.roll);

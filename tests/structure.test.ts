@@ -1,9 +1,9 @@
 import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, clone, defaultAircraft, wing, type AircraftDefinition, type Controls } from '../src/model';
-import { FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
-import { rotationalEnergy, summarizeWingStructure, type StructuralBody } from '../src/structure';
+import { AIRFRAME_MASS, clone, defaultAircraft, presets, wing, type AircraftDefinition, type Controls } from '../src/model';
+import { captureReplayKeyframe, restoreReplayKeyframe, FlightSimulation, GRAVITY, PHYSICS_TICK, type FlightControls } from '../src/physics';
+import { MAX_ELASTIC_ROTATION, rotationalEnergy, summarizeWingStructure, type StructuralBody, type StructureSection } from '../src/structure';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
 interface FlightSnapshot {
@@ -24,7 +24,7 @@ function state(simulation: FlightSimulation) {
   return {
     position: simulation.position.toArray(), quaternion: simulation.quaternion.toArray(), velocity: simulation.velocity.toArray(),
     omega: simulation.omega.toArray(), mass: simulation.mass, energy: simulation.telemetry.energy,
-    sections: simulation.structure.sections.map(section => [section.bodyId, ...section.root.position.toArray(), ...section.tip.position.toArray(), ...section.root.quaternion.toArray(), ...section.tip.quaternion.toArray()]),
+    sections: simulation.structure.sections.map(section => [section.bodyId, section.fractureDamage, section.fractureDamageBase, section.fractureDamagePeak, section.fractureDamageTick, ...section.root.position.toArray(), ...section.tip.position.toArray(), ...section.root.quaternion.toArray(), ...section.tip.quaternion.toArray()]),
     fragments: simulation.fragments.map(fragment => [fragment.id, fragment.landed, fragment.mass, ...fragment.position.toArray(), ...fragment.quaternion.toArray(), ...fragment.velocity.toArray(), ...fragment.omega.toArray()]),
   };
 }
@@ -121,13 +121,161 @@ describe('结构载荷自适应杆量', () => {
       }
       if (simulation.structure.fractureCount > 0) {
         expect(simulation.telemetry.controlLimit).toBe(0);
-        expect(actualStress).toBeGreaterThan(1);
+        expect(Math.max(...simulation.structure.peakWings.map(wing => wing.stress))).toBeGreaterThan(1);
         break;
       }
     }
     expect(limitedWithoutOverload).toBe(true);
     expect(neutralOverload).toBe(true);
     expect(simulation.structure.fractureCount).toBeGreaterThan(0);
+  });
+});
+
+describe('60Hz连续超限累积', () => {
+  function constantStress(ratio: number) {
+    const simulation = new FlightSimulation(defaultAircraft, 'wind-tunnel', 0);
+    // Isolate the damage clock from elastic feedback and settle the fixture pose.
+    simulation.structure.updateGeometry = () => {};
+    simulation.step(neutral, 2 * PHYSICS_TICK);
+    const root = simulation.structure.sections[0], scale = root.stressRatio / ratio;
+    root.normalStrength *= scale; root.shearStrength *= scale;
+    return { simulation, root };
+  }
+
+  it('轻微超限第五tick成熟，同tick重复测量与峰值只替换一次增量', () => {
+    const { structure } = airborne(new Vector3());
+    structure.reset();
+    const root = structure.sections[0];
+    root.stressRatio = 1;
+    for (let tick = 1; tick <= 5; tick++) {
+      for (let repeat = 0; repeat < 20; repeat++) structure.accumulateFractureDamage(0, tick);
+      expect(root.fractureDamage).toBeCloseTo(tick / 5, 12);
+      expect(structure.fractureCandidates(0)).toHaveLength(tick === 5 ? 1 : 0);
+    }
+    structure.reset();
+    root.stressRatio = 1;
+    structure.accumulateFractureDamage(0, 1);
+    root.stressRatio = 2;
+    structure.accumulateFractureDamage(0, 1);
+    expect(root.fractureDamage).toBe(0.4);
+    root.stressRatio = 1;
+    structure.accumulateFractureDamage(0, 1);
+    expect(root.fractureDamage).toBe(0.4);
+    root.stressRatio = 5;
+    structure.accumulateFractureDamage(0, 1);
+    expect(root.fractureDamage).toBe(1);
+    expect(structure.fractureCandidates(0)).toEqual([root]);
+  });
+
+  it('同tick卸载清除成熟与旧历史，重新超载必须重新确认', () => {
+    const { structure } = airborne(new Vector3());
+    structure.reset();
+    const root = structure.sections[0];
+    root.stressRatio = 5;
+    structure.accumulateFractureDamage(0, 1);
+    expect(structure.fractureCandidates(0)).toEqual([root]);
+    root.stressRatio = 0.99;
+    structure.accumulateFractureDamage(0, 1);
+    expect(root.fractureDamage).toBe(0);
+    root.stressRatio = 1;
+    structure.accumulateFractureDamage(0, 1);
+    expect(root.fractureDamage).toBe(0.2);
+    expect(structure.fractureCandidates(0)).toHaveLength(0);
+    for (let tick = 2; tick <= 5; tick++) structure.accumulateFractureDamage(0, tick);
+    expect(structure.fractureCandidates(0)).toEqual([root]);
+  });
+
+  it('只从成熟候选中按stressRatio/id选首断，自由根不累计', () => {
+    const { structure } = airborne(new Vector3());
+    structure.reset();
+    const [root, inner, outer] = structure.sections;
+    root.stressRatio = 3; root.fractureDamage = 1;
+    inner.stressRatio = 3; inner.fractureDamage = 1;
+    outer.stressRatio = 4; outer.fractureDamage = 0.8;
+    expect(structure.fractureCandidates(0)).toEqual([root]);
+    outer.fractureDamage = 1;
+    expect(structure.fractureCandidates(0)).toEqual([outer]);
+    structure.detach(root, 1);
+    root.stressRatio = 100;
+    for (let tick = 1; tick <= 5; tick++) structure.accumulateFractureDamage(1, tick);
+    expect(root.fractureDamage).toBe(0);
+    expect(structure.fractureCandidates(1)).not.toContain(root);
+  });
+
+  it.each([1, 2, 4])('诊断dt=1/(60×%s)跨调用共享tick，第五tick才断', subdivisions => {
+    const { simulation, root } = constantStress(1.01);
+    for (let step = 0; step < 4 * subdivisions; step++) simulation.step(neutral, PHYSICS_TICK / subdivisions);
+    expect(simulation.structure.fractureCount).toBe(0);
+    expect(root.fractureDamage).toBeCloseTo(4 * 1.01 / 5, 10);
+    simulation.step(neutral, PHYSICS_TICK / subdivisions);
+    expect(simulation.structure.fractureCount).toBeGreaterThan(0);
+    expect(root.bodyId).not.toBe(0);
+    expect(root.fractureDamage).toBe(0);
+  });
+
+  it('单次大dt跨越真实tick，严重超限在首个极短诊断步可断', () => {
+    for (const [ratio, dt] of [[1.01, 5 * PHYSICS_TICK], [5.01, 1e-5]]) {
+      const { simulation, root } = constantStress(ratio);
+      simulation.step(neutral, dt);
+      expect(root.bodyId).not.toBe(0);
+      expect(simulation.structure.fractureCount).toBeGreaterThan(0);
+    }
+  });
+
+  it('独立静载update、measureLoads和预测均不计损伤', () => {
+    const simulation = airborne(new Vector3()), structure = simulation.structure, zero = new Vector3();
+    structure.reset(); simulation.omega.set(0, 0, 0);
+    structure.sections.at(-1)!.surface.force.set(0, 1e6, 0);
+    for (let repeat = 0; repeat < 10; repeat++) {
+      structure.update(simulation, zero, zero);
+      structure.measureLoads(simulation, zero, zero);
+      structure.predictStress(simulation, zero, zero);
+    }
+    expect(Math.max(...structure.sections.map(s => s.stressRatio))).toBeGreaterThan(5);
+    expect(structure.sections.every(s => s.fractureDamage === 0 && s.fractureDamageTick === 0)).toBe(true);
+    expect(structure.fractureCandidates(0)).toHaveLength(0);
+  });
+
+  it('checkpoint与关键帧保留tick增量，reset清空，拒绝损伤/时钟越界', () => {
+    const simulation = airborne(new Vector3());
+    simulation.omega.set(0, 0, 0);
+    simulation.step(neutral, PHYSICS_TICK / 2);
+    const structure = simulation.structure;
+    for (const s of structure.sections) s.stressRatio = 0;
+    structure.sections[0].stressRatio = 1;
+    structure.accumulateFractureDamage(0, 1);
+    const recording = simulation.getRecording();
+    const restored = restoreReplayKeyframe(simulation.definition, 'birdman', recording, captureReplayKeyframe(simulation, recording));
+    const continued = restored.checkpoint(), expected = simulation.checkpoint();
+    continued.step(neutral); expected.step(neutral, PHYSICS_TICK / 2);
+    expect(state(continued)).toEqual(state(expected));
+    for (const copy of [simulation.checkpoint(), restored]) {
+      expect(copy.structure.sections[0].fractureDamage).toBe(0.2);
+      copy.structure.accumulateFractureDamage(0, 1);
+      expect(copy.structure.sections[0].fractureDamage).toBe(0.2);
+      copy.structure.accumulateFractureDamage(0, 2);
+      expect(copy.structure.sections[0].fractureDamage).toBe(0.4);
+      copy.reset(0);
+      expect(copy.structure.sections.every(s => s.fractureDamage === 0 && s.fractureDamageBase === 0 && s.fractureDamagePeak === 0 && s.fractureDamageTick === 0)).toBe(true);
+    }
+    for (const key of ['fractureDamage', 'fractureDamageBase', 'fractureDamagePeak'] as const) {
+      for (const value of [-0.1, 1.1, Infinity]) {
+        const invalid = simulation.checkpoint();
+        invalid.structure.sections[0][key] = value;
+        expect(() => restoreReplayKeyframe(simulation.definition, 'birdman', recording, captureReplayKeyframe(invalid, recording))).toThrow('回放关键帧状态无效');
+      }
+      const invalid = simulation.checkpoint();
+      invalid.structure.sections[0][key] = NaN;
+      expect(() => captureReplayKeyframe(invalid, recording)).toThrow('回放状态包含无效数值');
+    }
+    for (const [key, value] of [['fractureTick', 1.5], ['fractureTick', 2], ['fractureTickElapsed', -0.1], ['fractureTickElapsed', PHYSICS_TICK]] as const) {
+      const invalid = simulation.checkpoint();
+      Reflect.set(invalid, key, value);
+      expect(() => restoreReplayKeyframe(simulation.definition, 'birdman', recording, captureReplayKeyframe(invalid, recording))).toThrow('回放关键帧状态无效');
+    }
+    const future = simulation.checkpoint();
+    future.structure.sections[0].fractureDamageTick = 2;
+    expect(() => restoreReplayKeyframe(simulation.definition, 'birdman', recording, captureReplayKeyframe(future, recording))).toThrow('回放关键帧状态无效');
   });
 });
 
@@ -292,22 +440,191 @@ describe('分段等效弹性梁', () => {
   });
 });
 
-describe('真实超载、独立断片和完整能量账本', () => {
-  it('splits every overloaded segment joint in one accepted step instead of retaining a folded wing chain', () => {
-    const simulation = airborne();
-    simulation.step(neutral, 1e-4);
-    const chain = simulation.structure.sections.filter(s => s.wingKey === 'mainWing' && s.side === 1);
-    const overloaded = chain.filter(s => s.stressRatio >= 1);
-    expect(overloaded.length).toBeGreaterThan(3);
-    expect(new Set(overloaded.map(s => s.bodyId)).size).toBe(overloaded.length);
-    expect(overloaded.every(s => s.bodyId !== 0)).toBe(true);
-    expect(simulation.fragments.some(f => simulation.structure.sections.filter(s => s.bodyId === f.id).length === 1)).toBe(true);
-    const count = simulation.structure.fractureCount;
-    // A detached one-strip body has no internal joint to break repeatedly.
-    for (const fragment of simulation.fragments) {
-      if (simulation.structure.sections.filter(s => s.bodyId === fragment.id).length === 1) expect(simulation.structure.fractureCandidates(fragment.id)).toHaveLength(0);
+describe('分支材料与累计小转角预算', () => {
+  function fixture(tailOnFin = false, finSide = 1) {
+    const definition = clone(presets.find(p => p.name === '基础单发型')!);
+    definition.mainWing = { ...definition.mainWing, ...wing(24, 1.5, 1) };
+    definition.mainWing.materialAmount = 2;
+    definition.assembly.tailOnFin = tailOnFin;
+    if (finSide < 0) {
+      const scale = -0.4 / definition.verticalTail.points[1].y;
+      for (const point of definition.verticalTail.points) point.y *= scale;
     }
-    expect(simulation.structure.fractureCount).toBe(count);
+    const simulation = new FlightSimulation(definition, 'low-altitude', 0);
+    const structure = simulation.structure;
+    structure.reset();
+    const body: StructuralBody = { id: 0, position: new Vector3(), quaternion: new Quaternion(),
+      velocity: new Vector3(), omega: new Vector3(), cg: new Vector3(), mass: 1,
+      inertiaTensor: new Matrix3(), inverseInertia: new Matrix3() };
+    const row = structure.sections.filter(s => s.wingKey === 'mainWing' && s.side === 1);
+    return { structure, body, row };
+  }
+  function angle(a: Quaternion, b: Quaternion) {
+    const q = a.clone().invert().multiply(b);
+    return 2 * Math.atan2(Math.hypot(q.x, q.y, q.z), Math.abs(q.w));
+  }
+  function pathAngle(row: readonly StructureSection[], base = false) {
+    let sum = 0, previous = new Quaternion();
+    for (const section of row) {
+      const root = base ? section.baseRootRotation : section.root.quaternion;
+      const tip = base ? section.baseTipRotation : section.tip.quaternion;
+      sum += angle(previous, root) + angle(root, tip);
+      previous = tip;
+    }
+    return sum;
+  }
+
+  it('100/10000 N真实端载利用率不钳制，提交形状均遵守0.25 rad预算', () => {
+    const results = [100, 10000].map(force => {
+      const { structure, body, row } = fixture();
+      const tip = row.at(-1)!;
+      const contacts = structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
+      contacts[tip.id].force.set(0, force, 0);
+      contacts[tip.id].moment.crossVectors(tip.referenceTip, contacts[tip.id].force);
+      const before = row.map(s => s.tip.position.toArray());
+      const maximum = structure.measureLoads(body, new Vector3(), new Vector3(), contacts);
+      expect(structure.fractureCandidates(0)).toHaveLength(0);
+      structure.accumulateFractureDamage(0, 1);
+      expect(row.map(s => s.tip.position.toArray())).toEqual(before);
+      const ratios = row.map(s => s.stressRatio);
+      structure.updateGeometry(0);
+      expect(row.map(s => s.stressRatio)).toEqual(ratios);
+      expect(structure.rotationBudgetValid()).toBe(true);
+      expect(pathAngle(row)).toBeLessThanOrEqual(MAX_ELASTIC_ROTATION + 1e-9);
+      for (let i = 1; i < row.length; i++) {
+        expect(row[i].root.position.distanceTo(row[i - 1].tip.position)).toBeLessThan(1e-10);
+        expect(angle(row[i].root.quaternion, row[i - 1].tip.quaternion)).toBeLessThan(1e-10);
+      }
+      expect(structure.fractureCandidates(0)).toHaveLength(force === 100 ? 0 : 1);
+      return { maximum, angle: pathAngle(row) };
+    });
+    expect(results[0].maximum).toBeCloseTo(0.7828723617584119, 6);
+    expect(results[1].maximum).toBeCloseTo(78.28723617584119, 6);
+    expect(results[1].maximum / results[0].maximum).toBeCloseTo(100, 12);
+    expect(results[1].angle).toBeLessThanOrEqual(results[0].angle + 1e-9);
+  });
+
+  it('零载荷和零曲率保持有限节点，不产生形变或候选', () => {
+    const { structure, body } = fixture();
+    for (let i = 0; i < 3; i++) structure.update(body, new Vector3(), new Vector3());
+    expect(structure.rotationBudgetValid()).toBe(true);
+    expect(structure.fractureCandidates(0)).toHaveLength(0);
+    for (const section of structure.sections) {
+      expect(section.stressRatio).toBe(0);
+      expect(section.root.position.distanceTo(section.referenceRoot)).toBe(0);
+      expect(section.tip.position.distanceTo(section.referenceTip)).toBe(0);
+    }
+  });
+
+  it('重复分离保留冻结根角预算，预算耗尽仍报告真实超载', () => {
+    const { structure, body, row } = fixture();
+    row.at(-1)!.surface.force.set(0, 10000, 0);
+    structure.update(body, new Vector3(), new Vector3());
+    const initial = pathAngle(row);
+    expect(initial).toBeGreaterThan(0.1);
+    for (let i = 0; i < 4; i++) {
+      const boundary = row[i], id = i + 1;
+      structure.detach(boundary, id);
+      const remaining = row.slice(i);
+      const frozen = pathAngle(remaining, true);
+      expect(frozen).toBeCloseTo(initial, 10);
+      structure.update({ ...body, id }, new Vector3(), new Vector3());
+      expect(structure.rotationBudgetValid()).toBe(true);
+      expect(pathAngle(remaining)).toBeLessThanOrEqual(MAX_ELASTIC_ROTATION + 1e-9);
+      expect(remaining[0].root.quaternion.toArray()).toEqual(remaining[0].baseRootRotation.toArray());
+      expect(remaining.some(s => s.stressRatio > 1)).toBe(true);
+      expect(structure.fractureCandidates(id)).not.toContain(boundary);
+    }
+  });
+
+  it.each(['base', 'current'] as const)('回放预算拒绝%s超限但不计刚体姿态', source => {
+    const { structure, body, row } = fixture();
+    body.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), 2);
+    expect(structure.rotationBudgetValid()).toBe(true);
+    const target = source === 'base' ? row.at(-1)!.baseTipRotation : row.at(-1)!.tip.quaternion;
+    target.setFromAxisAngle(new Vector3(1, 0, 0), MAX_ELASTIC_ROTATION + 2e-9);
+    expect(structure.rotationBudgetValid()).toBe(false);
+  });
+
+  it('材料限制使用整个支撑分支的共同系数，不缩减真实弯矩', () => {
+    const { structure, row } = fixture();
+    for (const section of row) section.moment.copy(section.chordAxis).multiplyScalar(1);
+    row[0].stressRatio = 2; row.at(-1)!.yieldRatio = 4;
+    const moments = row.map(s => s.moment.toArray());
+    structure.updateGeometry(0);
+    for (const section of row) {
+      const expected = section.referenceRoot.distanceTo(section.referenceTip) / section.bendingStiffness / 4;
+      expect(angle(section.root.quaternion, section.tip.quaternion)).toBeCloseTo(expected, 12);
+    }
+    expect(row.map(s => s.moment.toArray())).toEqual(moments);
+    expect(row[0].stressRatio).toBe(2);
+    expect(row.at(-1)!.yieldRatio).toBe(4);
+  });
+
+  it.each([-1, 1])('T尾同用垂尾分支材料系数，%s侧安装保持连续', finSide => {
+    const { structure } = fixture(true, finSide);
+    const fin = structure.sections.filter(s => s.wingKey === 'verticalTail');
+    const tails = structure.sections.filter(s => s.wingKey === 'horizontalTail');
+    for (const section of [...fin, ...tails]) section.moment.copy(section.chordAxis);
+    tails.at(-1)!.yieldRatio = 100;
+    structure.updateGeometry(0);
+    for (const section of [...fin, ...tails]) {
+      const expected = section.referenceRoot.distanceTo(section.referenceTip) / section.bendingStiffness / 100;
+      expect(angle(section.root.quaternion, section.tip.quaternion)).toBeCloseTo(expected, 12);
+    }
+    const support = fin.at(-1)!;
+    for (const first of tails.filter(s => s.parentId === support.id)) {
+      const expected = first.referenceRoot.clone().sub(support.referenceTip)
+        .applyQuaternion(support.tip.quaternion).add(support.tip.position);
+      expect(first.root.position.distanceTo(expected)).toBeLessThan(1e-10);
+      expect(angle(first.root.quaternion, support.tip.quaternion)).toBeLessThan(1e-10);
+    }
+    expect(structure.rotationBudgetValid()).toBe(true);
+    structure.detach(fin[0], 1);
+    expect([...fin, ...tails].every(s => s.bodyId === 1)).toBe(true);
+    expect(structure.rotationBudgetValid()).toBe(true);
+  });
+});
+
+describe('真实超载、独立断片和完整能量账本', () => {
+  it('首断选最大真实利用率，卸载后保留安全连接，独立超载分支继续失效', () => {
+    const simulation = airborne(new Vector3());
+    const structure = simulation.structure;
+    structure.reset(); simulation.omega.set(0, 0, 0); simulation.quaternion.identity();
+    const right = structure.sections.filter(s => s.wingKey === 'mainWing' && s.side === 1);
+    const left = structure.sections.filter(s => s.wingKey === 'mainWing' && s.side === -1);
+    right.at(-1)!.surface.force.set(0, 100000, 0);
+    left.at(-1)!.surface.force.set(0, 50000, 0);
+    const body: StructuralBody = { id: 0, position: new Vector3(), quaternion: new Quaternion(),
+      velocity: new Vector3(), omega: new Vector3(), cg: new Vector3(), mass: 1,
+      inertiaTensor: new Matrix3(), inverseInertia: new Matrix3() };
+    structure.measureLoads(body, new Vector3(), new Vector3());
+    structure.accumulateFractureDamage(0, 1);
+    const expected = [...structure.sections].sort((a, b) => b.stressRatio - a.stressRatio || a.id - b.id)[0];
+    expect(expected).toBe(right[0]);
+    const [boundary] = structure.fractureCandidates(0);
+    expect(boundary).toBe(expected);
+    structure.updateGeometry(0); structure.detach(boundary, 1);
+    expect(right.every(s => s.bodyId === 1)).toBe(true);
+    structure.measureLoads(body, new Vector3(), new Vector3());
+    structure.accumulateFractureDamage(0, 1);
+    const [next] = structure.fractureCandidates(0);
+    expect(next).toBe(left[0]);
+    structure.detach(next, 2);
+    structure.measureLoads(body, new Vector3(), new Vector3());
+    structure.accumulateFractureDamage(0, 1);
+    expect(structure.fractureCandidates(0)).toHaveLength(0);
+    expect(structure.sectionsForBody(0).every(s => s.stressRatio < 1)).toBe(true);
+    for (const section of right) section.surface.force.set(0, 0, 0);
+    structure.measureLoads({ ...body, id: 1 }, new Vector3(), new Vector3());
+    structure.accumulateFractureDamage(1, 1);
+    expect(structure.fractureCandidates(1)).toHaveLength(0);
+    expect(right.every(s => s.bodyId === 1)).toBe(true);
+    // Equal utilization uses the lower id, never depth. Free roots cannot fail.
+    for (const section of right) { section.stressRatio = 2; section.fractureDamage = 1; }
+    expect(structure.fractureCandidates(1)).toEqual([right[1]]);
+    structure.detach(right.at(-1)!, 3);
+    expect(structure.fractureCandidates(3)).toHaveLength(0);
   });
   it('高动压通过公开step断开三类翼面，主体继续，质量/全张量动能不丢失', () => {
     const simulation = airborne(), mass = simulation.mass, initial = energy(simulation), area = simulation.aircraft.wingArea;
@@ -331,8 +648,8 @@ describe('真实超载、独立断片和完整能量账本', () => {
 
   it('非对称断裂保留非对角惯量，片体继续使用局部来流且可再次超载断裂', () => {
     const d = clone(defaultAircraft); d.mainWing.materialId = 'spruce';
-    // Moderate initial loading leaves a multi-strip fragment; higher loading
-    // now correctly breaks all its overloaded joints in the first step.
+    // First-cut unloading can retain a multi-strip fragment; a later independent
+    // load must still be able to break its remaining real joints.
     const simulation = airborne(new Vector3(20, -8, 8), d);
     simulation.omega.set(3, 0.2, -0.1);
     simulation.step(neutral, 1e-4);

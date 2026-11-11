@@ -64,6 +64,7 @@ it('rejects incompatible versions, maps and invalid file envelopes', async () =>
   const data = JSON.parse(await exportReplay(sample()));
   for (const [field, value, error] of [
     ['version', 999, '格式'], ['physicsVersion', 'old', '物理版本'], ['mapHash', 'wrong', '地图'], ['challenge', 'unknown', '挑战'],
+    ['physicsVersion', 'progressive-fracture-v15', '物理版本'],
   ] as const) await expect(importReplay(JSON.stringify({ ...data, [field]: value }))).rejects.toThrow(error);
   for (const text of ['null', '{}', '[]', '{', '"string"']) await expect(importReplay(text)).rejects.toThrow();
   for (const value of [null, '0', true, 2]) {
