@@ -19,8 +19,9 @@ test('remembers the selected flight camera across retries and reloads',async({pa
  await page.getByRole('button',{name:'试飞',exact:true}).click();
  await expect(page.getByLabel('飞行相机',{exact:true})).toHaveValue('驾驶员');
  await page.locator('canvas').click({position:{x:20,y:300}});
- await page.keyboard.press('KeyC');
- expect(await page.evaluate(()=>localStorage.getItem('aero-formula.flight-camera'))).toBe('自由');
+ await page.keyboard.press('c');
+ await expect(page.getByLabel('飞行相机',{exact:true})).toHaveValue('追尾');
+ expect(await page.evaluate(()=>localStorage.getItem('aero-formula.flight-camera'))).toBe('追尾');
 });
 
 test('chord lines ignore dragging while visible handles remain editable',async({page})=>{

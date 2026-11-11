@@ -745,6 +745,9 @@ describe('动力与燃油边界', () => {
     one.engine.x = -2; one.engine.y = -0.5;
     const crash = airborne(new FlightSimulation(one, 'low-altitude', 0)); crash.position.y = challengeTerrainHeight('low-altitude', crash.position.x, crash.position.z) + 0.4;
     const before=crash.velocity.clone();crash.step(neutral);expect(crash.ended).toBe(false);expect(crash.velocity).not.toEqual(before);
+    // Shape probes now query one wing branch at a time. Rebuild the complete
+    // envelope before inspecting this scratch workspace for engine contacts.
+    Reflect.get(crash, 'preparePlatformContacts').call(crash);
     expect((Reflect.get(crash,'platformCount') as number)).toBeGreaterThan(0);
   });
 

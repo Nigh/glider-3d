@@ -17,6 +17,7 @@
  import InputReadout from './InputReadout.svelte';
  import { InputManager } from './input';
  import { trimStep, trimFromPointer } from './trim';
+ import { FixedGameClock } from './game-clock';
  import { energyCostScale } from './flight-chart';
  import { exportReplay, importReplay, MAX_REPLAY_BYTES, type Replay } from './replay';
  import { summarizeWingStructure } from './structure';
@@ -59,7 +60,9 @@
  let actualRoll=$derived(lastDefinition.birdman?hud.controlInputs?.lateral??0:hud.controlInputs?.aileron??0);
  let flightInputDisabled=$derived(!flightReady||isReplay||paused);
  let throttle=$state(1);
- const flightViews=['追尾','锁定','侧追尾','侧面','驾驶员','自由'];
+ const flightViews=['追尾','锁定','侧追尾','驾驶员'];
+ const replayViews=[...flightViews,'侧面','自由','轨道','俯视','侧视','正视','后视'];
+ let availableViews=$derived(isReplay?replayViews:flightViews);
  const cameraKey='aero-formula.flight-camera';
  function savedCamera(){try{const value=localStorage.getItem(cameraKey);return value&&flightViews.includes(value)?value:'追尾';}catch{return '追尾';}}
  let flightCamera=$state(savedCamera());
@@ -171,7 +174,7 @@
    simulation=next;if(!replay&&!isLaboratory(selectedChallenge))cacheFlight(next);
    lastDefinition=clone(definition);lastChallenge=selectedChallenge;
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
-   samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
+   samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;if(!replay&&!flightViews.includes(flightCamera))flightCamera='追尾';screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
    scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);
    if(selectedChallenge==='wind-tunnel'){aero=true;windCamera='侧视';}
    scene.setDebug(aero);scene.cameraView(selectedChallenge==='wind-tunnel'?'侧视':flightCamera);
@@ -240,7 +243,7 @@
   if(input.pressed('pause')){audio.unlock();if(flightReady)togglePause();else beginFlight();}
   if(input.pressed('camera')){
    if(lastChallenge==='wind-tunnel')selectWindCamera(windViews[(windViews.indexOf(windCamera)+1)%windViews.length]);
-   else selectCamera(flightViews[(flightViews.indexOf(flightCamera)+1)%flightViews.length]);
+   else selectCamera(availableViews[(availableViews.indexOf(flightCamera)+1)%availableViews.length]);
   }
   scene.lookInput(input.value('lookX'),input.value('lookY'),elapsed);
  if(isReplay||paused)return;
@@ -259,9 +262,29 @@ onMount(()=>{
  const unlock=()=>audio.unlock();
  const click=(e:MouseEvent)=>{const target=e.target instanceof Element?e.target:null;if(target?.closest('button:not(:disabled),summary')&&!target.closest('.flight-controls'))audio.ui('click');};
  document.addEventListener('pointerdown',unlock,true);document.addEventListener('keydown',unlock,true);document.addEventListener('click',click,true);
-const fixedDt=1/60;
-let previous=performance.now(),accumulator=0,lastInstruments=0,request=0;
- const visibility=()=>{clearControls();input.suspended=inputSettingsOpen||document.hidden||!document.hasFocus();previous=performance.now();accumulator=0;scene.captureFlightState();syncAudio();};
+const clock=new FixedGameClock();
+let previous=performance.now(),lastInstruments=0,request=0;
+ const visibility=()=>{clearControls();input.suspended=inputSettingsOpen||document.hidden||!document.hasFocus();previous=performance.now();clock.reset();scene.captureFlightState();syncAudio();};
+const stepFlight=(dt:number)=>{
+ const pitchInput=stickPointer!==null||stick?stickY:input.value('pitch');
+ const rollInput=stickPointer!==null||stick?stickX:input.value('roll');
+ controls.weight=lastDefinition.birdman?clamp(trimPitch+pitchInput,-1,1):0;
+ controls.lateral=lastDefinition.birdman?clamp(trimRoll+rollInput,-1,1):0;
+ controls.rudder=yawPointer!==null||yawInput!==0?yawInput:input.value('yaw');
+ controls.elevator=lastDefinition.birdman?0:clamp(pitchInput,-1,1);
+ controls.aileron=lastDefinition.birdman?0:clamp(rollInput,-1,1);
+ controls.throttle=throttle;controls.trimPitch=trimPitch;controls.trimRoll=trimRoll;
+ controls.autoTrim=autoTrim&&!lastDefinition.birdman;controls.adaptiveControls=adaptiveControls;
+ scene.captureFlightState();
+ const wasLaunching=simulation!.launching;
+ simulation!.step(controls,dt);if(isReplay&&activeReplay)cacheReplay(activeReplay,simulation!);else if(!isLaboratory(lastChallenge))cacheFlight(simulation!);flightElapsed=simulation!.elapsedTime;if(isReplay)replayPosition=flightElapsed;sampleFlight();
+ if(autoTrim&&!isReplay)trimPitch=simulation!.telemetry.trimPitch;
+ syncAudio();
+ if(lastChallenge!=='low-altitude'&&lastChallenge!=='wind-tunnel'&&wasLaunching&&!simulation!.launching)audio.release();
+ if(simulation!.ended){finish();return false;}
+ if(simulation!.replayFinished){paused=true;clearControls();notify('回放结束','success');return false;}
+ return true;
+};
 const tick=(now:number)=>{
   const elapsed=Math.min(Math.max((now-previous)/1000,0),0.1);previous=now;
   if(!document.hidden){
@@ -273,38 +296,16 @@ const tick=(now:number)=>{
      throttle=clamp(throttle+(input.value('throttleUp')-input.value('throttleDown'))*elapsed*0.35,0,1);
     }
     const running=screen==='flight'&&simulation&&flightReady&&!paused&&!seeking&&!inputSettingsOpen;
+    let alpha=1;
     if(running){
-      accumulator+=elapsed;
-      let steps=0;
-      while(accumulator>=fixedDt&&steps<5){
-        const pitchInput=stickPointer!==null||stick?stickY:input.value('pitch');
-        const rollInput=stickPointer!==null||stick?stickX:input.value('roll');
-        controls.weight=lastDefinition.birdman?clamp(trimPitch+pitchInput,-1,1):0;
-        controls.lateral=lastDefinition.birdman?clamp(trimRoll+rollInput,-1,1):0;
-        controls.rudder=yawPointer!==null||yawInput!==0?yawInput:input.value('yaw');
-        controls.elevator=lastDefinition.birdman?0:clamp(pitchInput,-1,1);
-        controls.aileron=lastDefinition.birdman?0:clamp(rollInput,-1,1);
-        controls.throttle=throttle;controls.trimPitch=trimPitch;controls.trimRoll=trimRoll;
-        controls.autoTrim=autoTrim&&!lastDefinition.birdman;controls.adaptiveControls=adaptiveControls;
-        scene.captureFlightState();
-         const wasLaunching=simulation!.launching;
-         simulation!.step(controls,fixedDt);if(isReplay&&activeReplay)cacheReplay(activeReplay,simulation!);else if(!isLaboratory(lastChallenge))cacheFlight(simulation!);flightElapsed=simulation!.elapsedTime;if(isReplay)replayPosition=flightElapsed;sampleFlight();
-         if(autoTrim&&!isReplay)trimPitch=simulation!.telemetry.trimPitch;
-         syncAudio();
-         if(lastChallenge!=='low-altitude'&&lastChallenge!=='wind-tunnel'&&wasLaunching&&!simulation!.launching)audio.release();
-        accumulator-=fixedDt;steps++;
-        if(simulation!.ended){finish();accumulator=0;break;}
-        if(simulation!.replayFinished){paused=true;clearControls();notify('回放结束','success');accumulator=0;break;}
-      }
-      // 过载时只丢弃整步积压，保留渲染插值所需的小数余量。
-      if(accumulator>=fixedDt)accumulator%=fixedDt;
+      alpha=clock.advance(elapsed,stepFlight);
     }else{
-      accumulator=0;scene.captureFlightState();
+      clock.reset();scene.captureFlightState();
     }
-    if(!seeking)scene.render(elapsed,running?accumulator/fixedDt:1);
+    if(!seeking)scene.render(elapsed,alpha);
      syncAudio();
     if(screen==='flight')refreshHud();
-    if(flightCamera==='驾驶员')pilotHud=scene.pilotHud(hud.pitch,hud.roll);
+    if(flightCamera==='驾驶员'||flightCamera==='锁定')pilotHud=scene.pilotHud(hud.pitch,hud.roll);
     if(now-lastInstruments>150){refreshTrajectory();perf={...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0};lastInstruments=now;}
   }
   request=requestAnimationFrame(tick);
@@ -366,7 +367,7 @@ window.addEventListener('pointermove',mouse);
  <div class="trim-controls" aria-label={t("配平控制")}>
  <label class="pitch-trim" class:auto-trim={pitchTrimLocked}><span>{t("升降舵配平")} <kbd>J/K</kbd> <output>{((displayedPitch+1)*50).toFixed(0)}%</output></span><span class="trim-track"><input aria-label={t("升降舵配平")} disabled={isReplay||pitchTrimLocked} type="range" min="0" max="100" step="1" value={(displayedPitch+1)*50} oninput={e=>{setPitchTrim(trimFromPointer(e.currentTarget.valueAsNumber));e.currentTarget.value=String((trimPitch+1)*50);}}/><i aria-hidden="true"></i></span></label>
  <label class="roll-trim"><span>{t("副翼配平")} <kbd>H/L</kbd> <output>{((displayedRoll+1)*50).toFixed(0)}%</output></span><span class="trim-track"><input aria-label={t("副翼配平")} disabled={isReplay} type="range" min="0" max="100" step="1" value={(displayedRoll+1)*50} oninput={e=>{trimRoll=trimFromPointer(e.currentTarget.valueAsNumber);e.currentTarget.value=String((trimRoll+1)*50);}}/><i aria-hidden="true"></i></span></label>
- <small>{t("50% 中立 · 鼠标吸附中点 · 快捷键每格 5%")}</small>
+ <small>{t("50% 中立 · 鼠标吸附中点 · 快捷键每格 1% · 长按连续调节")}</small>
  </div>
 {/snippet}
 {#snippet structureData()}
@@ -458,7 +459,7 @@ window.addEventListener('pointermove',mouse);
  </section>
  {:else if screen==='flight'}
  {#if !flightReady&&lastChallenge!=='wind-tunnel'}<div class="launch-action"><button class="primary launch-start flight-start" onclick={beginFlight}>{t("开始试飞")}<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg></button><p>{t("空格开始 / 暂停 / 继续")}</p></div>{/if}
- {#if flightCamera==='驾驶员'&&pilotHud}
+ {#if (flightCamera==='驾驶员'||flightCamera==='锁定')&&pilotHud}
  <svg class="pilot-hud" viewBox={`0 0 ${pilotHud.width} ${pilotHud.height}`} aria-label="HUD" role="img">
  <title>{t("飞行数据")}</title>
  <defs><clipPath id="hud-attitude"><polygon points={pilotHud.clip}/></clipPath></defs>
@@ -496,7 +497,7 @@ window.addEventListener('pointermove',mouse);
  {#if isLaboratory(lastChallenge)}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {t(!flightReady?"待开始":lastChallenge==='wind-tunnel'?"测试运行中":hud.launching?(testSettings.catapult?"弹射助跑":"跑道滑跑"):"飞行中")}</span><span>{t("自由测试 · 不计成绩")}</span></div>{:else}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {!flightReady?t("待开始"):hud.launching?(lastChallenge==='low-altitude'?t("跑道滑跑"):t("弹射助跑")):t("飞行中")}</span><span>{lastChallenge==='birdman'?t("湖面最远距离"):!hud.timingStarted?(lastChallenge==='low-altitude'?t("通过出发门后开始计时与计分"):t("通过出发门后开始计时")):t("赛道进度 {p0}% · 依次穿过航线检查点",{p0:(100*(hud.challengeProgress??0)).toFixed(0)})}</span>{#if hud.stall}<b>{t("攻角过大 · 失速")}</b>{/if}</div>{/if}
  {#if lastChallenge==='low-altitude'}<section class="challenge-hud" class:over-height={(hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight} aria-label={t("贴地挑战数据")}><span>{t("离地")} <strong>{(hud.groundClearance??0).toFixed(1)} m / {LOW_ALTITUDE.scoringHeight} m</strong></span><span>{t("得分")} <strong>{(hud.score??0).toFixed(0)}</strong></span><span>{t("连续超高")} <strong>{(hud.aboveHeightTime??0).toFixed(1)} s</strong></span>{#if (hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight}<b role="status">{t("超出计分高度 · 降低高度")}</b>{/if}</section>{/if}
  {#if lastDefinition.engine.count&&lastChallenge!=='wind-tunnel'}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t("油门")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><span class="throttle-track" style={`--rpm:${clamp(hud.engineRpm??0,0,1)*100}%`}><input aria-label={t("油门")} title={t("实色表示实际转速，滑块表示设定转速。")} disabled={isReplay} type="range" min="0" max="1" step="0.01" value={isReplay?hud.throttle??0:throttle} oninput={e=>{throttle=e.currentTarget.valueAsNumber;input.clear();}}/></span></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}{t("% · 推力")} {(hud.thrust??0).toFixed(0)} {t("N · 余油")} {(hud.fuelRemaining??0).toFixed(2)} L</p></section>{/if}
- {#if lastChallenge!=='wind-tunnel'}<div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次（仅暂停或结算时）")} / Esc · {t("设计")}</span>{#if flightReady}<button title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button>{/if}<select aria-label={t("飞行相机")} title={t("C 键切换视角 · 锁定视角不可拖动 · 自由视角拖动环绕、滚轮缩放，不自动回中")} bind:value={flightCamera} onchange={e=>selectCamera(e.currentTarget.value)}>{#each flightViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>{/if}
+ {#if lastChallenge!=='wind-tunnel'}<div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次（仅暂停或结算时）")} / Esc · {t("设计")}</span>{#if flightReady}<button title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button>{/if}<select aria-label={t("飞行相机")} title={t("C 键切换视角 · 锁定视角可小幅拖动 · 回放支持全部视角")} bind:value={flightCamera} onchange={e=>selectCamera(e.currentTarget.value)}>{#each availableViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>{/if}
  {#if paused}<div class="pause-banner">{t("飞行已暂停")} <button onclick={togglePause}>{t("继续")}</button></div>{/if}
  <div class="flight-right">{@render aeroWindow()}{#if lastChallenge==='wind-tunnel'}{@render structureData()}{/if}</div>
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}

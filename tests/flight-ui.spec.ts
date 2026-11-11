@@ -12,17 +12,17 @@ async function enterFlight(page: Page, challenge = '高山速降') {
 test('开始试飞后配平集中在圆形杆量仪表',async({page})=>{
  await enterFlight(page);
  const start=page.getByRole('button',{name:'开始试飞',exact:true});
- await start.click();
- await page.getByRole('button',{name:'暂停',exact:true}).click();
  const panel=page.getByRole('region',{name:'杆量与配平',exact:true});
  await expect(panel).toBeVisible();
  const pitch=panel.getByRole('slider',{name:'升降舵配平',exact:true});
  const roll=panel.getByRole('slider',{name:'副翼配平',exact:true});
  await expect(pitch).toHaveValue('50');await expect(roll).toHaveValue('50');
- await page.keyboard.press('j');await expect(pitch).toHaveValue('45');
+ await page.keyboard.press('j');await expect(pitch).toHaveValue('49');
  await page.keyboard.press('k');await expect(pitch).toHaveValue('50');
- await page.keyboard.press('h');await expect(roll).toHaveValue('45');
+ await page.keyboard.press('h');await expect(roll).toHaveValue('49');
  await page.keyboard.press('l');await expect(roll).toHaveValue('50');
+ await start.click();
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
  await page.getByRole('switch',{name:'气动图层',exact:true}).click();
  const aero=page.getByRole('complementary',{name:'实时气动数据'});
  await expect(aero.getByRole('slider',{name:'升降舵配平',exact:true})).toHaveCount(0);

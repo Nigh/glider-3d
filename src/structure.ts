@@ -2,6 +2,9 @@ import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, planform, wingLocalPoint, wingOrigin, type AircraftDefinition, type WingKey } from './model';
 import { beamSection, materialCatalog } from './materials';
 
+/** Small-rotation model limit, not a material failure angle. */
+export const MAX_ELASTIC_ROTATION = 0.25;
+
 export interface StructuralSurface {
   point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3;
   chordDirection: Vector3; crossflowDirection: Vector3;
@@ -11,10 +14,14 @@ export interface StructuralSurface {
 export interface StructureNode { span: number; position: Vector3; quaternion: Quaternion }
 export interface StructureSection {
   id: number; wingKey: WingKey; side: number; spanStart: number; spanEnd: number; bodyId: number;
+  /** Actual support joint: preceding strip, fin tip for a T-tail, or airframe. */
+  parentId: number | null; depth: number;
   /** 实际安装局部舵角rad，已包含场景侧别方向；断片冻结。 */
   controlDeflection: number;
   root: StructureNode; tip: StructureNode; referenceRoot: Vector3; referenceTip: Vector3;
   mass: number; center: Vector3; inertia: Matrix3; stress: number; stressRatio: number; yieldRatio: number;
+  /** Consecutive overload, with one peak contribution per accepted 60 Hz tick. */
+  fractureDamage: number; fractureDamageBase: number; fractureDamagePeak: number; fractureDamageTick: number;
   moment: Vector3; load: Vector3; surface: StructuralSurface;
   /** 基准在首次脱离后保留当时弯曲形状；自由断片没有虚构的机身夹持端。 */
   baseRoot: Vector3; baseTip: Vector3; baseRootRotation: Quaternion; baseTipRotation: Quaternion;
@@ -84,6 +91,19 @@ export class WingStructure {
   private readonly candidates: StructureSection[] = [];
   private readonly geometryBefore: SectionGeometry[];
   private readonly geometryAfter: SectionGeometry[];
+  private readonly ordered: StructureSection[];
+  private readonly owned: StructureSection[][];
+  private readonly branchLoads: SectionContactLoad[];
+  private readonly mountRotation = new Quaternion();
+  private readonly mountDelta = new Quaternion();
+  private readonly mountOrigin = new Vector3();
+  private readonly mountTarget = new Vector3();
+  private readonly curvature: Vector3[];
+  private readonly branchRoot: Int32Array;
+  private readonly geometryScale: Float64Array;
+  private readonly frozenBudget: Float64Array;
+  private readonly elasticBudget: Float64Array;
+  private readonly budgetRotation = new Quaternion();
 
   constructor(readonly definition: AircraftDefinition, surfaces: StructuralSurface[]) {
     this.sections = surfaces.map((surface, id) => {
@@ -119,10 +139,11 @@ export class WingStructure {
       const innerWidth = section.width - section.wallThickness;
       const innerHeight = section.height - section.wallThickness;
       // 等效闭口梁截面独立于翼型外壳；恒高梁不保证能装进所有薄翼尖，非可制造性校验。
-      return { id, wingKey, side: surface.side, spanStart: surface.spanStart, spanEnd: surface.spanEnd, bodyId: 0,
+      return { id, wingKey, side: surface.side, spanStart: surface.spanStart, spanEnd: surface.spanEnd, bodyId: 0, parentId: null, depth: 0,
         root: { span: surface.spanStart, position: referenceRoot.clone(), quaternion: new Quaternion() },
         tip: { span: surface.spanEnd, position: referenceTip.clone(), quaternion: new Quaternion() },
         referenceRoot, referenceTip, mass, center, inertia, stress: 0, stressRatio: 0, yieldRatio: 0,
+        fractureDamage: 0, fractureDamageBase: 0, fractureDamagePeak: 0, fractureDamageTick: 0,
         moment: new Vector3(), load: new Vector3(), surface, controlDeflection: 0,
         baseRoot: referenceRoot.clone(), baseTip: referenceTip.clone(), baseRootRotation: new Quaternion(), baseTipRotation: new Quaternion(),
         referencePoint: surface.point.clone(), referenceNormal: surface.normal.clone(), referenceSpan: surface.spanDirection.clone(),
@@ -140,13 +161,36 @@ export class WingStructure {
     });
     const geometry = () => this.sections.map(() => ({ root: new Vector3(), tip: new Vector3(), rootRotation: new Quaternion(), tipRotation: new Quaternion() }));
     this.geometryBefore = geometry(); this.geometryAfter = geometry();
+    const finTip = this.sections.filter(s => s.wingKey === 'verticalTail').at(-1);
+    for (const s of this.sections) {
+      const inner = this.sections.find(other => other.wingKey === s.wingKey && other.side === s.side && other.spanEnd === s.spanStart);
+      s.parentId = inner?.id ?? (definition.assembly.tailOnFin && s.wingKey === 'horizontalTail' ? finTip?.id ?? null : null);
+    }
+    for (const s of this.sections) for (let parent = this.parent(s); parent; parent = this.parent(parent)) s.depth++;
+    this.ordered = [...this.sections].sort((a, b) => a.depth - b.depth || a.id - b.id);
+    this.owned = [this.sections.slice()];
+    this.branchLoads = this.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
+    this.curvature = this.sections.map(() => new Vector3());
+    this.branchRoot = new Int32Array(this.sections.length);
+    this.geometryScale = new Float64Array(this.sections.length);
+    this.frozenBudget = new Float64Array(this.sections.length);
+    this.elasticBudget = new Float64Array(this.sections.length);
+  }
+
+  sectionsForBody(id: number): readonly StructureSection[] { return this.owned[id] ?? []; }
+  private parent(s: StructureSection) { return s.parentId === null ? undefined : this.sections[s.parentId]; }
+  private supportedBy(s: StructureSection, root: StructureSection): boolean {
+    for (let node: StructureSection | undefined = s; node; node = this.parent(node)) if (node === root) return true;
+    return false;
   }
 
   reset() {
+    this.owned.length = 1; this.owned[0] = this.sections.slice();
     this.maxStressRatio = 0; this.maxYieldRatio = 0; this.maxDeflection = 0; this.fractureCount = 0;
     for (const wing of this.peakWings) wing.stress = wing.yieldRatio = 0;
     for (const s of this.sections) {
       s.bodyId = s.surface.bodyId = 0; s.stress = s.stressRatio = s.yieldRatio = s.controlDeflection = 0;
+      s.fractureDamage = s.fractureDamageBase = s.fractureDamagePeak = s.fractureDamageTick = 0;
       s.moment.set(0, 0, 0); s.load.set(0, 0, 0);
       s.root.position.copy(s.referenceRoot); s.tip.position.copy(s.referenceTip);
       s.baseRoot.copy(s.referenceRoot); s.baseTip.copy(s.referenceTip);
@@ -170,43 +214,32 @@ export class WingStructure {
     this.angularAcceleration.copy(body.omega).applyMatrix3(body.inertiaTensor);
     this.cross.crossVectors(body.omega, this.angularAcceleration);
     this.angularAcceleration.copy(totalTorque).sub(this.cross).applyMatrix3(body.inverseInertia);
-    for (const s of this.sections) {
-      if (s.bodyId !== body.id) continue;
+    // Compute each strip's load once, then transmit the wrench up the actual
+    // support tree. This includes both T-tail halves in the fin's load path.
+    for (const s of this.sectionsForBody(body.id)) {
       this.arm.copy(s.center).sub(body.cg);
       this.force.crossVectors(this.angularAcceleration, this.arm);
       this.cross.crossVectors(body.omega, this.arm);
       this.force.add(this.moment.crossVectors(body.omega, this.cross)).add(this.acceleration);
-      if (commit) s.load.copy(s.surface.force).applyQuaternion(this.inverse).addScaledVector(this.gravity, s.mass).addScaledVector(this.force, -s.mass);
-      if (commit && contacts) s.load.add(contacts[s.id].force);
-      this.sectionMoment.set(0, 0, 0);
-      this.totalLoad.set(0, 0, 0);
-      // 全部外侧段累计；气动力在变形四分之一弦，质量惯性在参考质量中心，各自保留力臂。
-      for (const outer of this.sections) {
-        if (outer.bodyId !== body.id || outer.wingKey !== s.wingKey || outer.side !== s.side || outer.spanStart < s.spanStart) continue;
-        this.arm.copy(outer.center).sub(body.cg);
-        this.force.crossVectors(this.angularAcceleration, this.arm);
-        this.cross.crossVectors(body.omega, this.arm);
-        this.force.add(this.moment.crossVectors(body.omega, this.cross)).add(this.acceleration).sub(this.gravity).multiplyScalar(-outer.mass);
-        this.arm.copy(outer.center).sub(s.root.position);
-        this.sectionMoment.add(this.moment.crossVectors(this.arm, this.force));
-        this.totalLoad.add(this.force);
-        this.force.copy(this.angularAcceleration).applyMatrix3(outer.inertia);
-        this.cross.copy(body.omega).applyMatrix3(outer.inertia);
-        this.force.add(this.moment.crossVectors(body.omega, this.cross));
-        this.sectionMoment.sub(this.force);
-        this.force.copy(outer.surface.force).applyQuaternion(this.inverse);
-        this.totalLoad.add(this.force);
-        this.arm.copy(outer.surface.point).sub(s.root.position);
-        this.sectionMoment.add(this.moment.crossVectors(this.arm, this.force));
-        // A contact belongs to its actual strip: transmit it only through that strip
-        // and its inboard joints, retaining the chordwise lever arm (torsion too).
-        // The inertial terms above already use the full rigid-body contact response.
-        if (contacts) {
-          const contact = contacts[outer.id];
-          this.totalLoad.add(contact.force);
-          this.sectionMoment.add(contact.moment).sub(this.moment.crossVectors(s.root.position, contact.force));
-        }
+      this.force.sub(this.gravity).multiplyScalar(-s.mass);
+      const load = this.branchLoads[s.id];
+      load.force.copy(this.force); load.moment.crossVectors(s.center, this.force);
+      this.force.copy(this.angularAcceleration).applyMatrix3(s.inertia);
+      this.cross.copy(body.omega).applyMatrix3(s.inertia);
+      load.moment.sub(this.force.add(this.moment.crossVectors(body.omega, this.cross)));
+      this.force.copy(s.surface.force).applyQuaternion(this.inverse);
+      load.force.add(this.force); load.moment.add(this.moment.crossVectors(s.surface.point, this.force));
+      if (contacts) { load.force.add(contacts[s.id].force); load.moment.add(contacts[s.id].moment); }
+      if (commit) s.load.copy(load.force);
+    }
+    for (let i = this.ordered.length - 1; i >= 0; i--) {
+      const s = this.ordered[i]; if (s.bodyId !== body.id) continue;
+      const load = this.branchLoads[s.id], parent = this.parent(s);
+      if (parent?.bodyId === body.id) {
+        this.branchLoads[parent.id].force.add(load.force); this.branchLoads[parent.id].moment.add(load.moment);
       }
+      this.totalLoad.copy(load.force);
+      this.sectionMoment.copy(load.moment).sub(this.moment.crossVectors(s.root.position, load.force));
       const bending = Math.abs(this.sectionMoment.dot(s.chordAxis)) / s.normalModulus + Math.abs(this.sectionMoment.dot(s.normalAxis)) / s.lateralModulus
         + Math.abs(this.totalLoad.dot(s.beamAxis)) / s.sectionArea;
       const shear = Math.abs(this.sectionMoment.dot(s.beamAxis)) / s.torsionModulus
@@ -231,22 +264,45 @@ export class WingStructure {
     return this.measureStress(body, totalForce, totalTorque, false);
   }
 
+  measureLoads(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3, contacts?: readonly SectionContactLoad[]): number {
+    return this.measureStress(body, totalForce, totalTorque, true, contacts);
+  }
+
   update(body: StructuralBody, totalForce: Vector3, totalTorque: Vector3, contacts?: readonly SectionContactLoad[]) {
-    for (const s of this.sections) if (s.bodyId === body.id) this.saveGeometry(s, this.geometryBefore[s.id]);
-    this.measureStress(body, totalForce, totalTorque, true, contacts);
+    this.measureLoads(body, totalForce, totalTorque, contacts);
+    this.updateGeometry(body.id);
+  }
+
+  updateGeometry(bodyId: number): void {
+    for (const s of this.sectionsForBody(bodyId)) this.saveGeometry(s, this.geometryBefore[s.id]);
+    this.fillRotationBudgets(true, this.frozenBudget);
+    for (const s of this.ordered) {
+      if (s.bodyId !== bodyId) continue;
+      const parent = this.parent(s), connected = parent?.bodyId === bodyId;
+      const root = connected ? this.branchRoot[parent.id] : s.id;
+      this.branchRoot[s.id] = root;
+      if (!connected) this.geometryScale[root] = 1;
+      const curvature = this.curvature[s.id].copy(s.chordAxis).multiplyScalar(s.moment.dot(s.chordAxis) / s.bendingStiffness)
+        .addScaledVector(s.normalAxis, s.moment.dot(s.normalAxis) / s.lateralStiffness)
+        .addScaledVector(s.beamAxis, s.moment.dot(s.beamAxis) / s.torsionalStiffness);
+      const budget = (connected ? this.elasticBudget[parent.id] : 0)
+        + curvature.length() * s.referenceRoot.distanceTo(s.referenceTip);
+      this.elasticBudget[s.id] = budget;
+      // One scale for the full support branch, including both fin-mounted tails.
+      this.geometryScale[root] = Math.min(this.geometryScale[root],
+        1 / Math.max(1, s.stressRatio), 1 / Math.max(1, s.yieldRatio),
+        budget > 0 ? Math.max(0, MAX_ELASTIC_ROTATION - this.frozenBudget[s.id]) / budget : 1);
+    }
     // 按每个连续拥有者从内到外积分，不跨断口。自由片首端保留断裂形状，但不把自由端作为断裂连接。
     for (const first of this.sections) {
-      if (first.bodyId !== body.id || this.hasInnerSection(first)) continue;
+      if (first.bodyId !== bodyId || this.hasInnerSection(first)) continue;
       this.rotationVector.set(0, 0, 0); this.displacement.set(0, 0, 0);
       for (const s of this.sections) {
-        if (s.bodyId !== body.id || s.wingKey !== first.wingKey || s.side !== first.side) continue;
+        if (s.bodyId !== bodyId || s.wingKey !== first.wingKey || s.side !== first.side) continue;
         const length = s.referenceRoot.distanceTo(s.referenceTip);
         s.root.position.copy(s.baseRoot).add(this.displacement);
         this.setRotation(s.root.quaternion, this.rotationVector, s.baseRootRotation);
-        this.cross.copy(s.chordAxis).multiplyScalar(s.moment.dot(s.chordAxis) / s.bendingStiffness)
-          .addScaledVector(s.normalAxis, s.moment.dot(s.normalAxis) / s.lateralStiffness)
-          .addScaledVector(s.beamAxis, s.moment.dot(s.beamAxis) / s.torsionalStiffness);
-        // 有限旋转更新避免弱梁产生无穷节点；应力不钳制，超强度仍会在同一接受步断裂。
+        this.cross.copy(this.curvature[s.id]).multiplyScalar(this.geometryScale[this.branchRoot[s.id]]);
         this.arm.copy(this.rotationVector).addScaledVector(this.cross, length / 2);
         this.setRotation(this.rotation, this.arm, this.identity);
         this.arm.copy(s.baseTip).sub(s.baseRoot).applyQuaternion(this.rotation);
@@ -255,7 +311,59 @@ export class WingStructure {
         s.tip.position.copy(s.baseTip).add(this.displacement);
         this.setRotation(s.tip.quaternion, this.rotationVector, s.baseTipRotation);
         this.syncSurface(s);
-        this.saveGeometry(s, this.geometryAfter[s.id]);
+      }
+    }
+    this.alignTailRoots(bodyId);
+    for (const s of this.sectionsForBody(bodyId)) this.saveGeometry(s, this.geometryAfter[s.id]);
+  }
+
+  private relativeRotation(a: Quaternion, b: Quaternion) {
+    this.budgetRotation.copy(a).invert().multiply(b);
+    const q = this.budgetRotation;
+    return 2 * Math.atan2(Math.hypot(q.x, q.y, q.z), Math.abs(q.w));
+  }
+
+  /** Same root-to-leaf budget for frozen bases, submitted nodes and shape limits.
+   * Node quaternions contain elastic rotation only; rigid T-tail mounting is in
+   * reference geometry. A detached root retains its inherited elastic angle. */
+  private fillRotationBudgets(base: boolean, out: Float64Array) {
+    for (const s of this.ordered) {
+      const parent = this.parent(s), connected = parent?.bodyId === s.bodyId;
+      const root = base ? s.baseRootRotation : s.root.quaternion;
+      const tip = base ? s.baseTipRotation : s.tip.quaternion;
+      const support = connected ? (base ? parent.baseTipRotation : parent.tip.quaternion) : this.identity;
+      out[s.id] = (connected ? out[parent.id] : 0)
+        + this.relativeRotation(support, root) + this.relativeRotation(root, tip);
+    }
+  }
+
+  /** Replay validation includes both frozen and current geometry, across owners. */
+  rotationBudgetValid(): boolean {
+    this.fillRotationBudgets(true, this.frozenBudget);
+    this.fillRotationBudgets(false, this.elasticBudget);
+    for (const s of this.sections) {
+      const frozen = this.frozenBudget[s.id], current = this.elasticBudget[s.id];
+      if (!Number.isFinite(frozen) || !Number.isFinite(current)
+        || frozen > MAX_ELASTIC_ROTATION + 1e-9 || current > MAX_ELASTIC_ROTATION + 1e-9) return false;
+    }
+    return true;
+  }
+
+  /** The mounted tail's reference offset follows the fin tip's full rotation. */
+  private alignTailRoots(bodyId: number) {
+    if (!this.definition.assembly.tailOnFin) return;
+    for (const first of this.sectionsForBody(bodyId)) {
+      if (first.wingKey !== 'horizontalTail' || this.hasInnerSection(first)) continue;
+      const parent = this.parent(first); if (parent?.bodyId !== bodyId) continue;
+      this.mountRotation.copy(parent.baseTipRotation).invert().premultiply(parent.tip.quaternion);
+      this.mountTarget.copy(first.baseRoot).sub(parent.baseTip).applyQuaternion(this.mountRotation).add(parent.tip.position);
+      this.mountOrigin.copy(first.root.position);
+      this.mountDelta.copy(first.root.quaternion).invert().premultiply(this.rotation.copy(this.mountRotation).multiply(first.baseRootRotation));
+      for (const s of this.sectionsForBody(bodyId)) if (s.wingKey === first.wingKey && s.side === first.side) {
+        s.root.position.sub(this.mountOrigin).applyQuaternion(this.mountDelta).add(this.mountTarget);
+        s.tip.position.sub(this.mountOrigin).applyQuaternion(this.mountDelta).add(this.mountTarget);
+        s.root.quaternion.premultiply(this.mountDelta); s.tip.quaternion.premultiply(this.mountDelta);
+        this.syncSurface(s);
       }
     }
   }
@@ -280,13 +388,21 @@ export class WingStructure {
    * joint continuity and the full measured stress used for fracture decisions. */
   blendContactGeometry(wingKey: WingKey, side: number, fraction: number) {
     for (const s of this.sections) {
-      if (s.bodyId !== 0 || s.wingKey !== wingKey || s.side !== side) continue;
+      if (s.bodyId !== 0 || !this.branchContains(s, wingKey, side)) continue;
       const a = this.geometryBefore[s.id], b = this.geometryAfter[s.id];
       s.root.position.copy(a.root).lerp(b.root, fraction); s.tip.position.copy(a.tip).lerp(b.tip, fraction);
       s.root.quaternion.copy(a.rootRotation).slerp(b.rootRotation, fraction);
       s.tip.quaternion.copy(a.tipRotation).slerp(b.tipRotation, fraction);
       this.syncSurface(s);
     }
+    this.alignTailRoots(0);
+  }
+
+  branchContains(s: StructureSection, wingKey: WingKey, side: number) {
+    for (let node: StructureSection | undefined = s; node && node.bodyId === s.bodyId; node = this.parent(node)) {
+      if (node.wingKey === wingKey && node.side === side) return true;
+    }
+    return false;
   }
 
   private hasInnerSection(section: StructureSection) {
@@ -302,27 +418,47 @@ export class WingStructure {
     else out.copy(base);
   }
 
-  /** 返回每条连续链最危险的仍连接边界；自由断片的首端没有连接。 */
+  /** Accepted loads only. Remeasurements replace this tick's contribution, never add another. */
+  accumulateFractureDamage(bodyId: number, tick: number) {
+    for (const s of this.sectionsForBody(bodyId)) {
+      if (s.fractureDamageTick !== tick) {
+        s.fractureDamageBase = s.fractureDamage;
+        s.fractureDamagePeak = 0;
+        s.fractureDamageTick = tick;
+      }
+      if (s.stressRatio < 1 || bodyId !== 0 && this.parent(s)?.bodyId !== bodyId) {
+        s.fractureDamage = s.fractureDamageBase = s.fractureDamagePeak = 0;
+        continue;
+      }
+      s.fractureDamagePeak = Math.max(s.fractureDamagePeak, Math.min(1, Math.max(0.2, s.stressRatio / 5)));
+      s.fractureDamage = Math.min(1, s.fractureDamageBase + s.fractureDamagePeak);
+    }
+  }
+
+  /** Only the most overloaded mature real joint; callers must remeasure after a cut. */
   fractureCandidates(bodyId: number) {
     const result = this.candidates;
     result.length = 0;
     for (const s of this.sections) {
-      if (s.bodyId !== bodyId || s.stressRatio < 1) continue;
-      if (bodyId !== 0 && !this.hasInnerSection(s)) continue;
-      const previous = result.findIndex(other => other.wingKey === s.wingKey && other.side === s.side);
-      if (previous < 0) result.push(s);
-      else if (result[previous].stressRatio < s.stressRatio) result[previous] = s;
+      if (s.bodyId !== bodyId || s.stressRatio < 1 || s.fractureDamage < 1) continue;
+      if (bodyId !== 0 && this.parent(s)?.bodyId !== bodyId) continue;
+      if (!result.length || s.stressRatio > result[0].stressRatio
+        || (s.stressRatio === result[0].stressRatio && s.id < result[0].id)) result[0] = s;
     }
     return result;
   }
 
   detach(boundary: StructureSection, id: number) {
     const previous = boundary.bodyId;
-    for (const s of this.sections) if (s.bodyId === previous && s.wingKey === boundary.wingKey && s.side === boundary.side && s.spanStart >= boundary.spanStart) {
+    const detached: StructureSection[] = [], retained: StructureSection[] = [];
+    for (const s of this.sectionsForBody(previous)) if (this.supportedBy(s, boundary)) {
+      detached.push(s);
       s.bodyId = s.surface.bodyId = id;
       s.baseRoot.copy(s.root.position); s.baseTip.copy(s.tip.position);
       s.baseRootRotation.copy(s.root.quaternion); s.baseTipRotation.copy(s.tip.quaternion);
-    }
+    } else retained.push(s);
+    this.owned[previous] = retained; this.owned[id] = detached;
+    boundary.fractureDamage = boundary.fractureDamageBase = boundary.fractureDamagePeak = 0;
     this.fractureCount++;
   }
 
