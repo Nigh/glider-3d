@@ -95,3 +95,70 @@ test('R仅暂停时重飞，准备和飞行中保留当前试飞',async({page})=
  expect(await page.evaluate(()=>window.glider.flightReady)).toBe(false);
  expect(await page.evaluate(()=>window.glider.recordingLength)).toBe(0);
 });
+
+test('工坊每个翼面保留响应轴，支持撤销与重置',async({page})=>{
+ await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
+ await page.goto('/');
+ await page.getByRole('button',{name:'高山速降',exact:false}).click();
+ await page.getByRole('button',{name:'重置设计',exact:true}).click();
+ const axes=page.getByRole('group',{name:'舵面响应轴',exact:true});
+ for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['水平尾翼',true,true,false],['垂直尾翼',false,false,true]] as const){
+  await page.getByRole('tab',{name:part,exact:true}).click();
+  for(const [axis,enabled] of [['滚转',roll],['俯仰',pitch],['偏航',yaw]] as const)await expect(axes.getByRole('switch',{name:`${axis}响应`,exact:true})).toHaveAttribute('aria-checked',String(enabled));
+ }
+ const roll=axes.getByRole('switch',{name:'滚转响应',exact:true});
+ await roll.click();await expect(roll).toHaveAttribute('aria-checked','true');
+ await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','false');
+ await page.getByRole('button',{name:'重做',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','true');
+ await page.getByRole('tab',{name:'主翼',exact:true}).click();
+ await page.getByRole('tab',{name:'垂直尾翼',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','true');
+ expect(await page.evaluate(()=>window.glider.aircraft.verticalTail.controlAxes)).toEqual({roll:true,pitch:false,yaw:true});
+ await page.getByRole('button',{name:'重置设计',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','false');
+});
+
+test('智能混控默认关闭，支持U和输入设置，重飞复位',async({page})=>{
+ await enterFlight(page);
+ const mixing=page.getByRole('switch',{name:'智能混控（U）',exact:true});
+ await expect(mixing).toBeVisible();await expect(mixing).toHaveAttribute('aria-checked','false');
+ await page.keyboard.press('u');await expect(mixing).toHaveAttribute('aria-checked','true');
+ expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
+ await mixing.click();await expect(mixing).toHaveAttribute('aria-checked','false');
+ await page.getByRole('button',{name:'输入设置',exact:true}).click();
+ const settings=page.getByRole('dialog',{name:'输入设置',exact:true});
+ const row=settings.locator('[data-action="smartMixing"]');
+ await expect(row.locator('[data-code="KeyU"]')).toBeVisible();
+ await row.getByRole('button',{name:'添加绑定：智能混控',exact:true}).click();
+ await page.keyboard.press('b');await settings.getByRole('banner').getByRole('button',{name:'保存',exact:true}).click();
+ await page.keyboard.press('b');await expect(mixing).toHaveAttribute('aria-checked','true');
+ await page.getByRole('button',{name:'开始试飞',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>window.glider.telemetry?.smartMixing)).toBe(true);
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
+ await page.keyboard.press('r');await expect(mixing).toHaveAttribute('aria-checked','false');
+ expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(false);
+});
+
+test('回放智能混控只读且跟随记录和跳转',async({page})=>{
+ await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
+ await page.goto('/');
+ const text=await page.evaluate(async()=>{
+  // This fixture exercises browser modules; Node imports cannot run inside page.evaluate.
+  const {FlightSimulation}=await import('/src/physics.ts');
+  const {defaultAircraft}=await import('/src/model.ts');
+  const {exportReplay}=await import('/src/replay.ts');
+  const simulation=new FlightSimulation(defaultAircraft,'birdman',0);
+  for(let frame=0;frame<60;frame++)simulation.step({weight:0,elevator:0,aileron:0,rudder:0,smartMixing:frame>=30});
+  return exportReplay({definition:defaultAircraft,challenge:'birdman',recording:simulation.getRecording()});
+ });
+ await page.getByLabel('导入回放',{exact:true}).setInputFiles({name:'mixing.json',mimeType:'application/json',buffer:Buffer.from(text)});
+ const mixing=page.getByRole('region',{name:'实时杆量',exact:true}).getByRole('switch',{name:'智能混控（U）',exact:true});
+ await expect(mixing).toBeVisible();await expect(mixing).toBeDisabled();await expect(mixing).toHaveAttribute('aria-checked','false');
+ const timeline=page.getByRole('region',{name:'回放时间轴',exact:true});
+ await page.getByRole('slider',{name:'回放进度',exact:true}).press('End');
+ await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
+ await expect(mixing).toHaveAttribute('aria-checked','true');
+ await page.keyboard.press('u');await expect(mixing).toHaveAttribute('aria-checked','true');
+ expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
+ await page.getByRole('slider',{name:'回放进度',exact:true}).press('Home');
+ await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
+ await expect(mixing).toHaveAttribute('aria-checked','false');
+});

@@ -87,6 +87,7 @@ export const inputMessages: Record<string, readonly [string, string]> = {
  '向左滚转配平': ['Trim roll left', '左ロールトリム'],
  '向右滚转配平': ['Trim roll right', '右ロールトリム'],
  '自动配平': ['Auto trim', '自動トリム'],
+ '智能混控': ['Smart mixing', 'スマートミキシング'],
  '自适应控制': ['Adaptive controls', '構造強度連動の操舵制限'],
  '鼠标操纵杆': ['Mouse stick', 'マウス操縦'],
  '无法访问浏览器本地存储，输入设置仅在本次会话中生效。': ['Browser storage is unavailable. Input settings apply only to this session.', 'ブラウザーの保存領域にアクセスできません。入力設定はこのセッションのみ有効です。'],

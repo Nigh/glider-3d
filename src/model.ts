@@ -9,7 +9,7 @@ import singleJet from './aircraft/基础单发型.json';
 export type Point = { x: number; y: number };
 // Body coordinates: +X forward, +Y up, +Z right. Distances metres, angles degrees.
 // Planform points: root leading, tip leading, tip trailing, root trailing; x aft, y outboard.
-export interface Wing { points: [Point, Point, Point, Point]; rootReference?: number; dihedral: number; controlSurface: number; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
+export interface Wing { points: [Point, Point, Point, Point]; rootReference?: number; dihedral: number; controlSurface: number; controlAxes?: { roll: boolean; pitch: boolean; yaw: boolean }; controlResponse?: number; controlReversed?: boolean; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
 export interface AircraftDefinition {
  name: string;
  birdman: boolean;
@@ -308,6 +308,13 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){const w=d[key];if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p.x,-3,6);finite(p.y,key==='verticalTail'?-0.5:0,12);} finite(w.dihedral,-25,25);
  if(w.controlSurface===undefined)w.controlSurface=key==='verticalTail'?1:0;
  finite(w.controlSurface,0,1);
+ if(w.controlAxes===undefined)w.controlAxes={roll:key!=='verticalTail',pitch:key!=='verticalTail',yaw:key==='verticalTail'};
+ if(!w.controlAxes||typeof w.controlAxes!=='object'||['roll','pitch','yaw'].some(axis=>typeof w.controlAxes![axis as keyof NonNullable<Wing['controlAxes']>]!=='boolean'))throw Error('舵面控制轴必须是布尔值');
+ w.controlAxes={roll:w.controlAxes.roll,pitch:w.controlAxes.pitch,yaw:w.controlAxes.yaw};
+ if(w.controlResponse===undefined)w.controlResponse=1;
+ finite(w.controlResponse,0,1);
+ if(w.controlReversed===undefined)w.controlReversed=false;
+ if(typeof w.controlReversed!=='boolean')throw Error('舵面反向开关必须是布尔值');
  if(w.rootReference!==undefined)finite(w.rootReference,-3,6);
  if(w.materialId===undefined)w.materialId='carbon-epoxy';
  if(typeof w.materialId!=='string'||!Object.hasOwn(materialCatalog,w.materialId))throw Error('未知翼面材料');
@@ -319,7 +326,7 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  if(2*w.structure.wallThickness>=Math.min(w.structure.width,w.structure.height))throw Error('梁管壁厚的两倍必须小于宽度和高度');
  w.structure={width:w.structure.width,height:w.structure.height,wallThickness:w.structure.wallThickness};
  // Design snapshots contain geometry and material only; runtime deformation never persists.
- d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),dihedral:w.dihedral,controlSurface:w.controlSurface,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
+ d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),dihedral:w.dihedral,controlSurface:w.controlSurface,controlAxes:w.controlAxes,controlResponse:w.controlResponse,controlReversed:w.controlReversed,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
  if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和平尾不能安装控制面');
  const p=w.points;if(p[0].y!==0||p[3].y!==0||Math.abs(p[1].y-p[2].y)>0.001||Math.abs(p[1].y)<0.25||p[3].x-p[0].x<0.15||p[2].x-p[1].x<0.15)throw Error('翼面不得自交，根弦与梢弦至少 0.15 m');
  }

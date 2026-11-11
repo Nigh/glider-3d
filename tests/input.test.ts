@@ -27,7 +27,7 @@ it('preserves every keyboard default and keeps absolute throttle inactive', () =
     ['pitchUp', ['KeyW', 'ArrowUp']], ['pitchDown', ['KeyS', 'ArrowDown']], ['rollLeft', ['KeyA', 'ArrowLeft']], ['rollRight', ['KeyD', 'ArrowRight']],
     ['yawLeft', ['KeyQ']], ['yawRight', ['KeyE']], ['throttleUp', ['Digit1', 'Numpad1']], ['throttleDown', ['Digit2', 'Numpad2']],
     ['pause', ['Space']], ['restart', ['KeyR']], ['camera', ['KeyC']], ['trimRollLeft', ['KeyH']], ['trimRollRight', ['KeyL']],
-    ['trimPitchDown', ['KeyJ']], ['trimPitchUp', ['KeyK']], ['autoTrim', ['KeyT']], ['adaptive', ['KeyY']], ['mouseStick', ['KeyX']],
+    ['trimPitchDown', ['KeyJ']], ['trimPitchUp', ['KeyK']], ['autoTrim', ['KeyT']], ['smartMixing', ['KeyU']], ['adaptive', ['KeyY']], ['mouseStick', ['KeyX']],
   ];
   for (const [action, codes] of defaults) for (const code of codes) {
     expect(input.key(code, true)).toBe(true); input.poll([]);
@@ -37,6 +37,23 @@ it('preserves every keyboard default and keeps absolute throttle inactive', () =
   expect(input.key('KeyB', true)).toBe(false);
   expect(input.value('throttle')).toBe(-1);
   expect(input.settings.bindings.keyboard.lookLeft).toEqual([]);
+});
+
+it('adds smart mixing to old settings without losing saved U mappings or explicit unbinding', () => {
+  const baseline = new InputManager(); baseline.beginEdit(); baseline.saveEdit();
+  const stored = JSON.parse(saved.get(storageKey)!);
+  for (const profile of ['keyboard', 'gamepad', 'joystick']) delete stored.bindings[profile].smartMixing;
+  saved.set(storageKey, JSON.stringify(stored));
+  const error = vi.fn(), migrated = new InputManager(error);
+  expect(error).not.toHaveBeenCalled();
+  expect(migrated.settings.bindings.keyboard.smartMixing).toEqual([{ kind: 'key', code: 'KeyU' }]);
+  stored.bindings.keyboard.camera = [{ kind: 'key', code: 'KeyU' }];
+  saved.set(storageKey, JSON.stringify(stored));
+  const conflict = new InputManager(error);
+  expect(error).not.toHaveBeenCalled(); expect(conflict.settings.bindings.keyboard.smartMixing).toEqual([]);
+  expect(conflict.settings.bindings.keyboard.camera).toEqual([{ kind: 'key', code: 'KeyU' }]);
+  migrated.beginEdit(); migrated.setBinding('keyboard', 'smartMixing', []); migrated.saveEdit();
+  expect(new InputManager().settings.bindings.keyboard.smartMixing).toEqual([]);
 });
 
 it('uses signed gamepad sticks, analog trigger difference, shoulders and face defaults', () => {

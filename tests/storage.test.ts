@@ -63,6 +63,35 @@ describe('飞机 JSON 信任边界', () => {
     expect(() => saveAircraft(invalid, saved.id)).toThrow('翼面不得自交');
     expect(listAircraft()).toEqual([saved]);
   });
+
+  it('旧设计补齐控制轴，混控设置完整往返且不接受非法数据', () => {
+    const legacy = clone(defaultAircraft);
+    for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
+      delete legacy[key].controlAxes;
+      delete legacy[key].controlResponse;
+      delete legacy[key].controlReversed;
+    }
+    const imported = importAircraft(JSON.stringify(legacy));
+    expect(imported.mainWing.controlAxes).toEqual({ roll: true, pitch: true, yaw: false });
+    expect(imported.horizontalTail.controlAxes).toEqual({ roll: true, pitch: true, yaw: false });
+    expect(imported.verticalTail.controlAxes).toEqual({ roll: false, pitch: false, yaw: true });
+    expect(imported.verticalTail.controlResponse).toBe(1);
+    expect(imported.verticalTail.controlReversed).toBe(false);
+    imported.mainWing.controlAxes = { roll: false, pitch: true, yaw: true };
+    imported.mainWing.controlResponse = 0.35;
+    imported.mainWing.controlReversed = true;
+    expect(importAircraft(exportAircraft(imported))).toEqual(imported);
+    for (const invalid of [-0.01, 1.01, null, '1']) {
+      const value = { ...imported, mainWing: { ...imported.mainWing, controlResponse: invalid } };
+      expect(() => importAircraft(JSON.stringify(value))).toThrow();
+    }
+    for (const invalid of [null, { roll: 1, pitch: true, yaw: false }, { roll: true }]) {
+      const value = { ...imported, mainWing: { ...imported.mainWing, controlAxes: invalid } };
+      expect(() => importAircraft(JSON.stringify(value))).toThrow();
+    }
+    const invalid = { ...imported, mainWing: { ...imported.mainWing, controlReversed: 1 } };
+    expect(() => importAircraft(JSON.stringify(invalid))).toThrow();
+  });
 });
 
 describe('飞机本地保存', () => {

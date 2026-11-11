@@ -106,12 +106,12 @@ describe('body-axis elevator trim', () => {
   it('restores predictive trim and control directions across a replay keyframe', () => {
     const sim = new FlightSimulation(definition(), 'downhill', 0);
     const state = (s: FlightSimulation) => ({
-      trim: s.telemetry.trimPitch, omega: s.omega.toArray(),
+      trim: s.telemetry.trimPitch, smart: s.telemetry.smartMixing, omega: s.omega.toArray(),
       deflections: s.structure.sections.map(section => section.controlDeflection),
     });
-    const states: { trim: number; omega: number[]; deflections: number[] }[] = [];
+    const states: { trim: number; smart: boolean; omega: number[]; deflections: number[] }[] = [];
     for (let frame = 0; frame < 180; frame++) {
-      sim.step({ ...neutral, autoTrim: frame < 165, trimPitch: 0.2, elevator: frame < 120 ? 0.2 : 0 });
+      sim.step({ ...neutral, autoTrim: frame < 165, smartMixing: frame >= 135 && frame < 170, trimPitch: 0.2, elevator: frame < 120 ? 0.2 : 0 });
       if (frame >= 150) states.push(state(sim));
     }
     const recording = sim.getRecording();

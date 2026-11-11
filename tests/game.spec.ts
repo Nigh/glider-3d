@@ -19,6 +19,7 @@ declare global {
       readonly trajectory: { time: number; distance: number; height: number; speed: number; scoringHeight: number; energyRatio: number; energyPerDistance: number | null }[];
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
+      readonly flightControls: { smartMixing: boolean };
       readonly result: FlightResult | null;
       readonly scene: {
         view: string; orthographic: boolean; editing: string | null;
