@@ -2164,7 +2164,7 @@ export class SceneView {
     const tipHinge = -wing.points[1].x - hingeFraction * tipChord;
     const axes: THREE.Vector3[] = [];
     for (const side of vertical ? [1] : [-1, 1]) {
-      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(tipHinge - rootHinge, spanSign * halfSpan, 0).normalize())
+      axes.push(vertical ? (fraction === 1 ? new THREE.Vector3(0, spanSign, 0) : new THREE.Vector3(tipHinge - rootHinge, spanSign * halfSpan, 0).normalize())
         : wingLocalPoint(wing, angle, side, tipHinge - rootHinge, 0, halfSpan, new THREE.Vector3()).normalize());
       let previous: WingRenderSection | null = null;
       for (let start = 0; start < halfSpan - 1e-10; start += SURFACE_STEP) {

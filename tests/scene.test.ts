@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
 import type { Material, MeshStandardMaterial } from 'three';
-import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint } from '../src/model';
+import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint, presets } from '../src/model';
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
@@ -970,4 +970,66 @@ describe('工坊场景与直接选取', () => {
     }
     expect(positions.array).toEqual(original);shell.geometry.dispose();canopy.geometry.dispose();
   });
+});
+
+it.each([false, true])('renders per-strip control directions for front/rear tails and downward fin %s', downward => {
+  const movement: number[][] = [];
+  for (const mount of [-3, 2.5]) {
+    const definition = clone(presets.find(plane => !plane.birdman && plane.engine.count === 0)!);
+    definition.assembly.tailOnFin = false;
+    definition.assembly.horizontalTail = definition.assembly.verticalTail = mount;
+    if (downward) {
+      definition.verticalTail.points[1].y = definition.verticalTail.points[2].y = -0.48;
+      definition.verticalTail.controlSurface = 1;
+    }
+    const simulation = new FlightSimulation(definition, 'test-space', 0, { height: 2000, catapult: false, speed: 20 });
+    simulation.launching = false; simulation.position.set(100, 2000, 0);
+    simulation.quaternion.identity(); simulation.velocity.set(20, 0, 0);
+    simulation.step({ weight: 0, elevator: 0.3, aileron: 0.3, rudder: 0.3 }, 0.05);
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      definition: simulation.definition, simulation, fragments: [], renderBlend: 1,
+      wingSections: [[], [], []], wingNormalGeometry: [], wingNeutral: [], wingHinges: [],
+      wingMovable: [], wingAxes: [], wingAngles: new Float64Array(3), wingMeshes: [],
+      hingeLines: Array.from({ length: 3 }, () => ({ geometry: new BufferGeometry() })),
+      deformationCenter: new Vector3(), controlRotation: new Quaternion(), deformationRotation: new Quaternion(),
+      deformationPoint: new Vector3(), deformationReference: new Vector3(), deformationRootTangent: new Vector3(),
+      deformationTipTangent: new Vector3(), deformationAxis: new Vector3(), deformationHinge: new Vector3(),
+    });
+    const keys = ['mainWing', 'horizontalTail', 'verticalTail'] as const;
+    for (let index = 0; index < 3; index++) {
+      const key = keys[index], origin = wingOrigin(simulation.definition, key);
+      const incidence = index === 0 ? definition.assembly.mainIncidence : index === 1 ? definition.assembly.tailIncidence : 0;
+      view.wingMeshes.push(new Mesh(view.wingGeometry(simulation.definition[key], origin.x, origin.y, incidence, index)));
+    }
+    view.syncWingPhysics();
+    // Isolate control geometry from elastic bending; use the real per-strip physical deflections.
+    for (const section of simulation.structure.sections) {
+      section.root.position.copy(section.referenceRoot); section.tip.position.copy(section.referenceTip);
+      section.root.quaternion.identity(); section.tip.quaternion.identity();
+    }
+    view.updateControlSurfaces();
+    const tailMovement: number[] = [];
+    for (let index = 0; index < 3; index++) {
+      for (const section of view.wingSections[index]) {
+        const vertex = section.vertexStart + Math.floor(section.rows / 2) * 32 + 16;
+        const neutral = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
+        const hinge = new Vector3().fromArray(view.wingHinges[index], vertex * 3);
+        const axis = view.wingAxes[index][index === 2 || section.side < 0 ? 0 : 1];
+        const expected = neutral.clone().sub(hinge).applyAxisAngle(axis, section.physics.controlDeflection).add(hinge);
+        const rendered = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
+        expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
+        if (index > 0 && section.side === 1 && section.spanStart === 0) {
+          tailMovement.push(index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z);
+        }
+        if (index === 0) expect((rendered.y - neutral.y) * section.side).toBeGreaterThan(0);
+      }
+    }
+    movement.push(tailMovement);
+    for (let index = 0; index < 3; index++) {
+      view.wingMeshes[index].geometry.dispose(); view.wingNormalGeometry[index].dispose();
+      view.hingeLines[index].geometry.dispose(); view.wingMeshes[index].material.dispose();
+    }
+  }
+  expect(movement[0][0]).toBeLessThan(0); expect(movement[1][0]).toBeGreaterThan(0);
+  expect(movement[0][1]).toBeGreaterThan(0); expect(movement[1][1]).toBeLessThan(0);
 });

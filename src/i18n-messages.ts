@@ -549,6 +549,38 @@ export const messages: Record<string, readonly [string, string]> = {
   "Estimated stall speed",
   "推定失速速度"
  ],
+ "推重比": [
+  "Thrust-to-weight ratio",
+  "推力重量比"
+ ],
+ "海平面最大静推力 / 重量；满油至空油": [
+  "Maximum sea-level static thrust / weight; full to empty fuel",
+  "海面高度の最大静止推力 / 重量・満タンから空まで"
+ ],
+ "重心Y": [
+  "Center of gravity Y",
+  "重心Y"
+ ],
+ "重心Z": [
+  "Center of gravity Z",
+  "重心Z"
+ ],
+ "全机升力中心Y": [
+  "Aircraft lift center Y",
+  "全機揚力中心Y"
+ ],
+ "全机升力中心Z": [
+  "Aircraft lift center Z",
+  "全機揚力中心Z"
+ ],
+ "全机阻力中心Y": [
+  "Aircraft drag center Y",
+  "全機抗力中心Y"
+ ],
+ "全机阻力中心Z": [
+  "Aircraft drag center Z",
+  "全機抗力中心Z"
+ ],
  "重心 CG": [
   "Center of gravity CG",
   "重心 CG"

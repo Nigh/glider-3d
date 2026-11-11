@@ -5,6 +5,7 @@ import type * as SceneModule from '../src/scene';
 import type * as PhysicsModule from '../src/physics';
 import type * as ModelModule from '../src/model';
 import type { BufferGeometry, Camera, WebGLRenderer } from 'three';
+import { engineCatalog, FUEL_DENSITY } from '../src/engines';
 
 type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string };
 declare global {
@@ -639,50 +640,36 @@ test('空格开始、暂停与继续，C键循环视角，输入焦点不触发�
   await expect(camera).toHaveValue('追尾');
 });
 
-test('主视图持续展示三翼结果，安装角滑条实时改变气动数值', async ({ page }) => {
-  await enterDesign(page);
-  const instruments = page.getByRole('region', { name: '设计实时仪表', exact: true });
-  const preview = instruments.getByRole('region', { name: '三翼气动力预览', exact: true });
-  await expect(preview.getByRole('row')).toHaveCount(4);
-  for (const tab of ['主翼', '水平尾翼', '垂直尾翼', '机身']) {
-    await page.getByRole('tab', { name: tab, exact: true }).click();
-    await insideViewport(page, instruments);
-    for (const name of ['重心X', '全机升力中心X', '全机阻力中心X', '静稳定裕度', '估算失速速度']) {
-      await insideViewport(page, instruments.getByLabel(name, { exact: true }));
-    }
-    for (const wing of ['主翼', '水平尾翼', '垂直尾翼']) {
-      await insideViewport(page, preview.getByRole('row', { name: wing + '气动作用', exact: true }));
-    }
-  }
-  for (const wing of ['主翼', '水平尾翼']) {
-    await page.getByRole('tab', { name: wing, exact: true }).click();
-    const outputs = ['有效攻角', '升力', '阻力', '俯仰力矩'].map(metric => preview.getByLabel(wing + metric, { exact: true }));
-    const before = await Promise.all(outputs.map(output => output.textContent()));
-    const slider = page.getByRole('slider', { name: wing + '安装角', exact: true });
-    await slider.focus();
-    for (let step = 0; step < 20; step++) await slider.press('ArrowRight');
-    for (let index = 0; index < outputs.length; index++) {
-      await expect(outputs[index]).not.toHaveText(before[index]!);
-      expect(Number.isFinite(Number(await outputs[index].textContent()))).toBe(true);
-      await insideViewport(page, outputs[index]);
+test('工坊紧凑仪表按类别排列并显示满油至空油推重比', async ({ page }) => {
+  await page.getByRole('button', { name: '低空飞行', exact: false }).click();
+  const metrics = page.getByRole('region', { name: '飞机性能估算', exact: true });
+  await expect(metrics.locator(':scope > div > small:first-child')).toHaveText([
+    '主翼面积', '翼展 / 展弦比', '翼载荷', '自由空气最佳滑翔比', '估算失速速度', '全备质量 · 驾驶员 60 kg', '推重比',
+  ]);
+  await expect(page.locator('.aero-preview')).toHaveCount(0);
+  await page.getByRole('tab', { name: '动力', exact: true }).click();
+  for (const count of [1, 2, 0]) {
+    await page.getByRole('combobox', { name: '引擎数量', exact: true }).selectOption(String(count));
+    const definition = await aircraft(page);
+    const { mass, gravity } = await page.evaluate(async () => {
+      // Load through Vite in the browser; Node cannot import aircraft JSON without import attributes.
+      const physicsPath = '/src/physics.ts';
+      const { derive, GRAVITY } = await import(physicsPath) as typeof PhysicsModule;
+      return { mass: derive(window.glider.aircraft).mass, gravity: GRAVITY };
+    });
+    const thrust = count * engineCatalog[definition.engine.type].maxThrust;
+    const emptyMass = mass - definition.fuelTank.capacity * FUEL_DENSITY;
+    await expect(metrics.getByLabel('推重比', { exact: true })).toHaveText(count ? `${(thrust / (mass * gravity)).toFixed(2)}–${(thrust / (emptyMass * gravity)).toFixed(2)}` : '0');
+    for (const center of ['重心', '全机升力中心', '全机阻力中心', ...(count ? ['推力中心'] : [])]) {
+      for (const axis of ['X', 'Y', 'Z']) await expect(page.getByLabel(center + axis, { exact: true })).toHaveText(/^-?\d+\.\d{2}$/);
     }
   }
-  const vertical = preview.getByRole('row', { name: '垂直尾翼气动作用', exact: true });
-  const beforeVertical = await vertical.textContent();
-  await page.getByRole('tab', { name: '垂直尾翼', exact: true }).click();
-  await page.getByText('精确编辑四个顶点', { exact: true }).click();
-  const d = await aircraft(page);
-  await number(page, '顶点2展向坐标', d.verticalTail.points[1].y + 0.5);
-  await expect(vertical).not.toHaveText(beforeVertical!);
-  const stall = instruments.getByLabel('估算失速速度', { exact: true });
-  const beforeStall = Number(await stall.textContent());
-  expect(beforeStall).toBeGreaterThan(0);
-  await page.getByRole('tab', { name: '主翼', exact: true }).click();
-  await page.getByText('精确编辑四个顶点', { exact: true }).click();
-  await number(page, '顶点2展向坐标', (await aircraft(page)).mainWing.points[1].y + 1);
-  await expect(stall).not.toHaveText(String(beforeStall));
-  expect(Number(await stall.textContent())).toBeLessThan(beforeStall);
+  const row = page.locator('.stability .scene-hint');
+  await expect(row.locator(':scope > span')).toHaveCount(5);
+  const tops = await row.locator(':scope > span').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
+  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(2);
 });
+
 
 test('拥挤翼型的外伸手柄可分别拖动且不改变弦长', async ({ page }) => {
   await enterDesign(page);

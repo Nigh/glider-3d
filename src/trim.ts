@@ -7,3 +7,8 @@ export function trimStep(value: number, direction: number): number {
 export function trimFromPointer(percent: number): number {
  return (Math.abs(percent - 50) <= 3 ? 0 : (clamp(percent, 0, 100) - 50) / 50);
 }
+
+// Trim sets the neutral position; either full-stick endpoint remains reachable.
+export function mixTrim(stick: number, trim: number): number {
+ return clamp(stick + trim * (1 - Math.abs(stick)), -1, 1);
+}

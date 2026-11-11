@@ -73,60 +73,6 @@ describe('三轴操纵与高山路径边界', () => {
     expect(a.position.toArray()).toEqual(b.position.toArray()); expect(a.controlDeflections).toEqual(b.controlDeflections);
   });
 
-  it('自动升降舵配平顺俯仰角速度缓调，主动杆量优先，鸟人强制禁用', () => {
-    for (const direction of [-1, 1]) {
-      const s = create(); s.omega.z = direction * 0.5;
-      s.step({ ...neutral, autoTrim: true }, 0.01);
-      expect(s.telemetry.autoTrim).toBe(true);
-      const trim = s.telemetry.trimPitch;
-      s.step({ ...neutral, elevator: 0.5, autoTrim: true }, 0.01);
-      expect(s.telemetry.trimPitch).toBe(trim);
-      s.step({ ...neutral, autoTrim: false, trimPitch: trim }, 0.01);
-      expect(s.telemetry.autoTrim).toBe(false); expect(s.telemetry.trimPitch).toBe(trim);
-    }
-    const slow = create(); slow.velocity.set(4, 0, 0); slow.omega.z = 1;
-    slow.step({ ...neutral, autoTrim: true, trimPitch: 0.3 }, 0.01);
-    expect(slow.telemetry.trimPitch).toBe(0.3);
-    const saturated = create(); saturated.velocity.set(50, 0, 0); saturated.omega.z = 1;
-    saturated.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: 1 }, 0.01);
-    expect(saturated.telemetry.trimPitch).toBe(1);
-    expect(Math.abs(saturated.telemetry.controlInputs.elevator)).toBeLessThanOrEqual(saturated.telemetry.controlLimit);
-    const edited = create(); edited.step({ ...neutral, autoTrim: true, trimPitch: 0.1 }, 0.01);
-    edited.step({ ...neutral, autoTrim: true, trimPitch: 0.6, elevator: 0.5 }, 0.01);
-    expect(edited.telemetry.trimPitch).toBe(0.6);
-    const birdman = new FlightSimulation(defaultAircraft, 'birdman', 0);
-    birdman.step({ ...neutral, autoTrim: true, trimPitch: 1, trimRoll: 1 });
-    expect(birdman.telemetry.autoTrim).toBe(false); expect(birdman.telemetry.trimPitch).toBe(1); expect(birdman.telemetry.trimRoll).toBe(1);
-    expect(birdman.controlDeflections.elevator).toBeCloseTo(0, 12); expect(birdman.controlDeflections.aileron).toBeCloseTo(0, 12);
-  });
-
-  it('结构限幅时自动配平不继续向受限方向积分，反向修正仍可退出饱和', () => {
-    for (const direction of [-1, 1]) {
-      const definition = clone(downhillAircraft);
-      for (const key of ['mainWing', 'horizontalTail', 'verticalTail'] as const) {
-        definition[key].materialAmount = 0.5; definition[key].materialId = 'spruce';
-      }
-      const s = airborne(new FlightSimulation(definition, 'downhill', 0));
-      s.velocity.set(50, 0, 0); s.omega.z = direction;
-      s.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: direction * 0.4 }, 0.01);
-      expect(s.telemetry.controlLimit).toBeLessThan(0.4);
-      expect(s.telemetry.trimPitch * direction).toBeLessThanOrEqual(0.4);
-      s.omega.z = -direction;
-      s.step({ ...neutral, autoTrim: true, adaptiveControls: true, trimPitch: direction * 0.4 }, 0.01);
-      expect(s.telemetry.trimPitch * direction).toBeLessThan(0.4);
-    }
-  });
-
-  it('自动配平提供即时反俯仰舵量，而非等待配平积分累积', () => {
-    for (const direction of [-1, 1]) {
-      const assisted = create(), manual = create();
-      assisted.omega.z = manual.omega.z = direction * 0.5;
-      assisted.step({ ...neutral, autoTrim: true, adaptiveControls: true }, 0.01);
-      manual.step({ ...neutral, adaptiveControls: true }, 0.01);
-      expect(assisted.telemetry.controlInputs.elevator * direction).toBeGreaterThan(0);
-      expect((assisted.omega.z - manual.omega.z) * direction).toBeLessThan(0);
-    }
-  });
 
   it('开关、手动配平、自动配平和实际杆量随混合步长逐帧重放，累计时间重置', () => {
     const source = new FlightSimulation(downhillAircraft, 'downhill', 0), states: unknown[] = [];

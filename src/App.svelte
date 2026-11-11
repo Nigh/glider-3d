@@ -1,7 +1,8 @@
 <script lang="ts">
  import { onMount } from 'svelte';
  import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, fuselageEndLimits, resizeFuselage, mainWingMountLimits, mainWingSupport, wingMountLimits, cockpitLimits, cockpitRearLengthLimits, fuelCapacityLimit, normalizeAircraftGeometry, editWingPoint, engineMountLimits, engineMounts, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Wing } from './model';
- import { FlightSimulation, derive, fuelCgRange, LAUNCH, type FlightControls } from './physics';
+ import { FlightSimulation, derive, GRAVITY, LAUNCH, type FlightControls } from './physics';
+ import { engineCatalog, FUEL_DENSITY } from './engines';
  import { challengeDefinitions, challengeLaunch, LOW_ALTITUDE, type ChallengeMode } from './challenges';
  import { SceneView, type PilotHudFrame } from './scene';
  import LaboratoryControls from './LaboratoryControls.svelte';
@@ -44,7 +45,7 @@
  let rearRange=$derived(cockpitRearLengthLimits(aircraft));
  let mainMountLimits=$derived(mainWingMountLimits(aircraft)),support=$derived(mainWingSupport(aircraft));
  let engineRanges=$derived(engineHeightRanges(aircraft)),tankLimits=$derived(fuelTankLimits(aircraft));
- let fuelCenters=$derived(aircraft.engine.count>0&&aircraft.fuelTank.capacity>0?fuelCgRange(aircraft):null);
+ let thrustToWeight=$derived.by(()=>{const thrust=aircraft.engine.count*engineCatalog[aircraft.engine.type].maxThrust;return {full:thrust/(stats.mass*GRAVITY),empty:thrust/((stats.mass-(aircraft.engine.count>0?aircraft.fuelTank.capacity*FUEL_DENSITY:0))*GRAVITY)};});
  let thrustCenter=$derived.by(()=>{const mounts=engineMounts(aircraft);if(!mounts.length)return null;return mounts.reduce((center,mount)=>({x:center.x+mount.x/mounts.length,y:center.y+mount.y/mounts.length,z:center.z+mount.z/mounts.length}),{x:0,y:0,z:0});});
  let recording=$state.raw<ReturnType<FlightSimulation['getRecording']>|null>(null);let recordedLength=$state(0);let isReplay=$state(false);let lastDefinition=$state.raw(clone(defaultAircraft));
  let inputError=$state('');
@@ -217,7 +218,7 @@
  function design(){seekVersion++;seeking=false;activeReplay=null;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
  function challengeAircraft(){return challenge==='birdman'||isLaboratory(challenge)&&aircraft.birdman?defaultAircraft:presets.find(p=>p.name===(challenge==='low-altitude'?'基础单发型':'高性能滑翔型'))!;}
  function enterChallenge(next:ChallengeMode){const previous=challenge;challenge=next;if(!isAircraftCompatible(aircraft,next)){aircraft=clone(challengeAircraft());selectedId='';history=new History(clone(aircraft));historyVersion=0;}else if(isLaboratory(previous)&&!isLaboratory(next)){history=new History(clone(aircraft));historyVersion=0;}showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
- function toggleAutoTrim(){if(screen!=='flight'||isReplay||lastDefinition.birdman)return;if(autoTrim&&flightReady)trimPitch=hud.trimPitch??trimPitch;autoTrim=!autoTrim;}
+ function toggleAutoTrim(){if(screen!=='flight'||isReplay||lastDefinition.birdman)return;if(autoTrim)trimPitch=0;autoTrim=!autoTrim;}
  function toggleAdaptiveControls(){if(screen==='flight'&&!isReplay)adaptiveControls=!adaptiveControls;}
  function setPitchTrim(value:number){if(!pitchTrimLocked)trimPitch=value;}
  function moveStick(e:PointerEvent){const bounds=e.currentTarget instanceof HTMLElement?e.currentTarget.getBoundingClientRect():null;if(!bounds)return;const radius=Math.min(bounds.width,bounds.height)/2,x=(e.clientX-bounds.left-bounds.width/2)/radius,y=(bounds.top+bounds.height/2-e.clientY)/radius,length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;}
@@ -443,18 +444,22 @@ window.addEventListener('pointermove',mouse);
  <div class="viewport-tools" aria-label={t("设计相机")}>{#each ['自由','俯视','侧视','正视','后视'] as c}<button class:active={designCamera===c} aria-pressed={designCamera===c} onclick={()=>selectDesignCamera(c)}>{t(c)}</button>{/each}</div>
  <section class="design-instruments" aria-label={t("设计实时仪表")}>
  <section class="design-metrics" aria-label={t("飞机性能估算")}>
- <div><small>{t("主翼面积")}</small><strong>{main.area.toFixed(2)} <em>m²</em></strong></div><div><small>{t("翼展 / 展弦比")}</small><strong>{main.span.toFixed(2)} <em>m / {main.aspect.toFixed(1)}</em></strong></div><div><small>{t("全备质量 · 驾驶员")} {PILOT_MASS} kg</small><strong><output aria-label={t("全备质量")}>{stats.mass.toFixed(1)}</output> <em>kg</em></strong><small>{t("支撑")} <output aria-label={t("主翼支撑面积")}>{support.area.toFixed(2)}</output> m² · <output aria-label={t("主翼支撑质量")}>{support.mass.toFixed(2)}</output> kg</small></div><div><small>{t("翼载荷")}</small><strong>{stats.wingLoading.toFixed(2)} <em>kg/m²</em></strong></div><div title={t("自由空气、无地效的设计估算；飞行时随离水高度变化")}><small>{t("自由空气最佳滑翔比")}</small><strong>{stats.glideRatio.toFixed(1)} <em>: 1</em></strong></div><div title={t("全重、主翼面积、海平面、无地效")}><small>{t("估算失速速度")}</small><strong><output aria-label={t("估算失速速度")}>{stats.stallSpeed.toFixed(1)}</output> <em>m/s</em></strong></div>
+ <div><small>{t("主翼面积")}</small><strong>{main.area.toFixed(2)} <em>m²</em></strong></div>
+ <div><small>{t("翼展 / 展弦比")}</small><strong>{main.span.toFixed(2)} <em>m / {main.aspect.toFixed(1)}</em></strong></div>
+ <div><small>{t("翼载荷")}</small><strong>{stats.wingLoading.toFixed(2)} <em>kg/m²</em></strong></div>
+ <div title={t("自由空气、无地效的设计估算；飞行时随离水高度变化")}><small>{t("自由空气最佳滑翔比")}</small><strong>{stats.glideRatio.toFixed(1)} <em>: 1</em></strong></div>
+ <div title={t("全重、主翼面积、海平面、无地效")}><small>{t("估算失速速度")}</small><strong><output aria-label={t("估算失速速度")}>{stats.stallSpeed.toFixed(1)}</output> <em>m/s</em></strong></div>
+ <div><small>{t("全备质量 · 驾驶员")} {PILOT_MASS} kg</small><strong><output aria-label={t("全备质量")}>{stats.mass.toFixed(1)}</output> <em>kg</em></strong><small>{t("支撑")} <output aria-label={t("主翼支撑面积")}>{support.area.toFixed(2)}</output> m² · <output aria-label={t("主翼支撑质量")}>{support.mass.toFixed(2)}</output> kg</small></div>
+ <div title={t("海平面最大静推力 / 重量；满油至空油")}><small>{t("推重比")}</small><strong><output aria-label={t("推重比")}>{aircraft.engine.count>0?`${thrustToWeight.full.toFixed(2)}–${thrustToWeight.empty.toFixed(2)}`:'0'}</output></strong></div>
  </section>
  <section class="stability" aria-label={t("重心与升力中心配平参考")}>
- <div class="scene-hint"><span><i class="cg"></i> {t("重心 CG")} <output aria-label={t("重心X")}>{stats.cg.x.toFixed(2)}</output> m</span><span><i class="lift"></i> {t("全机升力中心")} <output aria-label={t("全机升力中心X")}>{stats.aerodynamics.liftCenter?stats.aerodynamics.liftCenter.x.toFixed(2)+' m':t("无合力")}</output></span><span><i class="drag"></i> {t("全机阻力中心")} <output aria-label={t("全机阻力中心X")}>{stats.aerodynamics.dragCenter?stats.aerodynamics.dragCenter.x.toFixed(2)+' m':t("无合力")}</output></span></div>
- {#if thrustCenter}<div class="scene-hint thrust-readout"><span><i class="thrust"></i>{t('推力中心')} <output aria-label={t('推力中心X')}>{thrustCenter.x.toFixed(2)}</output> / <output aria-label={t('推力中心Y')}>{thrustCenter.y.toFixed(2)}</output> / <output aria-label={t('推力中心Z')}>{thrustCenter.z.toFixed(2)}</output> m · {t('方向 +X')}</span></div>{/if}
- <div class="trim-values"><span>{t("静稳定裕度")} <output aria-label={t("静稳定裕度")}>{(stats.staticMargin*100).toFixed(1)}% MAC</output></span><span>{t("中性点 X")} {stats.neutralPoint.toFixed(2)} m</span><span>CG {((stats.mainQuarterChord.x+main.chord*0.25-stats.cg.x)/main.chord*100).toFixed(1)}% MAC</span><span>MAC {main.chord.toFixed(2)} m</span></div>
- <p class="trim-advice">{stats.staticMargin<0?t("重心偏后，可能俯仰失稳。"):stats.staticMargin>0.35?t("重心偏前，可能难以抬头。"):t("正稳定裕度不代表已配平。")} {t("建议 5–20% MAC；合力中心不表示力矩为零。")}</p>
- {#if fuelCenters}<p class="fuel-cg-range" aria-label={t("燃油重心范围")}>{t("燃油重心范围 · 满油 X")} <output aria-label={t("满油重心X")}>{fuelCenters.full.x.toFixed(4)}</output> {t("m · 空油 X")} <output aria-label={t("空油重心X")}>{fuelCenters.empty.x.toFixed(4)}</output> m <small>{t("三维连线标出满油圆点与空油菱形；空油仍保留油箱质量。")}</small></p>{/if}
- </section>
- <section class="aero-preview" aria-label={t("三翼气动力预览")}>
- <div class="aero-heading"><h2>{t("三翼气动力预览")}</h2><p>{t("自由空气 · 无地效 · 空速")} {stats.aerodynamics.speed.toFixed(0)} {t("m/s · 机身攻角")} {(stats.aerodynamics.alpha*180/Math.PI).toFixed(0)}{t("° · 侧滑")} {(stats.aerodynamics.beta*180/Math.PI).toFixed(0)}{t("° · 无操纵")}</p></div>
- <table><thead><tr><th scope="col">{t("翼面 / 几何")}</th><th scope="col">{t("有效攻角")}</th><th scope="col">{t("升 / 侧向力")}</th><th scope="col">{t("阻力")}</th><th scope="col">{t("俯仰 / 偏航矩")}</th></tr></thead><tbody>{#each stats.aerodynamics.wings as wing}{@const geometry=planform(aircraft[wing.kind==='vertical'?'verticalTail':wing.name==='主翼'?'mainWing':'horizontalTail'],wing.kind!=='vertical')}<tr class="aero-wing" aria-label={t("{p0}气动作用",{p0:t(wing.name)})}><th scope="row">{t(wing.name)}<small>{geometry.area.toFixed(2)} m² · {geometry.span.toFixed(1)} m · AR {geometry.aspect.toFixed(1)}</small></th><td><output aria-label={t("{p0}有效攻角",{p0:t(wing.name)})}>{(wing.alpha*180/Math.PI).toFixed(1)}</output>°</td><td><output aria-label={t("{p0}{p1}",{p0:t(wing.name),p1:wing.kind==='vertical'?t("侧向力"):t("升力")})}>{(wing.kind==='vertical'?wing.lift.z:wing.lift.y).toFixed(1)}</output> N</td><td><output aria-label={t("{p0}阻力",{p0:t(wing.name)})}>{wing.drag.length().toFixed(1)}</output> N</td><td><output aria-label={t("{p0}{p1}",{p0:t(wing.name),p1:wing.kind==='vertical'?t("偏航力矩"):t("俯仰力矩")})}>{(wing.kind==='vertical'?wing.torque.y:wing.torque.z).toFixed(1)}</output> N·m</td></tr>{/each}</tbody></table>
+ <div class="scene-hint">
+ <span><i class="cg"></i> {t("重心 CG")} <output aria-label={t("重心X")}>{stats.cg.x.toFixed(2)}</output> / <output aria-label={t("重心Y")}>{stats.cg.y.toFixed(2)}</output> / <output aria-label={t("重心Z")}>{stats.cg.z.toFixed(2)}</output> m</span>
+ <span><i class="lift"></i> {t("全机升力中心")} {#if stats.aerodynamics.liftCenter}{#each ['x','y','z'] as axis,index}{#if index} / {/if}<output aria-label={t(`全机升力中心${axis.toUpperCase()}`)}>{stats.aerodynamics.liftCenter[axis as 'x'|'y'|'z'].toFixed(2)}</output>{/each} m{:else}<output aria-label={t("全机升力中心X")}>{t("无合力")}</output>{/if}</span>
+ <span><i class="drag"></i> {t("全机阻力中心")} {#if stats.aerodynamics.dragCenter}{#each ['x','y','z'] as axis,index}{#if index} / {/if}<output aria-label={t(`全机阻力中心${axis.toUpperCase()}`)}>{stats.aerodynamics.dragCenter[axis as 'x'|'y'|'z'].toFixed(2)}</output>{/each} m{:else}<output aria-label={t("全机阻力中心X")}>{t("无合力")}</output>{/if}</span>
+ <span><i class="thrust"></i> {t("推力中心")} {#if thrustCenter}<output aria-label={t("推力中心X")}>{thrustCenter.x.toFixed(2)}</output> / <output aria-label={t("推力中心Y")}>{thrustCenter.y.toFixed(2)}</output> / <output aria-label={t("推力中心Z")}>{thrustCenter.z.toFixed(2)}</output> m{:else}<output aria-label={t("推力中心X")}>{t("无合力")}</output>{/if}</span>
+ <span>{t("静稳定裕度")} <output aria-label={t("静稳定裕度")}>{(stats.staticMargin*100).toFixed(1)}% MAC</output></span>
+ </div>
  </section>
  </section>
  {:else if screen==='flight'}
