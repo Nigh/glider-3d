@@ -173,8 +173,7 @@ test('连续拖动回放进度时同步更新飞机，不等待停止拖动', as
  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(2.6);
 });
 
-test('真实部件拾取显示悬停反馈并同步侧栏，拖动空白不误选', async ({ page, isMobile }) => {
- test.skip(isMobile, '悬停仅适用于鼠标；触摸选择复用同一射线拾取');
+test('真实部件拾取显示悬停反馈并同步侧栏，拖动空白不误选', async ({ page }) => {
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
  const canvas = await page.locator('.scene canvas').boundingBox();
  const part = await page.evaluate(() => window.glider.scene.editor.parts.find(part => part.target === 'horizontalTail'));
@@ -193,8 +192,7 @@ test('真实部件拾取显示悬停反馈并同步侧栏，拖动空白不误�
  await expect(page.getByRole('tab', { name: '主翼', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
 
-test('真实相机靠近避开水面，推挤有界且离开障碍后恢复观察距离', async ({ page, isMobile }) => {
- test.skip(isMobile, '真实渲染碰撞在桌面验证，移动端复用同一相机路径');
+test('真实相机靠近避开水面，推挤有界且离开障碍后恢复观察距离', async ({ page }) => {
  const result = await page.evaluate(async () => {
   // Use Vite's browser instances to exercise the actual scene and its renderer.
   const { SceneView } = await import('/src/scene.ts');

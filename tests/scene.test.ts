@@ -6,7 +6,7 @@ import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
 import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, downhillRuins, type ChallengeMode } from '../src/challenges';
-import { TEST_SPACE, testSpaceTerrainHeight } from '../src/laboratory';
+import { TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from '../src/laboratory';
 
 it('废墟窗带完整位于所属墙面外，倾斜建筑也不与墙面相交', () => {
   const view = Object.assign(Object.create(SceneView.prototype), {
@@ -642,6 +642,7 @@ function steamView(challenge: ChallengeMode) {
     environmentChallenge: challenge, simulation: null,
     steam: new InstancedMesh(geometry, new MeshBasicMaterial({ opacity: 0.38 }), 384),
     steamParticle: new Object3D(), steamOpacity: opacity, steamTime: 0, steamEmitting: false,
+    steamReleaseTime: 0, steamFirstEmission: 1, steamBurstPairs: 0,
   });
 }
 
@@ -679,13 +680,22 @@ describe('弹射蒸汽与门框边界', () => {
       const released = view.steamDiagnostics();
       expect(released.count).toBe(384);
       expect(released.emitting).toBe(false);
-      simulation.elapsedTime += 0.8;
+      expect(released.burstCount).toBe(192);
+      const burst = released.particles.filter(particle => particle.burst);
+      expect(Math.min(...burst.map(particle => particle.radius))).toBeGreaterThan(0.6);
+      expect(Math.max(...burst.map(particle => particle.opacity))).toBeGreaterThan(0.8);
+      simulation.elapsedTime += 0.2;
+      view.updateSteam();
+      const expanded = view.steamDiagnostics().particles.filter(particle => particle.burst);
+      expect(expanded[0].radius).toBeGreaterThan(burst[0].radius);
+      expect(expanded[0].opacity).toBeLessThan(burst[0].opacity);
+      expect(Math.abs(expanded[0].position.z)).toBeGreaterThan(Math.abs(burst[0].position.z));
+      simulation.elapsedTime += 0.6;
       view.updateSteam();
       const dissipating = view.steamDiagnostics();
       expect(dissipating.count).toBeGreaterThan(0);
       expect(dissipating.count).toBeLessThan(released.count);
-      expect(dissipating.particles.at(-1).radius).toBeGreaterThan(released.particles.at(-1).radius);
-      expect(dissipating.particles.at(-1).opacity).toBeLessThan(released.particles.at(-1).opacity);
+      expect(dissipating.burstCount).toBe(0);
       const snapshot = view.steamDiagnostics();
       snapshot.particles[0].position.x = 1e6;
       expect(view.steamDiagnostics().particles[0].position.x).not.toBe(1e6);
@@ -737,6 +747,47 @@ describe('弹射蒸汽与门框边界', () => {
       while (!replay.replayFinished) replay.step(neutral);
       view.updateSteam();
       expect(view.steam.count).toBe(0);
+      view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
+    }
+  });
+
+  it('真实弹射分离时刻同步泄压，测试空间低速滑行不提前触发，暂停与跳转保持确定性', () => {
+    const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+    for (const challenge of ['birdman', 'downhill', 'test-space'] as const) {
+      const settings = { height: 100, catapult: true, speed: 10 };
+      const sim = new FlightSimulation(defaultAircraft, challenge, 0, settings), view = steamView(challenge);
+      view.simulation = sim;
+      const matrices = view.steam.instanceMatrix.array;
+      while (sim.launching && !sim.ended) {
+        view.updateSteam();
+        expect(view.steamDiagnostics().burstCount).toBe(0);
+        sim.step(neutral);
+      }
+      expect(sim.ended).toBe(false);
+      view.updateSteam();
+      const separated = view.steamDiagnostics();
+      expect(separated.burstCount).toBe(192);
+      const launch = sim.launch;
+      const burst = separated.particles.filter(particle => particle.burst);
+      expect(burst.every(particle => Math.abs(particle.position.x - (launch?.endX ?? LAUNCH.endX)) < 1)).toBe(true);
+      if (challenge === 'test-space') expect(sim.elapsedTime).toBeGreaterThan(testCatapultSample(0, settings).duration - 1e-9);
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toEqual(separated);
+      for (let step = 0; step < 120; step++) sim.step(neutral);
+      view.updateSteam();
+      expect(view.steam.count).toBe(0);
+      // Direct time reconstruction gives identical clouds without replaying render frames.
+      view.simulation = { launch: sim.launch, challenge, testSpace: settings, elapsedTime: separated.time, launching: false, ended: false, replayFinished: false };
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toEqual(separated);
+      expect(view.steam.instanceMatrix.array).toBe(matrices);
+      view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
+    }
+    for (const challenge of ['test-space', 'wind-tunnel'] as const) {
+      const view = steamView(challenge);
+      view.simulation = new FlightSimulation(defaultAircraft, challenge, 0, { height: 100, speed: 10, catapult: false });
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toMatchObject({ count: 0, burstCount: 0, emitting: false });
       view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
     }
   });

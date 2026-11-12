@@ -11,8 +11,7 @@ test('油门位于左侧并保留竖直滑条',async({page})=>{
  expect(await throttle.evaluate(e=>getComputedStyle(e).writingMode)).toBe('vertical-lr');
 });
 
-test('平原废墟实例与碰撞盒一致，连续路线穿过楼间通道',async({page},info)=>{
- test.skip(info.project.name!=='desktop-chromium','场景几何在桌面验证');
+test('平原废墟实例与碰撞盒一致，连续路线穿过楼间通道',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('/');
  const result=await page.evaluate(async()=>{

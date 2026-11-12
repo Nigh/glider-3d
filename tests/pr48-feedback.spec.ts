@@ -80,8 +80,7 @@ test('副翼开关控制安装位置，吸附手柄固定在垂尾顶端并支�
  await expect(page.getByRole('spinbutton', { name: '副翼位置精确值', exact: true })).toBeEnabled();
 });
 
-test('真实拖动在垂尾顶端外侧二十厘米仍吸附至准确顶端', async ({ page, isMobile }) => {
- test.skip(isMobile, '精确鼠标轨迹在桌面验证；移动端覆盖显式安装开关');
+test('真实拖动在垂尾顶端外侧二十厘米仍吸附至准确顶端', async ({ page }) => {
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
  await page.getByRole('tab', { name: '副翼', exact: true }).click();
  await page.locator('.viewport-tools').getByRole('button', { name: '侧视', exact: true }).click();

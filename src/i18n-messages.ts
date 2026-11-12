@@ -4,6 +4,13 @@ import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
  ...laboratoryMessages,
  ...inputMessages,
+ "当前受力与力矩": ["Current forces and moments", "現在の力とモーメント"],
+ "净外力 · 机体": ["Net force · Body axes", "合外力 · 機体軸"],
+ "重心力矩 · 机体": ["CG moment · Body axes", "重心モーメント · 機体軸"],
+ "+X 机头 · +Y 机背 · +Z 右翼": ["+X Nose · +Y Dorsal · +Z Right wing", "+X 機首 · +Y 機体上方 · +Z 右翼"],
+ "+Mx 右翼下 · +My 左偏 · +Mz 抬头": ["+Mx Right wing down · +My Yaw left · +Mz Nose up", "+Mx 右翼下げ · +My 機首左 · +Mz 機首上げ"],
+ "含重力，不含支架反力；表示解除固定时主体的平移趋势。": ["Includes gravity, excludes fixture reactions; shows the attached body's translation tendency if released. Positive values follow the labeled axes; negative values oppose them.", "重力を含み、支持具の反力を除きます。固定を解除した際の機体本体の並進傾向です。正値は表示軸の方向、負値は逆方向です。"],
+ "机体轴关于当前重心的外力矩，不含支架反力矩；正值按标注方向，负值相反。": ["External moment about the current CG in body axes, excluding fixture reactions; positive values follow the labeled directions, negative values oppose them.", "現在の重心まわりの外力モーメントを機体軸で表示し、支持具の反力モーメントを除きます。正値は表示方向、負値は逆方向です。"],
  "返回工坊": ["Back to workshop", "工房に戻る"],
  "自由飞行 · 可调平台": ["Free flight · Launch setup", "自由飛行 · 発射台設定"],
  "来流与姿态 · 气动和结构": ["Aero & structure", "空力 · 構造テスト"],

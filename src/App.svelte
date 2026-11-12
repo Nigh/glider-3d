@@ -7,6 +7,8 @@
  import { SceneView, type PilotHudFrame } from './scene';
  import LaboratoryControls from './LaboratoryControls.svelte';
  import LaboratoryResults from './LaboratoryResults.svelte';
+ import WindForces from './WindForces.svelte';
+ import { windForceSnapshot } from './wind-forces';
  import { defaultTestSpace, defaultWindTunnel, isLaboratory, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
  import { listAircraft, loadAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, isAircraftCompatible, readBest, writeBest, History, type SavedAircraft } from './storage';
  import ReplayTimeline from './ReplayTimeline.svelte';
@@ -26,7 +28,7 @@
  const t=$derived.by(()=>{const locale=$language;return (source:string,params?:TranslationParams)=>translate(source,params,locale);});
  let audioError=$state('');
  const audio=new GameAudio(message=>audioError=message);
- function syncAudio(){audio.update({screen,ready:flightReady,paused:screen==='flight'&&paused,hidden:document.hidden,speed:simulation?.telemetry.speed??0,launching:simulation?.launching??false,engineRpm:simulation?.telemetry.engineRpm??0,challenge:simulation?.challenge??lastChallenge,launchKind:simulation?.launch?.kind??challengeLaunch(lastChallenge)?.kind??'catapult',timingStarted:simulation?.telemetry.timingStarted??false,challengeProgress:simulation?.telemetry.challengeProgress??0});}
+ function syncAudio(){audio.update({screen,ready:flightReady,paused:screen==='flight'&&paused,hidden:document.hidden,speed:simulation?.telemetry.speed??0,launching:simulation?.launching??false,engineRpm:simulation?.telemetry.engineRpm??0,challenge:simulation?.challenge??lastChallenge,launchKind:simulation?.launch?.kind??challengeLaunch(lastChallenge)?.kind??'catapult',timingStarted:simulation?.telemetry.timingStarted??false,challengeProgress:simulation?.telemetry.challengeProgress??0,simulation:simulation??undefined});}
  $effect(()=>{screen;flightReady;paused;if(sceneReady)syncAudio();});
  type Tab='机身'|'主翼'|'副翼'|'垂直尾翼'|'动力';
  const editorTabs={fuselage:'机身',mainWing:'主翼',horizontalTail:'副翼',verticalTail:'垂直尾翼',propulsion:'动力'} as const;
@@ -129,7 +131,7 @@
  $effect(()=>{const target=screen==='design'&&!showLibrary?(tab==='动力'?'propulsion':tab==='机身'?'fuselage':wingKey):null;if(sceneReady)scene.setEditor(target,d=>change(out=>Object.assign(out,d)),commit);});
  function flightSample(sim:FlightSimulation):FlightSample{const t=sim.telemetry;return {time:sim.elapsedTime,distance:t.distance,height:t.altitude,speed:t.speed,scoringHeight:t.altitude-t.groundClearance+LOW_ALTITUDE.scoringHeight,energyRatio:t.initialEnergy>0?(t.kineticEnergy+t.potentialEnergy)/t.initialEnergy:0,energyPerDistance:t.energyPerDistance,waterContact:t.waterContact,gForce:t.gForce};}
  function sampleFlight(final=false){if(!simulation||isLaboratory(lastChallenge)||(lastChallenge==='birdman'&&simulation.launching))return;if(final||flightElapsed-lastSampleTime>=0.1){const point=flightSample(simulation);samples.push(point);if(isReplay&&activeReplay){let saved=replaySamples.get(activeReplay.recording);if(!saved){saved=new Map();replaySamples.set(activeReplay.recording,saved);}saved.set(point.time,point);}lastSampleTime=flightElapsed;}}
- function refreshHud(){if(!simulation)return;const t=simulation.telemetry,s=simulation.structure;hud={...t,controlInputs:{...t.controlInputs},wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching,maxStressRatio:s.maxStressRatio,maxYieldRatio:s.maxYieldRatio,maxDeflection:s.maxDeflection,fractureCount:s.fractureCount,fragmentCount:simulation.fragments.length,peakWings:s.peakWings,wings:summarizeWingStructure(s.sections,structureWings)};}
+ function refreshHud(){if(!simulation)return;const t=simulation.telemetry,s=simulation.structure;hud={...t,controlInputs:{...t.controlInputs},wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,windForces:simulation.challenge==='wind-tunnel'?windForceSnapshot(t,simulation.quaternion):undefined,alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching,maxStressRatio:s.maxStressRatio,maxYieldRatio:s.maxYieldRatio,maxDeflection:s.maxDeflection,fractureCount:s.fractureCount,fragmentCount:simulation.fragments.length,peakWings:s.peakWings,wings:summarizeWingStructure(s.sections,structureWings)};}
  function refreshTrajectory(){if(trajectory.length!==samples.length)trajectory=samples.slice();}
  const hints:Record<Tab,string>={
   '机身':'驾驶舱的位置改变重心。过度靠后可能让飞机俯仰失稳。',
@@ -397,7 +399,7 @@ window.addEventListener('pointermove',mouse);
  <article class="saved-plane" class:incompatible={!compatible} data-aircraft-id={s.id}>
  {#if s.builtIn}<h3>{t(s.name)}</h3>{:else}<input aria-label={t("重命名{p0}",{p0:s.name})} value={s.name} maxlength="60" onchange={e=>renameSaved(s.id,e.currentTarget.value)}/>{/if}
  <small>{s.builtIn?t("系统飞机"):new Date(s.updatedAt).toLocaleString($language)} · {t(s.definition.birdman?"鸟人间飞机":"普通飞机")}{selectedId===s.id?t(" · 当前飞机"):''}</small>
- {#if s.builtIn&&s.definition.engine.count>0}<p>{t("巡航油门 {throttle}% · 巡航速度 {speed} m/s",{throttle:s.definition.engine.count===2?72:55,speed:s.definition.engine.count===2?30:17})}</p>{/if}
+ {#if s.builtIn&&s.definition.engine.count>0}<p>{t("巡航油门 {throttle}% · 巡航速度 {speed} m/s",{throttle:s.definition.engine.count===2?68:72,speed:s.definition.engine.count===2?29:24})}</p>{/if}
  {#if !compatible}<p class="compatibility-note">{t(challenge==='birdman'?"鸟人间比赛只允许无动力鸟人间设计":"当前挑战不可使用鸟人间飞机，请选择普通飞机。")}</p>{/if}
  <div><button class="load-plane" disabled={!compatible} onclick={()=>load(s.id)}>{t("加载")}</button><button onclick={()=>{try{duplicateAircraft(s.id);saved=listAircraft();}catch(e){notify((e as Error).message);}}}>{t("复制")}</button><button onclick={()=>fileExport(s.id)}>{t("导出")}</button>
  {#if !s.builtIn}<button class="delete-plane" onclick={()=>{if(confirm(t('删除“{name}”？此操作不可撤销。',{name:s.name}))){try{deleteAircraft(s.id);saved=listAircraft();if(selectedId===s.id)selectedId='';}catch(e){notify((e as Error).message);}}}}>{t("删除")}</button>{/if}</div>
@@ -551,7 +553,7 @@ window.addEventListener('pointermove',mouse);
  {#if lastDefinition.engine.count&&lastChallenge!=='wind-tunnel'}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t("油门")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><span class="throttle-track" style={`--rpm:${clamp(hud.engineRpm??0,0,1)*100}%`}><input aria-label={t("油门")} title={t("实色表示实际转速，滑块表示设定转速。")} disabled={isReplay} type="range" min="0" max="1" step="0.01" value={isReplay?hud.throttle??0:throttle} oninput={e=>{throttle=e.currentTarget.valueAsNumber;input.clear();}}/></span></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}{t("% · 推力")} {(hud.thrust??0).toFixed(0)} {t("N · 余油")} {(hud.fuelRemaining??0).toFixed(2)} L</p></section>{/if}
  {#if lastChallenge!=='wind-tunnel'}<div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次（仅暂停或结算时）")} / Esc · {t("设计")}</span>{#if flightReady}<button title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button>{/if}<select aria-label={t("飞行相机")} title={t("C 键切换视角 · 锁定视角可小幅拖动 · 回放支持全部视角")} bind:value={flightCamera} onchange={e=>selectCamera(e.currentTarget.value)}>{#each availableViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>{/if}
  {#if paused}<div class="pause-banner">{t("飞行已暂停")} <button onclick={togglePause}>{t("继续")}</button></div>{/if}
- <div class="flight-right">{@render aeroWindow()}{#if lastChallenge==='wind-tunnel'}{@render structureData()}{/if}</div>
+ <div class="flight-right">{#if lastChallenge==='wind-tunnel'&&hud.windForces}<WindForces loads={hud.windForces}/>{/if}{@render aeroWindow()}{#if lastChallenge==='wind-tunnel'}{@render structureData()}{/if}</div>
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}
  {#if lastChallenge!=='wind-tunnel'}{@render structureData()}{/if}
  </div>

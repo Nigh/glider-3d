@@ -97,7 +97,7 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  await page.getByRole('button',{name:'继续飞行',exact:true}).click();
  await page.mouse.move(0,0);
  await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeHidden();
- if(info.project.name==='desktop-chromium'){await timeline.hover();await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();await page.mouse.move(0,0);}
+ await timeline.hover();await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();await page.mouse.move(0,0);
 
  await page.getByRole('slider',{name:'回放进度',exact:true}).evaluate((el:HTMLInputElement,duration)=>{for(const f of [0.5,0.2,0.25]){el.value=String(duration*f);el.dispatchEvent(new Event('input',{bubbles:true}));}},fixture.duration);
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});

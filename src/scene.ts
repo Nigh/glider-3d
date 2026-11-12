@@ -8,7 +8,7 @@ import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
-import { isLaboratory, TEST_SPACE, testSpaceTerrainHeight } from './laboratory';
+import { isLaboratory, TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from './laboratory';
 import { LaboratoryScene } from './laboratory-scene';
 import { language, t } from './i18n';
 
@@ -159,6 +159,9 @@ export class SceneView {
   private readonly steamOpacity = new THREE.InstancedBufferAttribute(new Float32Array(STEAM_CAPACITY), 1).setUsage(THREE.DynamicDrawUsage);
   private steamTime = 0;
   private steamEmitting = false;
+  private steamReleaseTime = 0;
+  private steamFirstEmission = 1;
+  private steamBurstPairs = 0;
   private readonly environmentFog = new THREE.FogExp2(0xd4e3e4, 0.00165);
   private readonly light = new THREE.DirectionalLight(0xffedcf, 3.3);
   private readonly cg = this.centerMarker('cg');
@@ -3282,19 +3285,27 @@ export class SceneView {
 
   private updateSteam(): void {
     const sim = this.simulation;
-    const launch = challengeLaunch(this.environmentChallenge);
+    const launch = sim?.launch ?? challengeLaunch(this.environmentChallenge);
     const birdman = this.environmentChallenge === 'birdman';
     const acceleration = launch?.acceleration ?? LAUNCH.acceleration;
-    const duration = (launch?.speed ?? LAUNCH.speed) / acceleration;
+    const duration = sim?.challenge === 'test-space'
+      ? testCatapultSample(0, sim.testSpace).duration
+      : (launch?.speed ?? LAUNCH.speed) / acceleration;
+    this.steamReleaseTime = duration;
+    this.steamBurstPairs = 0;
     this.steamTime = sim?.elapsedTime ?? 0;
     this.steamEmitting = !!sim && !sim.ended && !sim.replayFinished && sim.launching && (birdman || launch?.kind === 'catapult');
     this.steam.count = 0;
     this.steam.visible = false;
     if (!sim || sim.ended || sim.replayFinished || (!birdman && launch?.kind !== 'catapult')) return;
     const time = this.steamTime;
-    const last = Math.min(Math.floor(time * STEAM_PAIRS_PER_SECOND + 1e-9), Math.round(duration * STEAM_PAIRS_PER_SECOND));
-    const first = Math.max(1, Math.floor((time - STEAM_LIFETIME) * STEAM_PAIRS_PER_SECOND) + 1);
-    if (last < first) return;
+    const released = !sim.launching && time >= duration - 1e-9;
+    const burstAge = Math.max(0, time - duration);
+    this.steamBurstPairs = released && burstAge < 0.7 ? 96 : 0;
+    const last = Math.min(Math.floor(time * STEAM_PAIRS_PER_SECOND + 1e-9), Math.floor(duration * STEAM_PAIRS_PER_SECOND + 1e-9));
+    const first = Math.max(1, Math.floor((time - STEAM_LIFETIME) * STEAM_PAIRS_PER_SECOND) + 1,
+      last - (STEAM_CAPACITY / 2 - this.steamBurstPairs) + 1);
+    this.steamFirstEmission = first;
     const startX = launch?.startX ?? LAUNCH.startX, endX = launch?.endX ?? LAUNCH.endX;
     const slope = launch?.slope ?? LAUNCH.slope, endY = launch?.y ?? LAUNCH.height, z = launch?.z ?? 0;
     let count = 0;
@@ -3303,7 +3314,10 @@ export class SceneView {
       const emittedAt = emission / STEAM_PAIRS_PER_SECOND;
       const age = time - emittedAt, life = age / STEAM_LIFETIME;
       const noise = Math.sin(emission * 2.399963), swirl = Math.cos(emission * 1.618034);
-      const x = Math.min(endX, startX + 0.5 * acceleration * emittedAt ** 2 * Math.cos(slope));
+      const accelerating = Math.min(emittedAt, (launch?.speed ?? LAUNCH.speed) / acceleration);
+      const x = Math.min(endX, startX + (sim.challenge === 'test-space'
+        ? 0.5 * acceleration * accelerating ** 2 + (launch?.speed ?? LAUNCH.speed) * (emittedAt - accelerating)
+        : 0.5 * acceleration * emittedAt ** 2 * Math.cos(slope)));
       const y = endY + (endX - x) * Math.tan(slope) + 0.12;
       const spread = 0.38 + (5.2 + noise * 1.2) * age / (1 + age * 0.45);
       const size = 0.22 + age * (0.9 + noise * 0.15);
@@ -3313,6 +3327,21 @@ export class SceneView {
         this.steamParticle.updateMatrix();
         this.steam.setMatrixAt(count, this.steamParticle.matrix);
         this.steamOpacity.setX(count, (1 - life) ** 2);
+        count++;
+      }
+    }
+    // 分离与释放音共享 launching 结束事件；固定末端云团只按模拟时间扩散，不累计渲染帧。
+    for (let pair = 0; pair < this.steamBurstPairs; pair++) {
+      const noise = Math.sin(pair * 2.399963), swirl = Math.cos(pair * 1.618034);
+      const spread = 0.45 + (pair % 12) * 0.13 + burstAge * (11 + noise * 3);
+      const size = 0.65 + (pair % 8) * 0.045 + burstAge * 2.8;
+      for (let side = -1; side <= 1; side += 2) {
+        this.steamParticle.position.set(endX + swirl * (0.7 + burstAge * 3),
+          endY + 0.2 + (pair % 7) * 0.09 + burstAge * (2.8 + noise), z + side * spread);
+        this.steamParticle.scale.set(size * 1.2, size, size * 1.7);
+        this.steamParticle.updateMatrix();
+        this.steam.setMatrixAt(count, this.steamParticle.matrix);
+        this.steamOpacity.setX(count, 2.3 * (1 - burstAge / 0.7) ** 2);
         count++;
       }
     }
@@ -3327,20 +3356,21 @@ export class SceneView {
     const matrix = new THREE.Matrix4(), point = new THREE.Vector3(), size = new THREE.Vector3(), rotation = new THREE.Quaternion();
     const particles = [];
     const time = this.steamTime;
-    const first = Math.max(1, Math.floor((time - STEAM_LIFETIME) * STEAM_PAIRS_PER_SECOND) + 1);
+    const burstStart = this.steam.count - this.steamBurstPairs * 2;
     for (let index = 0; index < this.steam.count; index++) {
       this.steam.getMatrixAt(index, matrix);
       matrix.decompose(point, rotation, size);
-      const emittedAt = (first + Math.floor(index / 2)) / STEAM_PAIRS_PER_SECOND;
+      const burst = index >= burstStart;
+      const emittedAt = burst ? this.steamReleaseTime : (this.steamFirstEmission + Math.floor(index / 2)) / STEAM_PAIRS_PER_SECOND;
       particles.push({
-        side: index % 2 === 0 ? 'left' : 'right', age: time - emittedAt,
+        side: index % 2 === 0 ? 'left' : 'right', age: time - emittedAt, burst,
         position: { x: point.x, y: point.y, z: point.z },
         radius: size.y, opacity: this.steamOpacity.getX(index) * this.steam.material.opacity,
       });
     }
     return {
       visible: this.steam.visible, emitting: this.steamEmitting, time,
-      count: this.steam.count, capacity: STEAM_CAPACITY, lifetime: STEAM_LIFETIME,
+      count: this.steam.count, capacity: STEAM_CAPACITY, lifetime: STEAM_LIFETIME, burstCount: this.steamBurstPairs * 2,
       leftCount: this.steam.count / 2, rightCount: this.steam.count / 2,
       pairsPerSecond: STEAM_PAIRS_PER_SECOND, particles,
     };

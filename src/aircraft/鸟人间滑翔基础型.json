@@ -28,13 +28,17 @@
       }
     ],
     "rootReference": 0.75,
-    "dihedral": 5.9,
+    "dihedral": 3,
     "controlSurface": 0,
-    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "spruce",
-    "materialAmount": 1.77,
+    "materialAmount": 2,
     "structure": {
       "width": 0.055,
       "height": 0.13,
@@ -62,7 +66,11 @@
     ],
     "dihedral": 0,
     "controlSurface": 0,
-    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "spruce",
@@ -95,7 +103,11 @@
     "rootReference": 0.45,
     "dihedral": 0,
     "controlSurface": 1,
-    "controlAxes": { "roll": false, "pitch": false, "yaw": true },
+    "controlAxes": {
+      "roll": false,
+      "pitch": false,
+      "yaw": true
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "spruce",
@@ -111,8 +123,8 @@
     "mainWingHeight": 1,
     "horizontalTail": -3.99,
     "verticalTail": -3.9,
-    "mainIncidence": 3,
-    "tailIncidence": 0,
+    "mainIncidence": 6,
+    "tailIncidence": -2.6,
     "tailOnFin": false
   },
   "pilot": {

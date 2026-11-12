@@ -114,7 +114,7 @@ test('机库替代工坊，禁止场景编辑与撤销，返回及流程切换�
 });
 
 for (const locale of ['en', 'ja']) {
- for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 667 }, { width: 667, height: 375 }]) {
+ const viewport = { width: 1280, height: 800 };
   test(`${locale}菜单在${viewport.width}×${viewport.height}内完整显示且入口可用`, async ({ page }) => {
    await page.setViewportSize(viewport);
    await page.addInitScript(locale => localStorage.setItem('aero-formula.language', locale), locale);
@@ -135,7 +135,6 @@ for (const locale of ['en', 'ja']) {
    await buttons.last().click();
    await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('design');
   });
- }
 }
 
 for (const challenge of ['鸟人间挑战', '高山速降', '低空飞行']) {

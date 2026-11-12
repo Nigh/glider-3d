@@ -25,7 +25,7 @@ Linux x64、Node v24.9.0，Vite SSR运行真实 `FlightSimulation.step()`。基�
 
 - `node scripts/contact-performance.mjs`：固定60Hz四个真实场景，检查成熟断裂、逐次卸载、形状预算、净空、接触耗散与机械能，输出JSON。可传其他已安装依赖的checkout路径；需串行运行。
 - `npm test -- --maxWorkers=1 --silent --testTimeout=30000`：392通过。覆盖30/60/144Hz时钟、30/60/120/240Hz渲染节奏驱动同60Hz真实碰撞的一致性、超预算减速、1至5步累积、同tick去重、卸载清零、镜像、纯分离守恒与回放状态。
-- `tests/review-52.spec.ts`：真实物理长翼、组合T尾网格、关键帧恢复和双向seek，使用配置中的桌面与手机横竖视口。截图保存在Playwright输出目录。
+- `tests/review-52.spec.ts`：真实物理长翼、组合T尾网格、关键帧恢复和双向seek。历史验证使用桌面与手机横竖视口；当前只保留桌面Chromium，移动端不再支持或测试。截图保存在Playwright输出目录。
 
 长期平台接触回归额外发现：已有活动接触曾被扫掠无条件跳过，新的失效时序下可继续进入平台。现在仍对活动接触的新增穿透做接受步细分，不抬升或瞬移刚体，不修改容差或能量账本。
 
