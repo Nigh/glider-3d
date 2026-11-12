@@ -9,6 +9,7 @@
  import LaboratoryControls from './LaboratoryControls.svelte';
  import LaboratoryResults from './LaboratoryResults.svelte';
  import WindForces from './WindForces.svelte';
+ import DragReadout from './DragReadout.svelte';
  import { windForceSnapshot } from './wind-forces';
  import { defaultTestSpace, defaultWindTunnel, isLaboratory, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
  import { listAircraft, loadAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, isAircraftCompatible, readBest, writeBest, History, type SavedAircraft } from './storage';
@@ -410,8 +411,11 @@ window.addEventListener('pointermove',mouse);
 {/snippet}
 {#snippet aeroWindow()}
 {#if aero&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
-{#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"],["阻力",hud.aerodynamics.drag.length(),"N"],["摩擦阻力（零升阻力）",hud.aerodynamics.profileDrag.length(),"N"],["诱导阻力",hud.aerodynamics.inducedDrag.length(),"N"],["侧向力",hud.aerodynamics.force.z,"N"],["攻角",hud.alpha,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""],["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt title={item[0]==="摩擦阻力（零升阻力）"?t("非诱导分项包含翼型摩擦与压差阻力、机身及发动机外阻；不是单独的表面摩擦。"):undefined}>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
-</dl></aside>{/if}
+{#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
+<DragReadout aerodynamics={hud.aerodynamics} windTunnel={lastChallenge==='wind-tunnel'}/>
+{#each [["侧向力",hud.aerodynamics.force.z,"N"],["机身攻角",hud.aerodynamics.alpha*180/Math.PI,"°"],["主翼几何攻角",hud.alpha,"°"],["主翼有效攻角",hud.aerodynamics.wings[0].alpha*180/Math.PI,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""] ,["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
+{#if lastChallenge==='wind-tunnel'}<div class="reynolds-range"><dt>{t('局部雷诺数范围')}</dt><dd data-reynolds-range>{hud.aerodynamics.reynoldsMin.toExponential(2)}–{hud.aerodynamics.reynoldsMax.toExponential(2)}</dd></div>{/if}</dl>{#if lastChallenge==='wind-tunnel'}<p>{t('风洞为无动力测试；仰角不含翼面安装角。')}</p>{#if hud.aerodynamics.reynoldsMax>1000000}<p data-polar-limit>{t('翼型极曲线仅覆盖Re≤1M；超出部分沿用上限，结果未标定。')}</p>{/if}{/if}
+</aside>{/if}
 
 {/snippet}
 {#snippet hangar()}

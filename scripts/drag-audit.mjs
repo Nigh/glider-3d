@@ -7,6 +7,7 @@ const server = await createServer({ root, configFile: false, logLevel: 'error', 
 try {
   const { coefficients, FlightSimulation, AIR_DENSITY } = await server.ssrLoadModule('/src/physics.ts');
   const { presets, DEG } = await server.ssrLoadModule('/src/model.ts');
+  const { dragResistance } = await server.ssrLoadModule('/src/drag.ts');
   const sections = [200_000, 500_000, 1_000_000].map(re => ({
     reynolds: re,
     profileCdAtAlpha0: coefficients(0, 12, re).profileCd,
@@ -23,8 +24,8 @@ try {
     sim.aerodynamics.update(sim.cg, sim.quaternion, sim.velocity, undefined, sim.omega);
     const aero = sim.telemetry.aerodynamics, qS = 0.5 * AIR_DENSITY * speed ** 2 * sim.aircraft.wingArea;
     aircraft.push({ name: definition.name, speed, wingArea: sim.aircraft.wingArea,
-      profileN: aero.profileDrag.length(), inducedN: aero.inducedDrag.length(), totalN: aero.drag.length(),
-      nonInducedCD: aero.profileDrag.length() / qS, inducedCD: aero.inducedDrag.length() / qS,
+      profileN: dragResistance(aero.profileDrag, aero.dragAxis), inducedN: dragResistance(aero.inducedDrag, aero.dragAxis), totalN: dragResistance(aero.drag, aero.dragAxis),
+      nonInducedCD: dragResistance(aero.profileDrag, aero.dragAxis) / qS, inducedCD: dragResistance(aero.inducedDrag, aero.dragAxis) / qS,
       unresolvedBodyCD: 0.07 / sim.aircraft.wingArea,
     });
   }

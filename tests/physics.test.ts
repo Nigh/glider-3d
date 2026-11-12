@@ -3,6 +3,7 @@ import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
 import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight } from '../src/physics';
+import { ellipsoidSurfaceArea } from '../src/drag';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
@@ -14,7 +15,7 @@ function cockpitDrag(d: AircraftDefinition, cg: Vector3, velocity: Vector3, omeg
     const v = new Vector3().crossVectors(omega, arm).add(velocity), speed = v.length(), exposed = index === 0 ? 1 : 0.5;
     const projected = speed > 0 ? Math.PI * shape.xRadius * shape.yRadius * shape.zRadius
       * Math.hypot(v.x / shape.xRadius, v.y / shape.yRadius, v.z / shape.zRadius) / speed : 0;
-    const area = exposed * (0.18 * projected + 0.004 * 2 * Math.PI * shape.xRadius * (shape.yRadius + shape.zRadius));
+    const area = exposed * (0.18 * projected + 0.004 * ellipsoidSurfaceArea(shape));
     const drag = v.multiplyScalar(-0.5 * AIR_DENSITY * speed * area);
     force.add(drag); torque.add(new Vector3().crossVectors(arm, drag));
   }

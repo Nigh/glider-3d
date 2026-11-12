@@ -98,9 +98,9 @@ test('风洞安装角实体同步，返回工坊保留实际角度，三语阻�
   expect(errors[0]).toBeLessThan(1e-8);
   await page.getByRole('dialog', { name: '输入设置', exact: true }).getByRole('button', { name: '保存', exact: true }).first().click();
   for (const [locale, labels] of [
-    ['zh', ['阻力', '摩擦阻力（零升阻力）', '诱导阻力']],
-    ['en', ['Drag', 'Profile / parasite drag', 'Induced drag']],
-    ['ja', ['抗力', '形状・有害抗力（非誘導）', '誘導抗力']],
+    ['zh', ['阻力', '翼型型阻（摩擦与压差）', '翼面分离阻力']],
+    ['en', ['Drag', 'Airfoil profile drag (skin / pressure)', 'Separated-flow drag']],
+    ['ja', ['抗力', '翼型抗力（摩擦・圧力）', '剥離流の抗力']],
   ] as const) {
     await page.locator('.language-label select').selectOption(locale);
     const rows = await page.locator('.aero-live dt').allTextContents(), index = rows.indexOf(labels[0]);

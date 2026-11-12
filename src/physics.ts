@@ -7,6 +7,7 @@ import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, t
 import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
 import { mixTrim } from './trim';
 import { mixControlSurfaces, type MixingSurface } from './control-mixing';
+import { DRAG_TERMS, ellipsoidSurfaceArea, type DragTerm } from './drag';
 
 export const GRAVITY = 9.81;
 /** Production clock; diagnostic step(dt) calls share this overload interval. */
@@ -125,7 +126,7 @@ export interface AircraftProperties {
 }
 interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; ixy?: number; ixz?: number; iyz?: number; sectionId?: number; moving?: boolean; fuel?: boolean; wingSupport?: boolean }
 interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3 }
-interface Polar { cl: number; cd: number; inducedCd: number; profileCd: number; cm: number }
+interface Polar { cl: number; cd: number; inducedCd: number; profileCd: number; separatedCd: number; cm: number }
 export interface WingAerodynamics {
   kind: AerodynamicSurface['kind'];
   name: string;
@@ -155,6 +156,10 @@ export interface AerodynamicReference {
   profileDrag: Vector3;
   /** Lift-induced drag only, including geometric wake coupling. */
   inducedDrag: Vector3;
+  dragTerms: Record<DragTerm, Vector3>;
+  dragAxis: Vector3;
+  reynoldsMin: number;
+  reynoldsMax: number;
   /** 等效作用线距离CG最近的点；零合力时没有有限中心。 */
   liftCenter: Vector3 | null;
   dragCenter: Vector3 | null;
@@ -193,6 +198,10 @@ export interface AerodynamicSurface extends MixingSurface {
   circulation: number;
   nextCirculation: number;
   inducedDrag: number;
+  profileDrag: number;
+  separatedDrag: number;
+  spanwiseDrag: number;
+  waterDrag: number;
   normal: Vector3;
   incidence: number;
   controlEffectiveness: number;
@@ -454,14 +463,15 @@ function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reyn
   // 完全分离后改用下方平板阻力，避免弯度表两端在±π反向来流处造成跳变。
   out.profileCd = (1 - separated) * profileCd / clamp(reynolds / 200_000, 0.125, 1) ** 0.75;
   out.inducedCd = groundEffect * out.cl ** 2 / (Math.PI * Math.max(aspect, 0.1) * SPAN_EFFICIENCY);
-  out.cd = out.profileCd + out.inducedCd + separated * (1.7 * Math.sin(alpha) ** 2 + 0.3 * (1 - Math.cos(alpha)) ** 2);
+  out.separatedCd = separated * (1.7 * Math.sin(alpha) ** 2 + 0.3 * (1 - Math.cos(alpha)) ** 2);
+  out.cd = out.profileCd + out.inducedCd + out.separatedCd;
   out.cm = cambered ? (1 - separated) * SECTION_QUARTER_CHORD_CM : 0;
   return out;
 }
 
 /** 有限翼系数；Re默认500k。cambered=false为对称垂尾工程代理，不是DAE-11风洞结果。 */
 export function coefficients(alpha: number, aspect: number, reynolds = 500_000, cambered = true): Polar {
-  return polar(alpha, aspect, { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, cm: 0 }, 1, reynolds, cambered);
+  return polar(alpha, aspect, { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, separatedCd: 0, cm: 0 }, 1, reynolds, cambered);
 }
 
 /**
@@ -511,7 +521,7 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
           spanDirection: vertical ? new Vector3(0, direction, 0) : wingLocalPoint(w, incidence, side, 0, 0, 1, new Vector3()),
           chordDirection: vertical ? new Vector3(1, 0, 0) : wingLocalPoint(w, incidence, side, 1, 0, 0, new Vector3()),
           crossflowDirection: vertical ? new Vector3(0, direction, 0) : wingLocalPoint(w, incidence, side, 0, 0, 1, new Vector3()),
-          sweep: sweepAngle(w), clearance: Infinity, groundEffect: 1, inducedDrag: 0,
+          sweep: sweepAngle(w), clearance: Infinity, groundEffect: 1, inducedDrag: 0, profileDrag: 0, separatedDrag: 0, spanwiseDrag: 0, waterDrag: 0,
           inducedFlow: new Vector3(), localFlow: new Vector3(), localOmega: new Vector3(), airFraction: 1, circulation: 0, nextCirculation: 0,
           incidence,
           controlEffectiveness: effectiveness(w.controlSurface),
@@ -558,6 +568,11 @@ function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   // attached and reverse-flow Cd at virtually identical velocity.
   const spanwiseCd = 0.012 / clamp(speed * surface.chord / AIR_VISCOSITY / 500_000, 0.05, 1) ** 0.75;
   const dragPressure = coefficient.cd * pressureSpeedSq + spanwiseCd * Math.max(0, speed * speed - pressureSpeedSq);
+  const scale = 0.5 * AIR_DENSITY * surface.area;
+  surface.profileDrag = scale * coefficient.profileCd * pressureSpeedSq;
+  surface.separatedDrag = scale * coefficient.separatedCd * pressureSpeedSq;
+  surface.spanwiseDrag = scale * spanwiseCd * Math.max(0, speed * speed - pressureSpeedSq);
+  surface.waterDrag = 0;
   surface.drag.copy(velocity).multiplyScalar(speed > 1e-9 ? -0.5 * AIR_DENSITY * surface.area * dragPressure / speed : 0);
   surface.force.copy(liftDirection).multiplyScalar(lift).add(surface.drag);
   applySectionMoment(surface, coefficient.cm, pressureSpeedSq);
@@ -790,6 +805,14 @@ class AerodynamicSummary implements AerodynamicReference {
   readonly bodyDrag = new Vector3();
   readonly profileDrag = new Vector3();
   readonly inducedDrag = new Vector3();
+  readonly dragTerms = Object.fromEntries(DRAG_TERMS.map(key => [key, new Vector3()])) as Record<DragTerm, Vector3>;
+  readonly dragAxis = new Vector3(1, 0, 0);
+  reynoldsMin = 0;
+  reynoldsMax = 0;
+  readonly bodyPressureDrag = new Vector3();
+  readonly bodySkinDrag = new Vector3();
+  readonly bodyWaterDrag = new Vector3();
+  readonly bodyWaterDragMoment = new Vector3();
   readonly liftMoment = new Vector3();
   readonly dragMoment = new Vector3();
   readonly freeMoment = new Vector3();
@@ -797,7 +820,7 @@ class AerodynamicSummary implements AerodynamicReference {
   dragCenter: Vector3 | null = null;
   readonly wings: WingAerodynamics[];
   readonly bodies: { point: Vector3; projection: Vector3; skinArea: number }[];
-  readonly engines: { point: Vector3; area: number }[];
+  readonly engines: { point: Vector3; area: number; nacelleArea: number; supportArea: number }[];
   readonly bodyTorque = new Vector3();
   bodyPower = 0;
   private readonly liftPoint = new Vector3();
@@ -811,13 +834,14 @@ class AerodynamicSummary implements AerodynamicReference {
   private readonly moment = new Vector3();
 
   constructor(readonly surfaces: AerodynamicSurface[], d: AircraftDefinition) {
-    this.engines = engineMounts(d).map(mount => ({ point: new Vector3(mount.x, mount.y, mount.z), area: engineDragArea(d, mount) }));
+    this.engines = engineMounts(d).map(mount => ({ point: new Vector3(mount.x, mount.y, mount.z), area: engineDragArea(d, mount),
+      nacelleArea: Math.PI * engineCatalog[d.engine.type].radius ** 2 * 0.22, supportArea: mount.supportLength * mount.supportWidth * 0.02 }));
     this.bodies = (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).map((shape, index) => {
       // 椭球投影面积 + 湿表面摩擦代理；罩体只取露出壳体的上半部，不重复计算下半部。
       const exposed = index === 0 ? 1 : 0.5, pressure = 0.18 * Math.PI * exposed;
       return { point: new Vector3(d.cockpit.position + shape.x, shape.y, 0),
         projection: new Vector3(shape.yRadius * shape.zRadius, shape.xRadius * shape.zRadius, shape.xRadius * shape.yRadius).multiplyScalar(pressure),
-        skinArea: 0.004 * 2 * Math.PI * shape.xRadius * (shape.yRadius + shape.zRadius) * exposed };
+        skinArea: 0.004 * ellipsoidSurfaceArea(shape) * exposed };
     });
     this.wings = (['main', 'tail', 'vertical'] as const).map((kind, index) => {
       const panels = surfaces.filter(surface => surface.kind === kind);
@@ -831,12 +855,16 @@ class AerodynamicSummary implements AerodynamicReference {
     this.bodyDrag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * BODY_DRAG_AREA);
     this.bodyTorque.set(0, 0, 0);
     this.bodyPower = this.bodyDrag.dot(velocity);
+    this.bodyPressureDrag.set(0, 0, 0); this.bodySkinDrag.set(0, 0, 0);
     for (const body of this.bodies) {
       this.arm.copy(body.point).sub(cg);
       if (omega) this.localVelocity.crossVectors(omega, this.arm).add(velocity);
       else this.localVelocity.copy(velocity);
       const v = this.localVelocity, p = body.projection;
-      const areaSpeed = Math.hypot(p.x * v.x, p.y * v.y, p.z * v.z) + body.skinArea * v.length();
+      const pressureSpeed = Math.hypot(p.x * v.x, p.y * v.y, p.z * v.z), skinSpeed = body.skinArea * v.length();
+      this.bodyPressureDrag.addScaledVector(v, -0.5 * AIR_DENSITY * pressureSpeed);
+      this.bodySkinDrag.addScaledVector(v, -0.5 * AIR_DENSITY * skinSpeed);
+      const areaSpeed = pressureSpeed + skinSpeed;
       this.localForce.copy(v).multiplyScalar(-0.5 * AIR_DENSITY * areaSpeed);
       this.bodyDrag.add(this.localForce);
       this.bodyTorque.add(this.moment.crossVectors(this.arm, this.localForce));
@@ -851,6 +879,10 @@ class AerodynamicSummary implements AerodynamicReference {
     this.speed = velocity.length();
     this.alpha = Math.atan2(-this.velocity.y, this.velocity.x);
     this.beta = Math.atan2(this.velocity.z, Math.hypot(this.velocity.x, this.velocity.y));
+    if (this.speed > 1e-9) this.dragAxis.copy(this.velocity).divideScalar(this.speed);
+    else this.dragAxis.set(1, 0, 0);
+    for (const key of DRAG_TERMS) this.dragTerms[key].set(0, 0, 0);
+    this.reynoldsMin = Infinity; this.reynoldsMax = 0;
     this.force.set(0, 0, 0); this.lift.set(0, 0, 0); this.drag.set(0, 0, 0);
     this.inducedDrag.set(0, 0, 0);
     this.torque.set(0, 0, 0); this.liftMoment.set(0, 0, 0); this.dragMoment.set(0, 0, 0);
@@ -871,6 +903,14 @@ class AerodynamicSummary implements AerodynamicReference {
       this.localDrag.copy(surface.drag).applyQuaternion(this.inverse);
       const magnitude = this.localDrag.length();
       if (magnitude > 1e-12) this.inducedDrag.addScaledVector(this.localDrag, clamp(surface.inducedDrag / magnitude, 0, 1));
+      if (magnitude > 1e-12) {
+        this.dragTerms.wingProfile.addScaledVector(this.localDrag, surface.profileDrag / magnitude);
+        this.dragTerms.wingSeparated.addScaledVector(this.localDrag, surface.separatedDrag / magnitude);
+        this.dragTerms.wingSpanwise.addScaledVector(this.localDrag, surface.spanwiseDrag / magnitude);
+        this.dragTerms.water.addScaledVector(this.localDrag, surface.waterDrag / magnitude);
+      }
+      const reynolds = surface.localFlow.length() * surface.chord / AIR_VISCOSITY;
+      this.reynoldsMin = Math.min(this.reynoldsMin, reynolds); this.reynoldsMax = Math.max(this.reynoldsMax, reynolds);
       wing.force.add(this.localForce); wing.drag.add(this.localDrag);
       wing.alpha += surface.alpha * surface.area / wing.area;
       wing.groundEffect += surface.groundEffect * surface.area / wing.area;
@@ -890,6 +930,8 @@ class AerodynamicSummary implements AerodynamicReference {
     this.updateBody(cg, this.velocity, omega);
     this.force.add(this.bodyDrag); this.drag.add(this.bodyDrag);
     this.torque.add(this.bodyTorque); this.dragMoment.add(this.bodyTorque);
+    this.dragTerms.fuselage.copy(this.bodyDrag).sub(this.bodyPressureDrag).sub(this.bodySkinDrag);
+    this.dragTerms.bodyPressure.copy(this.bodyPressureDrag); this.dragTerms.bodySkin.copy(this.bodySkinDrag);
     // These loads already participate in FlightSimulation's real force/power
     // evaluation. Include the same engine envelope in the displayed summary.
     for (const engine of this.engines) {
@@ -897,10 +939,17 @@ class AerodynamicSummary implements AerodynamicReference {
       this.localVelocity.copy(this.velocity);
       if (omega) this.localVelocity.add(this.moment.crossVectors(omega, this.arm));
       this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * AIR_DENSITY * this.localVelocity.length() * engine.area);
+      const engineScale = -0.5 * AIR_DENSITY * this.localVelocity.length();
+      this.dragTerms.engineNacelle.addScaledVector(this.localVelocity, engineScale * engine.nacelleArea);
+      this.dragTerms.engineSupport.addScaledVector(this.localVelocity, engineScale * engine.supportArea);
       this.drag.add(this.localDrag); this.force.add(this.localDrag);
       this.moment.crossVectors(this.arm, this.localDrag);
       this.torque.add(this.moment); this.dragMoment.add(this.moment);
     }
+    this.drag.add(this.bodyWaterDrag); this.force.add(this.bodyWaterDrag); this.dragMoment.add(this.bodyWaterDragMoment);
+    this.torque.add(this.bodyWaterDragMoment);
+    this.dragTerms.water.add(this.bodyWaterDrag); this.dragTerms.induced.copy(this.inducedDrag);
+    if (this.reynoldsMin === Infinity) this.reynoldsMin = 0;
     this.profileDrag.copy(this.drag).sub(this.inducedDrag);
     if (torque) { this.freeMoment.add(this.moment.copy(torque).sub(this.torque)); this.torque.copy(torque); }
     this.liftCenter = this.center(this.lift, this.liftMoment, cg, this.liftPoint);
@@ -920,7 +969,7 @@ class AerodynamicSummary implements AerodynamicReference {
 function evaluateReference(aircraft: AircraftProperties) {
   const summary = aircraft.aerodynamics as AerodynamicSummary, speed = 12;
   const velocity = new Vector3(), direction = new Vector3(), force = new Vector3(), zero = new Vector3(), ground = new Vector3(0, 1, 0);
-  const coefficient: Polar = { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, cm: 0 };
+  const coefficient: Polar = { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, separatedCd: 0, cm: 0 };
   let maxCl = 0;
   // 构型派生时搜索同一全机受力；12m/s、无侧滑、无地效，不声称已配平或达到冠军设计值。
   for (let sample = 0; sample <= 125; sample++) {
@@ -1203,7 +1252,7 @@ export class FlightSimulation {
   private readonly candidateVelocity = new Vector3();
   private readonly candidateOmega = new Vector3();
   private readonly midpointQuaternion = new Quaternion();
-  private readonly polar: Polar = { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, cm: 0 };
+  private readonly polar: Polar = { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, separatedCd: 0, cm: 0 };
   private readonly candidatePosition = new Vector3();
   private readonly candidateQuaternion = new Quaternion();
   private maxSpeed = 10;
@@ -1339,11 +1388,13 @@ export class FlightSimulation {
     this.controlLimit = this.controlAuthority = 1;
     Object.assign(this.controlDeflections, { aileron: 0, elevator: 0, rudder: 0 });
     updateMass(this.definition, this.parts, 0, this.aircraft, this.neutral, this.chord);
+    this.aerodynamics.bodyWaterDrag.set(0, 0, 0); this.aerodynamics.bodyWaterDragMoment.set(0, 0, 0);
     evaluateReference(this.aircraft);
     for (const surface of this.surfaces) {
       surface.airFraction = 1;
       surface.force.set(0, 0, 0); surface.drag.set(0, 0, 0); surface.moment.set(0, 0, 0); surface.alpha = 0;
       surface.clearance = Infinity; surface.groundEffect = 1; surface.inducedDrag = 0;
+      surface.profileDrag = surface.separatedDrag = surface.spanwiseDrag = surface.waterDrag = 0;
       surface.controlCommand = surface.controlCandidate = 0;
     }
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0); this.telemetry.torque.set(0, 0, 0);
@@ -2016,10 +2067,12 @@ export class FlightSimulation {
     surface.force.multiplyScalar(1 - wet); surface.drag.multiplyScalar(1 - wet);
     surface.moment.multiplyScalar(1 - wet);
     surface.inducedDrag *= 1 - wet;
+    surface.profileDrag *= 1 - wet; surface.separatedDrag *= 1 - wet; surface.spanwiseDrag *= 1 - wet;
     const speed = this.localVelocity.length();
     const projected = speed > 1e-9 ? Math.abs(this.localVelocity.dot(surface.normal)) / speed : 0;
     const area = surface.area * (WATER.wingEdgeDrag + (1 - WATER.wingEdgeDrag) * projected);
     this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * WATER.density * WATER.wingDragCoefficient * area * wet * speed);
+    surface.waterDrag = this.localDrag.length();
     surface.drag.add(this.localDrag); surface.force.add(this.localDrag);
     this.buoyancy.set(0, WATER.density * GRAVITY * surface.area * surface.chord * WATER.wingVolumeRatio * wet, 0)
       .applyQuaternion(this.inverse);
@@ -2029,6 +2082,7 @@ export class FlightSimulation {
   }
 
   private bodyWater(omega: Vector3, orientation: Quaternion, position: Vector3) {
+    this.aerodynamics.bodyWaterDrag.set(0, 0, 0); this.aerodynamics.bodyWaterDragMoment.set(0, 0, 0);
     for (const sample of this.waterBody) {
       this.arm.copy(sample.point).sub(this.aircraft.cg);
       this.waterPoint.copy(this.arm).applyQuaternion(orientation).add(position);
@@ -2043,6 +2097,8 @@ export class FlightSimulation {
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
       this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * WATER.density * WATER.bodyDragCoefficient
         * sample.area * wet * this.localVelocity.length());
+      this.aerodynamics.bodyWaterDrag.add(this.localDrag);
+      this.aerodynamics.bodyWaterDragMoment.add(this.waterAxis.crossVectors(this.arm, this.localDrag));
       this.telemetry.aeroPower += this.localDrag.dot(this.localVelocity);
       this.buoyancy.set(0, WATER.density * GRAVITY * sample.volume * wet, 0).applyQuaternion(this.inverse);
       this.waterPower += this.buoyancy.dot(this.localVelocity);

@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 低Re型阻校正改变受力，阻力分项改变关键帧状态图；旧回放不能混用。
-export const PHYSICS_VERSION = 'wind-tunnel-drag-telemetry-v20';
+// 椭球湿表面积修正改变受力，完整阻力分项改变关键帧状态图。
+export const PHYSICS_VERSION = 'resolved-drag-budget-v21';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {
