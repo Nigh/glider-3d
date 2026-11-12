@@ -80,7 +80,7 @@ const SECTION_POLAR = [
 export const MAX_FRAMES = 36_000;
 export const FRAME_WIDTH = 12;
 const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 0 };
-const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
+const AILERON_LIMIT = 18 * DEG, HORIZONTAL_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
 /** 标准化舵量每秒最多变化1.25，减少高载荷下结构/操纵反馈的激励。 */
 export const CONTROL_SURFACE_RATE = 1.25;
 const CONTROL_AXES = ['aileron', 'elevator', 'rudder'] as const;
@@ -432,7 +432,7 @@ function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reyn
   return out;
 }
 
-/** 有限翼系数；Re默认500k。cambered=false为对称尾翼工程代理，不是DAE-11风洞结果。 */
+/** 有限翼系数；Re默认500k。cambered=false为对称垂尾工程代理，不是DAE-11风洞结果。 */
 export function coefficients(alpha: number, aspect: number, reynolds = 500_000, cambered = true): Polar {
   return polar(alpha, aspect, { cl: 0, cd: 0, inducedCd: 0, profileCd: 0 }, 1, reynolds, cambered);
 }
@@ -444,7 +444,7 @@ export function coefficients(alpha: number, aspect: number, reynolds = 500_000, 
  * https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/phak/07_phak_ch5.pdf
  * McCormick 近似见 COBEM 2007 式(14)，对梯形翼、强上反角和极小净空仅作趋势近似：
  * https://abcm.org.br/anais/cobem/2007/pdf/COBEM2007-1467.pdf
- * 保持既有 CL、型阻和分离模型；φ 仅修正诱导阻力及传至尾翼的主翼下洗。
+ * 保持既有 CL、型阻和分离模型；φ 仅修正诱导阻力。
  */
 function groundEffectFactor(clearance: number, span: number) {
   if (span <= 1e-9) return 1;
@@ -476,7 +476,7 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
         if (vertical && side === -1) continue;
         const point = vertical ? new Vector3(-quarter, direction * center, 0) : wingLocalPoint(w, incidence, side, -quarter, 0, center, new Vector3());
         point.x += origin.x; point.y += origin.y;
-        surfaces.push({ bodyId: 0, name: `${vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '水平尾翼'}${side < 0 ? '左' : '右'}`} ${start.toFixed(1)}–${end.toFixed(1)} m`,
+        surfaces.push({ bodyId: 0, name: `${vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '副翼'}${side < 0 ? '左' : '右'}`} ${start.toFixed(1)}–${end.toFixed(1)} m`,
           point,
           normal: vertical ? new Vector3(0, 0, 1) : wingLocalPoint(w, incidence, side, 0, 1, 0, new Vector3()),
           area: width * (root + tip) / 2, aspect: p.aspect, span: p.span,
@@ -499,18 +499,17 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
 }
 
 /** 与飞行积分共用单翼计算；力、阻力输出先保留在机体坐标中。 */
-function evaluateSurface(surface: AerodynamicSurface, deflection: number, mainDownwash: number, mainAspect: number,
+function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   velocity: Vector3, coefficient: Polar, liftDirection: Vector3) {
   const speed = velocity.length(), normalSpeed = velocity.dot(surface.normal);
-  // Installation incidence already rotates the physical normal and chord; only control/downwash offsets remain.
-  const incidence = deflection * surface.controlEffectiveness
-    - (surface.kind === 'tail' ? mainDownwash * 1.56 / (Math.PI * mainAspect) : 0);
+  // 安装角已包含在法向和弦向中；水平翼共用弯度截面，不按主翼/副翼身份添加尾流。
+  const incidence = deflection * surface.controlEffectiveness;
   // 后掠法向条带近似；弹性法向/作用点由结构模型更新，非真实非定常升力线或颤振求解。
   // 侧滑改变两侧有效动压，后掠产生上反效应，前掠产生反向效应。
   const crossflow = velocity.dot(surface.crossflowDirection);
   const chordSpeed = velocity.dot(surface.chordDirection) * Math.cos(surface.sweep) + crossflow * Math.sin(surface.sweep);
   surface.alpha = Math.atan2(-normalSpeed, chordSpeed) + incidence;
-  polar(surface.alpha, surface.aspect, coefficient, surface.groundEffect, speed * surface.chord / AIR_VISCOSITY, surface.kind === 'main');
+  polar(surface.alpha, surface.aspect, coefficient, surface.groundEffect, speed * surface.chord / AIR_VISCOSITY, surface.kind !== 'vertical');
   const pressureSpeedSq = chordSpeed ** 2 + normalSpeed ** 2;
   const lift = 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * coefficient.cl;
   surface.inducedDrag = 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * coefficient.inducedCd;
@@ -526,7 +525,7 @@ function evaluateSurface(surface: AerodynamicSurface, deflection: number, mainDo
   const dragPressure = coefficient.cd * pressureSpeedSq + spanwiseCd * Math.max(0, speed * speed - pressureSpeedSq);
   surface.drag.copy(velocity).multiplyScalar(speed > 1e-9 ? -0.5 * AIR_DENSITY * surface.area * dragPressure / speed : 0);
   surface.force.copy(liftDirection).multiplyScalar(lift).add(surface.drag);
-  // 下洗需要全来流动压下的等效 CL，而非后掠法向截面的 CL。
+  // 参考失速扫描使用全来流动压下的等效 CL，而非后掠法向截面的 CL。
   return speed > 1e-9 ? coefficient.cl * pressureSpeedSq * liftDirection.length() / (speed * speed) : 0;
 }
 
@@ -567,7 +566,7 @@ class AerodynamicSummary implements AerodynamicReference {
     });
     this.wings = (['main', 'tail', 'vertical'] as const).map((kind, index) => {
       const panels = surfaces.filter(surface => surface.kind === kind);
-      return { kind, name: ['主翼', '水平尾翼', '垂直尾翼'][index],
+      return { kind, name: ['主翼', '副翼', '垂直尾翼'][index],
         area: panels.reduce((sum, surface) => sum + surface.area, 0), aspect: panels[0].aspect, alpha: 0,
         groundEffect: 1, inducedDrag: 0,
         force: new Vector3(), lift: new Vector3(), drag: new Vector3(), torque: new Vector3() };
@@ -660,7 +659,7 @@ function evaluateReference(aircraft: AircraftProperties) {
     summary.updateBody(aircraft.cg, velocity);
     force.copy(summary.bodyDrag);
     for (const surface of summary.surfaces) {
-      const cl = evaluateSurface(surface, 0, mainLift, aircraft.aspect, velocity, coefficient, direction);
+      const cl = evaluateSurface(surface, 0, velocity, coefficient, direction);
       if (surface.kind === 'main') mainLift += cl * surface.area / aircraft.wingArea;
       force.add(surface.force);
     }
@@ -1533,11 +1532,11 @@ export class FlightSimulation {
         continue;
       }
       this.localVelocity.crossVectors(this.omega, this.arm).add(this.bodyVelocity);
-      const limit = surface.kind === 'main' ? AILERON_LIMIT : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT;
+      const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT;
       const center = surface.controlCommand * limit, delta = 0.001;
-      evaluateSurface(surface, center - delta, 0, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      evaluateSurface(surface, center - delta, this.localVelocity, this.polar, this.liftDirection);
       this.localDrag.copy(surface.force);
-      evaluateSurface(surface, center + delta, 0, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      evaluateSurface(surface, center + delta, this.localVelocity, this.polar, this.liftDirection);
       this.localDrag.subVectors(surface.force, this.localDrag).multiplyScalar(limit / (2 * delta));
       surface.controlMoment.crossVectors(this.arm, this.localDrag);
     }
@@ -1545,13 +1544,12 @@ export class FlightSimulation {
 
   private updateControlDeflections() {
     this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
-    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
+    this.controlDeflections.elevator = -this.applied.elevator * HORIZONTAL_LIMIT;
     this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
     for (const section of this.structure.sections) if (section.bodyId === 0) {
       const surface = section.surface as AerodynamicSurface;
       // Rotation axes point outboard on horizontal wings and along signed fin height.
-      const incidence = surface.controlCommand * (surface.kind === 'main' ? AILERON_LIMIT
-        : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT);
+      const incidence = surface.controlCommand * (surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT);
       section.controlDeflection = incidence * (surface.kind === 'vertical' ? -Math.sign(surface.spanDirection.y) : surface.side);
     }
   }
@@ -1691,7 +1689,7 @@ export class FlightSimulation {
     const speed = velocity.length();
     this.torque.set(0, 0, 0);
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0);
-    let mainDownwash = 0, power = 0;
+    let power = 0;
     this.waterPower = 0;
     for (const surface of this.surfaces) {
       if (surface.bodyId !== 0) continue;
@@ -1707,10 +1705,9 @@ export class FlightSimulation {
       }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
       const command = controls ? surface.controlCandidate : surface.controlCommand * surfaceScale;
-      const limit = surface.kind === 'main' ? AILERON_LIMIT : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT;
-      const cl = evaluateSurface(surface, command * limit, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
-      const wet = this.surfaceWater(surface, orientation, position);
-      if (surface.kind === 'main' && this.aircraft.wingArea > 0) mainDownwash += cl * (1 - wet) * surface.groundEffect * surface.area / this.aircraft.wingArea;
+      const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT;
+      evaluateSurface(surface, command * limit, this.localVelocity, this.polar, this.liftDirection);
+      this.surfaceWater(surface, orientation, position);
       // 升力与局部来流正交；空气/水阻计耗散，浮力功单独累计。
       power += surface.drag.dot(this.localVelocity);
       this.cross.crossVectors(this.arm, surface.force); this.torque.add(this.cross);
@@ -2249,8 +2246,8 @@ export class FlightSimulation {
         surface.groundEffect = groundEffectFactor(surface.clearance, surface.span * Math.hypot(this.cross.x, this.cross.z));
       }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      const limit = surface.kind === 'main' ? AILERON_LIMIT : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT;
-      evaluateSurface(surface, surface.controlCommand * limit, 0, surface.aspect, this.localVelocity, this.polar, this.liftDirection);
+      const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT;
+      evaluateSurface(surface, surface.controlCommand * limit, this.localVelocity, this.polar, this.liftDirection);
       fragment.aeroPower += surface.drag.dot(this.localVelocity);
       fragment.torque.add(this.cross.crossVectors(this.arm, surface.force));
       surface.force.applyQuaternion(orientation); surface.drag.applyQuaternion(orientation);

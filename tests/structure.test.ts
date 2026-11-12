@@ -372,11 +372,26 @@ describe('分段等效弹性梁', () => {
     expect(carbon.mass).toBeLessThan(aluminum.mass);
     expect(wood.structure.maxDeflection).toBeGreaterThan(carbon.structure.maxDeflection * 3);
     expect(wood.structure.maxDeflection).toBeGreaterThan(aluminum.structure.maxDeflection * 3);
-    expect(wood.structure.maxStressRatio).toBeGreaterThan(carbon.structure.maxStressRatio * 3);
     const thicker = sample('carbon-epoxy', 2);
     expect(thicker.mass).toBeGreaterThan(carbon.mass);
+    // 全机峰值可能来自未换材料的副翼；材料强度排序需隔离为相同主翼外载。
+    const loadedRoot = (simulation: FlightSimulation) => {
+      simulation.quaternion.identity(); simulation.omega.set(0, 0, 0);
+      simulation.structure.reset();
+      for (const section of simulation.structure.sections) section.surface.force.set(0, 0, 0);
+      const row = simulation.structure.sections.filter(section => section.wingKey === 'mainWing' && section.side === 1);
+      row.at(-1)!.surface.force.set(0, 100, 0);
+      simulation.structure.update(simulation, new Vector3(), new Vector3());
+      simulation.structure.summarize();
+      return row[0];
+    };
+    const woodRoot = loadedRoot(wood), carbonRoot = loadedRoot(carbon);
+    expect(woodRoot.moment.distanceTo(carbonRoot.moment)).toBeLessThan(1e-9);
+    expect(woodRoot.stressRatio).toBeGreaterThan(carbonRoot.stressRatio * 3);
+    const thickerRoot = loadedRoot(thicker);
+    expect(thickerRoot.moment.distanceTo(carbonRoot.moment)).toBeLessThan(1e-9);
     expect(thicker.structure.maxDeflection).toBeLessThan(carbon.structure.maxDeflection);
-    expect(thicker.structure.maxStressRatio).toBeLessThan(carbon.structure.maxStressRatio);
+    expect(thickerRoot.stressRatio).toBeLessThan(carbonRoot.stressRatio);
   });
 
   it('50–200%材料用量改变真实质量、惯量、EI/GJ和应力截面，保持合法管壁比例', () => {

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { mixTrim, trimStep, trimFromPointer } from '../src/trim';
+import { mixTrim, trimStep, trimFromPointer, pitchDisplay } from '../src/trim';
 it('trim keys add 1 displayed percentage point from any value and stop at endpoints', () => {
  expect(trimStep(0,1)).toBeCloseTo(0.02);
  expect(trimStep(0,-1)).toBeCloseTo(-0.02);
@@ -30,5 +30,16 @@ it('trim shifts neutral without taking either endpoint away from the pilot', () 
    expect(input).toBeLessThanOrEqual(1);
    previous = input;
   }
+ }
+});
+
+it('pitch indication reverses inverted and passes continuously through knife-edge without changing trim', () => {
+ for (const value of [-1, -0.3, 0, 0.6, 1]) {
+  expect(pitchDisplay(value, 0)).toBe(value);
+  expect(pitchDisplay(value, Math.PI)).toBeCloseTo(-value);
+  expect(pitchDisplay(value, Math.PI / 2)).toBeCloseTo(0);
+  expect(pitchDisplay(value, -Math.PI / 2)).toBeCloseTo(0);
+  expect(pitchDisplay(value, Math.PI / 3)).toBeCloseTo(value / 2);
+  expect(mixTrim(0, value)).toBe(value);
  }
 });

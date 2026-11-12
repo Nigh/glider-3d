@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
 import type { Material, MeshStandardMaterial } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint, presets } from '../src/model';
@@ -206,6 +206,60 @@ function svgElement() {
 }
 
 describe('场景编辑与推力中心', () => {
+  it('根弦与梢弦共用圆形手柄，安装点为带十字菱形，顶点连线紧随手柄以共享hover/focus', () => {
+    type TestSvg = {
+      style: { display: string }; attributes: Map<string, string>;
+      setAttribute(name: string, value: string): void;
+      querySelector(): { textContent: string; setAttribute(): void };
+      tagName: string; children: TestSvg[]; classes: Set<string>;
+      classList: { add(...names: string[]): void };
+      addEventListener(): void; append(...children: TestSvg[]): void; appendChild(child: TestSvg): void;
+      removeAttribute(name: string): void; cloneNode(): TestSvg;
+    };
+    const create = (tagName: string): TestSvg => {
+      const classes = new Set<string>();
+      const node: TestSvg = {
+        ...svgElement(), tagName, children: [], classes,
+        classList: { add(...names: string[]) { for (const name of names) classes.add(name); } },
+        addEventListener() {},
+        append(...children: TestSvg[]) { node.children.push(...children); },
+        appendChild(child: TestSvg) { node.children.push(child); },
+        removeAttribute(name: string) { node.attributes.delete(name); },
+        cloneNode() {
+          const copy = create(tagName);
+          for (const [name, value] of node.attributes) copy.setAttribute(name, value);
+          return copy;
+        },
+      };
+      return node;
+    };
+    vi.stubGlobal('document', { createElementNS: (_namespace: string, tag: string) => create(tag) });
+    try {
+      const overlay = create('svg');
+      const segments: { group: TestSvg }[] = [];
+      const handles: { group: TestSvg; leader: TestSvg }[] = [];
+      const view = Object.assign(Object.create(SceneView.prototype), {
+        editorOverlay: overlay, editorHandles: handles, editorSegments: segments, editorPolygons: [],
+        host: { appendChild() {} },
+      });
+      view.buildEditorOverlay();
+      const knobs = segments.map(segment => segment.group.children.find(node => node.classes.has('editor-knob'))!);
+      expect(knobs.map(knob => knob.attributes.get('r'))).toEqual(['10', '10', '10']);
+      for (const segment of segments) {
+        expect(segment.group.children[1].classes.has('editor-chord-line')).toBe(true);
+        expect(segment.group.children[2].classes.has('editor-leader')).toBe(true);
+      }
+      for (const handle of handles) {
+        const index = overlay.children.indexOf(handle.group);
+        expect(overlay.children[index + 1]).toBe(handle.leader);
+        const mark = handle.group.children.find(node => node.classes.has('editor-mount-mark'))!;
+        expect(mark.attributes.get('d')).toContain('M -5 0 H 5 M 0 -5 V 5');
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('a visible vertex handle over a chord never selects the chord underneath', () => {
     const group=()=>({style:{display:'',cursor:''},focus(){}});
     const view=Object.assign(Object.create(SceneView.prototype),{
@@ -256,6 +310,70 @@ describe('场景编辑与推力中心', () => {
         expect(Number(handle.leader.attributes.get('y1'))).toBeCloseTo(anchors[index].y, 10);
       }
     }
+    anchors[1].x = 500;
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    for (const handle of handles) {
+      expect(handle.x).toBeCloseTo(handle.ax, 10);
+      expect(handle.y).toBeCloseTo(handle.ay, 10);
+      expect(handle.leader.style.display).toBe('none');
+    }
+  });
+
+  it.each([1, -1])('镜像视角%d中弦手柄始终朝投影翼面外侧，安装点保留真实位置', mirror => {
+    const anchors = [
+      { x: 400, y: 260 }, { x: 400 + mirror * 220, y: 260 },
+      { x: 400 + mirror * 220, y: 400 }, { x: 400, y: 400 },
+      { x: 400 - mirror * 220, y: 260 }, { x: 400 - mirror * 220, y: 400 },
+      { x: 400, y: 330 },
+    ];
+    const projection = new Vector3();
+    projection.project = () => projection;
+    const handles = anchors.map((_anchor, index) => ({
+      index: index < 4 ? index : index - 3, side: index < 4 ? 1 : -1,
+      x: 0, y: 0, ax: 0, ay: 0, group: svgElement(), leader: svgElement(),
+    }));
+    const segments = [0, 1, 2].map(index => ({
+      index: index === 0 ? 0 : 1, side: index === 2 ? -1 : 1,
+      x: 0, y: 0, ax: 0, ay: 0, x1: 0, y1: 0, x2: 0, y2: 0,
+      group: Object.assign(svgElement(), {
+        children: [svgElement(), svgElement(), svgElement()], querySelectorAll: () => [],
+      }),
+    }));
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      definition: clone(defaultAircraft), editorTarget: 'mainWing', simulation: null, editorDirty: true,
+      width: 1000, height: 700, aircraft: new Group(), camera: new OrthographicCamera(),
+      editorOverlay: svgElement(), editorHandles: handles, editorSegments: segments, editorPolygons: [svgElement(), svgElement()],
+      editProjection: projection, body: { localToWorld: (point: Vector3) => point },
+      wingEditorPoint(index: number, side: number, out: Vector3) {
+        const anchor = anchors[side < 0 ? index === 1 ? 4 : index === 2 ? 5 : index : index];
+        return out.set(anchor.x / 500 - 1, 1 - anchor.y / 350, 0);
+      },
+      assemblyEditorPoint(_index: number, out: Vector3) {
+        return out.set(anchors[6].x / 500 - 1, 1 - anchors[6].y / 350, 0);
+      },
+    });
+    view.updateEditorOverlay();
+    expect((segments[0].x - 400) * mirror).toBeCloseTo(-52, 10);
+    expect((segments[1].x - anchors[1].x) * mirror).toBeCloseTo(52, 10);
+    expect((segments[2].x - anchors[4].x) * mirror).toBeCloseTo(-52, 10);
+    expect(handles[6].x).toBeCloseTo(400, 10);
+    expect(handles[6].y).toBeCloseTo(330, 10);
+    const firstLayout = segments.map(segment => ({ x: segment.x, y: segment.y }));
+    segments[1].x += 104; // Old collision offsets must not survive a now-clear preferred position.
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    expect(segments.map(segment => ({ x: segment.x, y: segment.y }))).toEqual(firstLayout);
+    anchors[1].y = anchors[2].y = 330; // Edge-on chord projections still extend along the visible span.
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    expect((segments[1].x - anchors[1].x) * mirror).toBeCloseTo(52, 10);
+    anchors[6].x = -10; anchors[6].y = 40;
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    expect(handles[6].x).toBe(24);
+    expect(handles[6].y).toBe(64);
+    expect(handles[6].leader.style.display).not.toBe('none');
   });
 
   it('拖动编辑手柄时相机保持原投影，不套用飞行镜头极角限制', () => {
@@ -920,7 +1038,7 @@ describe('工坊场景与直接选取', () => {
     expect(simulation.structure.sections.filter(section=>section.wingKey==='verticalTail').at(-1)!.referenceTip.y).toBe(-0.48);
     geometry.dispose();view.wingNormalGeometry[2].dispose();for(const hinge of view.hingeLines)hinge.geometry.dispose();
   });
-  it('平尾安装在较大范围内吸附至精确梢弦中心，拖远脱离，Ctrl跳过吸附',()=>{
+  it('副翼安装在较大范围内吸附至精确梢弦中心，拖远脱离，Ctrl跳过吸附',()=>{
     const view=designSceneView(),base=clone(defaultAircraft);
     Object.assign(view,{
       definition:base,editDefinition:clone(base),editorTarget:'horizontalTail',

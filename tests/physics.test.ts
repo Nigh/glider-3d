@@ -131,7 +131,7 @@ describe('展向条带与完整翼面', () => {
     expect(rotating.telemetry.torque.x).toBeLessThan(0);
   });
 
-  it('跨越分段边界时下洗和诱导阻力连续，不把新末段当独立短翼', () => {
+  it('跨越分段边界时迎角和诱导阻力连续，不把新末段当独立短翼', () => {
     const samples = [-1e-6, 1e-6].map(delta => derive(definition(d => {
       const span = 12.8 + delta;
       d.mainWing = wing(span, 16 / span, 16 / span);
@@ -393,7 +393,7 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(pitchSlope(aft)).toBeGreaterThan(0);
   });
 
-  it('水平尾翼面积和后移距离增强俯仰恢复力矩', () => {
+  it('副翼面积和后移距离增强俯仰恢复力矩', () => {
     const small = definition(d => { d.horizontalTail = wing(2.5, 0.6, 0.4); });
     const large = definition(d => { d.horizontalTail = wing(4.5, 1, 0.8); });
     expect(pitchSlope(large)).toBeLessThan(pitchSlope(small));
@@ -460,7 +460,7 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(samples[2].distanceTo(samples[1])).toBeLessThan(1e-5);
   });
 
-  it('主翼保留DAE11弯度，低Re增加型阻；尾翼仅为对称工程代理', () => {
+  it('水平翼保留DAE11弯度，低Re增加型阻；垂尾使用对称工程代理', () => {
     const low = coefficients(0, 12, 200_000), middle = coefficients(0, 12, 500_000), high = coefficients(0, 12, 1_000_000);
     expect(middle.cl).toBeGreaterThan(0.4);
     expect(low.profileCd).toBeGreaterThan(middle.profileCd); expect(middle.profileCd).toBeGreaterThan(high.profileCd);
@@ -470,12 +470,12 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(coefficients(0, 5, 500_000, false).cl).toBe(0);
   });
 
-  it('地效逐条带使用净空和完整翼展，只降低诱导阻力并减弱尾翼下洗', () => {
+  it('地效逐条带使用净空和完整翼展，只降低诱导阻力，不改变水平翼迎角', () => {
     const low = probe(undefined, s => { s.position.y = 2; }), high = probe(undefined, s => { s.position.y = 280; });
     const a = low.telemetry.aerodynamics.wings[0], b = high.telemetry.aerodynamics.wings[0];
     expect(a.inducedDrag).toBeLessThan(b.inducedDrag); expect(low.telemetry.liftDragRatio).toBeGreaterThan(high.telemetry.liftDragRatio);
     expect(a.lift.distanceTo(b.lift)).toBeLessThan(0.001);
-    expect(low.telemetry.aerodynamics.wings[1].alpha).toBeGreaterThan(high.telemetry.aerodynamics.wings[1].alpha);
+    expect(low.telemetry.aerodynamics.wings[1].alpha).toBeCloseTo(high.telemetry.aerodynamics.wings[1].alpha, 6);
     for (let i = 0; i < low.surfaces.length; i++) {
       const near = low.surfaces[i], far = high.surfaces[i];
       if (near.kind === 'main') expect(near.drag.length() - near.inducedDrag).toBeCloseTo(far.drag.length() - far.inducedDrag, 4);
@@ -673,7 +673,7 @@ describe('驾驶舱与尾翼几何的物理消费者', () => {
     expect(samples[1].drag).toBeGreaterThan(samples[0].drag);
   });
 
-  it('平尾吸附垂尾后，气动、接触、质量中心与惯量共用梢弦安装位置', () => {
+  it('副翼吸附垂尾后，气动、接触、质量中心与惯量共用梢弦安装位置', () => {
     const loose = definition(d => { d.verticalTail.points[1].y = 2; d.verticalTail.points[2].y = 2; });
     const attached = clone(loose); attached.assembly.tailOnFin = true;
     const a = new FlightSimulation(loose, 'birdman', 0), b = new FlightSimulation(attached, 'birdman', 0);

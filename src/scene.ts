@@ -213,7 +213,7 @@ export class SceneView {
   private readonly partHits: THREE.Intersection[] = [];
   private readonly partPointer = new THREE.Vector2();
   private readonly hoverBox = new THREE.Box3();
-  private readonly hoverOutline = new THREE.Box3Helper(this.hoverBox, 0x75e5ff);
+  private readonly hoverOutline = new THREE.Box3Helper(this.hoverBox, 0x164f91);
   private hoverTarget: EditorTarget = null;
   private selectionPointer = -1;
   private selectionX = 0;
@@ -948,10 +948,7 @@ export class SceneView {
     overlay.style.cssText = 'display:none;position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none;touch-action:none';
     for (let i = 0; i < 2; i++) {
       const polygon = document.createElementNS(SVG_NS, 'polygon');
-      polygon.setAttribute('fill', '#b84a2b');
-      polygon.setAttribute('fill-opacity', '0.12');
-      polygon.setAttribute('stroke', '#a33f24');
-      polygon.setAttribute('stroke-width', '1.5');
+      polygon.classList.add('editor-selection');
       overlay.appendChild(polygon);
       this.editorPolygons.push(polygon);
     }
@@ -961,20 +958,20 @@ export class SceneView {
       group.setAttribute('tabindex', '0');
       group.classList.add('editor-control', 'editor-chord', i === 0 ? 'editor-root-chord' : 'editor-tip-chord');
       group.style.cssText = 'pointer-events:none;cursor:grab';
-      for (const hit of [true, false]) {
+      for (const halo of [true, false]) {
         const line = document.createElementNS(SVG_NS, 'line');
-        line.setAttribute('stroke', hit ? 'transparent' : 'currentColor');
-        line.setAttribute('stroke-width', hit ? '18' : '3');
+        line.classList.add(halo ? 'editor-line-halo' : 'editor-chord-line');
         line.style.pointerEvents = 'none';
         group.appendChild(line);
       }
       const leader = document.createElementNS(SVG_NS, 'line');
+      leader.classList.add('editor-leader');
       leader.setAttribute('stroke', 'currentColor');
       leader.setAttribute('stroke-dasharray', '3 3');
       leader.style.pointerEvents = 'none';
       group.appendChild(leader);
       const knob = document.createElementNS(SVG_NS, 'circle');
-      knob.setAttribute('r', i === 0 ? '11' : '9');
+      knob.setAttribute('r', '10');
       knob.classList.add('editor-knob');
       knob.setAttribute('stroke', 'currentColor');
       knob.setAttribute('stroke-width', '3');
@@ -1017,7 +1014,7 @@ export class SceneView {
       point.style.pointerEvents = 'none';
       const mount = document.createElementNS(SVG_NS, 'path');
       mount.classList.add('editor-mount-mark');
-      mount.setAttribute('d', 'M 0 -11 L 11 0 L 0 11 L -11 0 Z');
+      mount.setAttribute('d', 'M 0 -12 L 12 0 L 0 12 L -12 0 Z M -5 0 H 5 M 0 -5 V 5');
       const focus = document.createElementNS(SVG_NS, 'circle');
       focus.classList.add('editor-focus-ring');
       focus.setAttribute('r', '17');
@@ -1033,13 +1030,12 @@ export class SceneView {
       leader.setAttribute('stroke', 'currentColor');
       leader.setAttribute('stroke-dasharray', '3 3');
       leader.style.pointerEvents = 'none';
-      overlay.appendChild(leader);
       group.append(hit, point, mount, focus, text);
       const handle = { group, leader, index: i < 4 ? i : i - 3, side: i < 4 ? 1 : -1, x: 0, y: 0, ax: 0, ay: 0 };
       this.editorHandles.push(handle);
       group.addEventListener('pointerdown', e => this.beginEditorDrag(e, i));
       group.addEventListener('keydown', e => this.keyEditor(e, i));
-      overlay.appendChild(group);
+      overlay.append(group, leader);
     }
     overlay.addEventListener('pointermove', e => this.moveEditorDrag(e));
     overlay.addEventListener('pointerup', e => { if (e.pointerId === this.editorPointerId) this.endEditorDrag(); });
@@ -1104,8 +1100,8 @@ export class SceneView {
     this.editorOverlay.setAttribute('viewBox', `0 0 ${this.width} ${this.height}`);
     this.aircraft.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
-    const label = t(key === 'mainWing' ? '主翼' : key === 'horizontalTail' ? '水平尾翼' : '垂直尾翼');
-    const tailMount = key === 'horizontalTail' && this.definition.assembly.tailOnFin ? this.editorHandles[6] : undefined;
+    const label = t(key === 'mainWing' ? '主翼' : key === 'horizontalTail' ? '副翼' : '垂直尾翼');
+    const wingMount = key !== 'fuselage' && key !== 'propulsion' ? this.editorHandles[6] : undefined;
     for (let i = 0; i < this.editorHandles.length; i++) {
       const handle = this.editorHandles[i];
       const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
@@ -1119,15 +1115,15 @@ export class SceneView {
       this.body.localToWorld(this.editProjection).project(this.camera);
       const ax = (this.editProjection.x + 1) * this.width / 2, ay = (1 - this.editProjection.y) * this.height / 2;
       // Preserve the layout offset; tiny anchor changes must not restart collision placement.
-      if (handle === tailMount) { handle.x = ax; handle.y = ay; }
+      if (handle === wingMount) { handle.x = clamp(ax, 24, this.width - 24); handle.y = clamp(ay, 64, this.height - 24); }
       else { handle.x += ax - handle.ax; handle.y += ay - handle.ay; }
       handle.ax = ax; handle.ay = ay;
       handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
-      const name = assemblyIndex >= 0 ? t(['主翼位置', '水平尾翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
+      const name = assemblyIndex >= 0 ? t(['主翼位置', '副翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
       handle.group.setAttribute('aria-label', name);
       handle.group.setAttribute('data-handle', String(i));
-      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '平尾安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : String(handle.index + 1);
+      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '副翼安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : String(handle.index + 1);
     }
     for (let i = 0; i < this.editorSegments.length; i++) {
       const segment = this.editorSegments[i];
@@ -1147,22 +1143,31 @@ export class SceneView {
         line.setAttribute('x1', String(segment.x1)); line.setAttribute('y1', String(segment.y1));
         line.setAttribute('x2', String(segment.x2)); line.setAttribute('y2', String(segment.y2));
       }
-      // Root and tip controls extend along opposite chord normals, in CSS pixels.
+      // Choose the outside from projected geometry, not world-side signs.
+      const mx = (segment.x1 + segment.x2) / 2, my = (segment.y1 + segment.y2) / 2;
+      const oppositeFirst = this.editorHandles[segment.index === 0 ? 1 : 0];
+      const oppositeLast = this.editorHandles[segment.index === 0 ? 2 : 3];
+      const outwardX = mx - (oppositeFirst.ax + oppositeLast.ax) / 2;
+      const outwardY = my - (oppositeFirst.ay + oppositeLast.ay) / 2;
       const dx = segment.x2 - segment.x1, dy = segment.y2 - segment.y1;
-      const length = Math.hypot(dx, dy) || 1;
-      const direction = segment.index === 0 ? -1 : segment.side;
-      const desiredX = (segment.x1 + segment.x2) / 2 + dy / length * 52 * direction;
-      const desiredY = (segment.y1 + segment.y2) / 2 - dx / length * 52 * direction;
+      const length = Math.hypot(dx, dy), outwardLength = Math.hypot(outwardX, outwardY);
+      let nx = length > 1 ? dy / length : outwardLength > 1 ? outwardX / outwardLength : 0;
+      let ny = length > 1 ? -dx / length : outwardLength > 1 ? outwardY / outwardLength : segment.index === 0 ? -1 : 1;
+      if (nx * outwardX + ny * outwardY < 0) { nx = -nx; ny = -ny; }
+      const desiredX = mx + nx * 52, desiredY = my + ny * 52;
       segment.x += desiredX - segment.ax; segment.y += desiredY - segment.ay;
       segment.ax = desiredX; segment.ay = desiredY;
-      const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
-        && (!tailMount || Math.hypot(tailMount.x - x, tailMount.y - y) >= 52 - 1e-6)
-        && !this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < 52 - 1e-6);
+      const fits = (x: number, y: number, gap = 52) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
+        && (!wingMount || Math.hypot(wingMount.x - x, wingMount.y - y) >= 52 - 1e-6)
+        && !this.editorSegments.some((other, index) => index < i && other.group.style.display !== 'none' && Math.hypot(other.x - x, other.y - y) < gap - 1e-6);
+      // A small clearance margin prevents jitter, but releases stale collision offsets.
+      if (fits(desiredX, desiredY, 58)) { segment.x = desiredX; segment.y = desiredY; }
       let placed = fits(segment.x, segment.y);
       for (let radius = 0; radius <= Math.max(this.width, this.height) && !placed; radius += 26) {
         for (let step = 0; step < 16; step++) {
-          const x = desiredX + Math.cos(step * Math.PI / 8) * radius;
-          const y = desiredY + Math.sin(step * Math.PI / 8) * radius;
+          const angle = Math.atan2(ny, nx) + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * Math.PI / 8;
+          const x = desiredX + Math.cos(angle) * radius;
+          const y = desiredY + Math.sin(angle) * radius;
           if (!fits(x, y)) continue;
           segment.x = x; segment.y = y; placed = true; break;
         }
@@ -1176,21 +1181,28 @@ export class SceneView {
       }
       const text = segment.group.querySelector('text')!;
       text.textContent = t(segment.index === 0 ? '根弦 1–4' : '梢弦 2–3');
-      text.setAttribute('x', String(segment.x + 15)); text.setAttribute('y', String(segment.y + 4));
+      const labelOnLeft = segment.x > this.width / 2;
+      text.setAttribute('text-anchor', labelOnLeft ? 'end' : 'start');
+      text.setAttribute('x', String(segment.x + (labelOnLeft ? -15 : 15))); text.setAttribute('y', String(segment.y + 4));
     }
     {
       const handles = this.editorHandles.filter(h => h.group.style.display !== 'none');
       const occupied = this.editorSegments.filter(s => s.group.style.display !== 'none').map(s => ({ x: s.x, y: s.y }));
       for (const handle of handles) {
         // Occupancy uses immutable screen positions, never mutable geometry anchors.
-        const fits = (x: number, y: number) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
-          && !occupied.some(other => Math.hypot(other.x - x, other.y - y) < 52 - 1e-6)
-          && !handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < 52 - 1e-6);
-        if (handle !== tailMount && !fits(handle.x, handle.y)) {
+        const fits = (x: number, y: number, gap = 52) => x >= 24 && x <= this.width - 24 && y >= 64 && y <= this.height - 24
+          && !occupied.some(other => Math.hypot(other.x - x, other.y - y) < gap - 1e-6)
+          && !handles.some(other => other !== handle && Math.hypot(other.ax - x, other.ay - y) < gap - 1e-6);
+        if (fits(handle.ax, handle.ay, 58)) { handle.x = handle.ax; handle.y = handle.ay; }
+        if (handle !== wingMount && !fits(handle.x, handle.y)) {
+          const first = handles.find(other => other.index === 0);
+          const last = handles.find(other => other.index === 2 && other.side === handle.side);
+          const outward = first && last ? Math.atan2(handle.ay - (first.ay + last.ay) / 2, handle.ax - (first.ax + last.ax) / 2)
+            : handle.index < 2 ? -Math.PI / 2 : Math.PI / 2;
           let found = false;
           for (let radius = 52; radius <= Math.max(this.width, this.height) && !found; radius += 26) {
             for (let step = 0; step < 16; step++) {
-              const angle = (handle.index < 2 ? -Math.PI / 2 : Math.PI / 2) + step * Math.PI / 8;
+              const angle = outward + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * Math.PI / 8;
               const x = handle.ax + Math.cos(angle) * radius, y = handle.ay + Math.sin(angle) * radius;
               if (!fits(x, y)) continue;
               handle.x = x; handle.y = y; found = true; break;

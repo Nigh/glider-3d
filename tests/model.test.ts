@@ -242,7 +242,7 @@ describe('参数化几何与信任边界',()=>{
   d.verticalTail.points[1].y=d.verticalTail.points[2].y=-0.51;
   expect(()=>validateAircraft(d)).toThrow();
  });
- it('平尾附着根弦逐端跟随垂尾梢，梢点及长度修改保持连接',()=>{
+ it('副翼附着根弦逐端跟随垂尾梢，梢点及长度修改保持连接',()=>{
   const d=clone(defaultAircraft);d.assembly.tailOnFin=true;normalizeAircraftGeometry(d);
   for(const [index,x,y] of [[1,0.43,1.91],[2,1.03,-0.4]]){
    editWingPoint(d,'verticalTail',index,x,y);

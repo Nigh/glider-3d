@@ -327,11 +327,11 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  w.structure={width:w.structure.width,height:w.structure.height,wallThickness:w.structure.wallThickness};
  // Design snapshots contain geometry and material only; runtime deformation never persists.
  d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),dihedral:w.dihedral,controlSurface:w.controlSurface,controlAxes:w.controlAxes,controlResponse:w.controlResponse,controlReversed:w.controlReversed,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
- if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和平尾不能安装控制面');
+ if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和副翼不能安装控制面');
  const p=w.points;if(p[0].y!==0||p[3].y!==0||Math.abs(p[1].y-p[2].y)>0.001||Math.abs(p[1].y)<0.25||p[3].x-p[0].x<0.15||p[2].x-p[1].x<0.15)throw Error('翼面不得自交，根弦与梢弦至少 0.15 m');
  }
  for(const key of ['mainWing','horizontalTail','verticalTail'] as const)finite(d.assembly?.[key],-24,24);
- if(d.assembly.tailOnFin!==undefined&&typeof d.assembly.tailOnFin!=='boolean')throw Error('平尾垂尾安装开关必须是布尔值');
+ if(d.assembly.tailOnFin!==undefined&&typeof d.assembly.tailOnFin!=='boolean')throw Error('副翼垂尾安装开关必须是布尔值');
  finite(d.assembly?.mainWingHeight,-0.5,1);finite(d.assembly?.mainIncidence,-10,18);finite(d.assembly?.tailIncidence,-12,12);
  const ends = fuselageEnds(d), epsilon = 1e-8;
  if (ends.nose < 0.1 - epsilon || ends.tail > -0.1 + epsilon) throw Error('机头须至少为 0.1 m，机尾须不高于 -0.1 m');

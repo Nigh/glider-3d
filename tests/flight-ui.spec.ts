@@ -102,7 +102,7 @@ test('工坊每个翼面保留响应轴，支持撤销与重置',async({page})=>
  await page.getByRole('button',{name:'高山速降',exact:false}).click();
  await page.getByRole('button',{name:'重置设计',exact:true}).click();
  const axes=page.getByRole('group',{name:'舵面响应轴',exact:true});
- for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['水平尾翼',true,true,false],['垂直尾翼',false,false,true]] as const){
+ for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['副翼',true,true,false],['垂直尾翼',false,false,true]] as const){
   await page.getByRole('tab',{name:part,exact:true}).click();
   for(const [axis,enabled] of [['滚转',roll],['俯仰',pitch],['偏航',yaw]] as const)await expect(axes.getByRole('switch',{name:`${axis}响应`,exact:true})).toHaveAttribute('aria-checked',String(enabled));
  }
@@ -161,4 +161,39 @@ test('回放智能混控只读且跟随记录和跳转',async({page})=>{
  await page.getByRole('slider',{name:'回放进度',exact:true}).press('Home');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
  await expect(mixing).toHaveAttribute('aria-checked','false');
+});
+
+test('回放倒飞时俯仰杆量与配平标记反向，配平设定不变',async({page})=>{
+ await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
+ await page.goto('/');
+ const text=await page.evaluate(async()=>{
+  // Browser-only fixture modules must load in the page, not the Node test process.
+  const {FlightSimulation}=await import('/src/physics.ts');
+  const {presets,clone}=await import('/src/model.ts');
+  const {exportReplay}=await import('/src/replay.ts');
+  const definition=clone(presets.find(plane=>plane.name==='基础单发型')!);
+  const simulation=new FlightSimulation(definition,'downhill',0);
+  // Capture a valid replay keyframe in inverted free flight, without changing live UI state.
+  simulation.launching=false;
+  simulation.position.set(100,2000,0);
+  simulation.quaternion.set(1,0,0,0);
+  simulation.velocity.set(20,0,0);
+  simulation.omega.set(0,0,0);
+  for(let frame=0;frame<60;frame++)simulation.step({weight:0,lateral:0,elevator:0,aileron:0,rudder:0,trimPitch:0.4});
+  return exportReplay({definition,challenge:'downhill',recording:simulation.getRecording()});
+ });
+ await page.getByLabel('导入回放',{exact:true}).setInputFiles({name:'inverted.json',mimeType:'application/json',buffer:Buffer.from(text)});
+ await page.getByRole('slider',{name:'回放进度',exact:true}).press('End');
+ await expect(page.getByRole('region',{name:'回放时间轴',exact:true})).toHaveAttribute('aria-busy','false');
+ await expect.poll(async()=>Number(await page.locator('.stick-pad .stick-position').getAttribute('cy'))).toBeGreaterThan(60);
+ const values=await page.evaluate(()=>{
+  const t=window.glider.telemetry;
+  const dot=document.querySelector('.stick-pad .stick-position')!;
+  return {roll:t.roll,pitch:t.controlInputs.elevator,trim:t.trimPitch,cy:Number(dot.getAttribute('cy')),marker:document.querySelector('.stick-trim-marker')!.getAttribute('d')!};
+ });
+ expect(Math.cos(values.roll)).toBeLessThan(-0.9);
+ expect(Math.abs(values.pitch)).toBeGreaterThan(0.1);
+ expect(values.cy).toBeCloseTo(60-values.pitch*Math.cos(values.roll)*35,5);
+ expect(Number(values.marker.split(' ')[2])).toBeCloseTo(60-values.trim*Math.cos(values.roll)*35,5);
+ await expect(page.getByRole('slider',{name:'升降舵配平',exact:true})).toHaveValue(String((values.trim+1)*50));
 });

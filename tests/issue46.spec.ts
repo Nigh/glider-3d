@@ -20,7 +20,7 @@ test('安装参数归属各部件，负上反角可编辑，菜单与场景选�
  await dihedral.fill('-12'); await dihedral.press('Tab');
  await expect.poll(() => page.evaluate(() => window.glider.aircraft.mainWing.dihedral)).toBe(-12);
  for (const [label, target, fields] of [
-  ['水平尾翼', 'horizontalTail', ['水平尾翼位置精确值', '水平尾翼安装角精确值']],
+  ['副翼', 'horizontalTail', ['副翼位置精确值', '副翼安装角精确值']],
   ['垂直尾翼', 'verticalTail', ['垂直尾翼位置精确值']],
   ['机身', 'fuselage', ['机头端点精确值', '机尾端点精确值', '驾驶舱位置精确值']],
  ] as const) {
@@ -178,11 +178,11 @@ test('真实部件拾取显示悬停反馈并同步侧栏，拖动空白不误�
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
  const canvas = await page.locator('.scene canvas').boundingBox();
  const part = await page.evaluate(() => window.glider.scene.editor.parts.find(part => part.target === 'horizontalTail'));
- if (!canvas || !part) throw Error('Horizontal tail projection missing');
+ if (!canvas || !part) throw Error('Auxiliary wing projection missing');
  await page.mouse.move(canvas.x + part.x, canvas.y + part.y);
  await expect.poll(() => page.evaluate(() => window.glider.scene.editor.hover)).toBe('horizontalTail');
  await page.mouse.click(canvas.x + part.x, canvas.y + part.y);
- await expect(page.getByRole('tab', { name: '水平尾翼', exact: true })).toHaveAttribute('aria-selected', 'true');
+ await expect(page.getByRole('tab', { name: '副翼', exact: true })).toHaveAttribute('aria-selected', 'true');
  await expect.poll(() => page.evaluate(() => window.glider.scene.editor.target)).toBe('horizontalTail');
  await page.getByRole('tab', { name: '主翼', exact: true }).click();
  await expect.poll(() => page.evaluate(() => window.glider.scene.editor.target)).toBe('mainWing');

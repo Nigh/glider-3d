@@ -49,6 +49,12 @@ describe('shared translations', () => {
    }
   }
  });
+ it('distinguishes the auxiliary wing from aileron trim for issue #55', () => {
+  expect(t('副翼', {}, 'en')).toBe('Auxiliary wing');
+  expect(t('副翼', {}, 'ja')).toBe('補助翼');
+  expect(t('副翼配平', {}, 'en')).toBe('Roll trim');
+  expect(t('副翼配平', {}, 'ja')).toBe('ロールトリム');
+ });
  it('translates product names, catalogs, presets, prompts and interpolated values', () => {
   const names = [defaultAircraft.name, ...presets.map(preset => preset.name), ...Object.values(materialCatalog).flatMap(material => [material.name, material.note, material.strengthLabel]), ...Object.values(challengeDefinitions).map(challenge => challenge.name)];
   for (const name of names) expect(messages[name], name).toBeDefined();

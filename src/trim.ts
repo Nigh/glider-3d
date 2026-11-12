@@ -12,3 +12,8 @@ export function trimFromPointer(percent: number): number {
 export function mixTrim(stick: number, trim: number): number {
  return clamp(stick + trim * (1 - Math.abs(stick)), -1, 1);
 }
+
+// Body-axis pitch projected onto world up, including knife-edge and inverted flight.
+export function pitchDisplay(value: number, roll: number): number {
+ return value * Math.cos(roll);
+}

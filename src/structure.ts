@@ -48,7 +48,7 @@ export interface WingFragment extends StructuralBody {
 
 export function summarizeWingStructure(sections: readonly Pick<StructureSection, 'wingKey' | 'stressRatio' | 'yieldRatio' | 'bodyId'>[], wings = [
   { key: 'mainWing', name: '主翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
-  { key: 'horizontalTail', name: '水平尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+  { key: 'horizontalTail', name: '副翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
   { key: 'verticalTail', name: '垂直尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
 ]) {
  for (const wing of wings) wing.stress = wing.yieldRatio = wing.attached = wing.detached = 0;
