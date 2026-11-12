@@ -500,8 +500,13 @@ describe('气动、质量、能量与消费者边界', () => {
   });
 
   it('步长收敛，外部大步长等同60Hz细分，能耗使用世界水平速度', () => {
-    const a = probe(undefined, undefined, 1 / 60), b = probe(undefined, undefined, 1 / 120), c = probe(undefined, undefined, 1 / 240);
-    const reference = probe(undefined, undefined, 1 / 960);
+    // Isolate integration convergence from discrete fracture topology changes.
+    // The default light airframe fractures in this high-load initial state.
+    const intact = definition(d => {
+      for (const wing of [d.mainWing, d.horizontalTail, d.verticalTail]) { wing.materialId = 'carbon-epoxy'; wing.materialAmount = 2; }
+    });
+    const a = probe(intact, undefined, 1 / 60), b = probe(intact, undefined, 1 / 120), c = probe(intact, undefined, 1 / 240);
+    const reference = probe(intact, undefined, 1 / 960);
     for (let i = 1; i < 60; i++) a.step(neutral);
     for (let i = 1; i < 120; i++) b.step(neutral, 1 / 120);
     for (let i = 1; i < 240; i++) c.step(neutral, 1 / 240);
@@ -509,7 +514,7 @@ describe('气动、质量、能量与消费者边界', () => {
     // 准静态形状在接受步后更新；比较实际收敛，不沿用纯刚体中点法的毫米级误差数值钉。
     expect(b.position.distanceTo(reference.position)).toBeLessThan(a.position.distanceTo(reference.position));
     expect(c.position.distanceTo(reference.position)).toBeLessThan(b.position.distanceTo(reference.position));
-    for (const s of [a, b, c, reference]) { budget(s); expect(s.telemetry.energyPerDistance).toBeCloseTo(-s.telemetry.aeroPower / Math.hypot(s.velocity.x, s.velocity.z), 10); }
+    for (const s of [a, b, c, reference]) { expect(s.structure.fractureCount).toBe(0); budget(s); expect(s.telemetry.energyPerDistance).toBeCloseTo(-s.telemetry.aeroPower / Math.hypot(s.velocity.x, s.velocity.z), 10); }
     const coarse = new FlightSimulation(defaultAircraft, 'birdman', 0), fine = new FlightSimulation(defaultAircraft, 'birdman', 0);
     for (let i = 0; i < 12; i++) coarse.step(neutral, 0.25); for (let i = 0; i < 180; i++) fine.step(neutral);
     expect(coarse.position.distanceTo(fine.position)).toBeLessThan(1e-8);

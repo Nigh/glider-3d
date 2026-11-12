@@ -789,7 +789,8 @@ describe('低展弦比三角翼高速受力与动力质量', () => {
     expect(s.telemetry.thrust).toBeGreaterThan(0);
     const totalMass = s.telemetry.mass + s.fragments.reduce((sum, fragment) => sum + fragment.mass, 0);
     expect(totalMass).toBeCloseTo(properties.mass - (d.fuelTank.capacity - s.telemetry.fuelRemaining) * 0.8, 8);
-    expect(s.telemetry.drag.length()).toBeGreaterThan(s.telemetry.aerodynamics.drag.length());
+    // The complete live summary now includes engine/support envelope drag.
+    expect(s.telemetry.drag.length()).toBeCloseTo(s.telemetry.aerodynamics.drag.length(), 8);
   });
 });
 

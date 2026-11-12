@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clickRangeEdge } from './pointer-controls';
 import type { Page } from '@playwright/test';
 
 async function enterFlight(page: Page, challenge = '高山速降') {
@@ -153,12 +154,12 @@ test('回放智能混控只读且跟随记录和跳转',async({page})=>{
  const mixing=page.getByRole('region',{name:'实时杆量',exact:true}).getByRole('switch',{name:'智能混控（U）',exact:true});
  await expect(mixing).toBeVisible();await expect(mixing).toBeDisabled();await expect(mixing).toHaveAttribute('aria-checked','false');
  const timeline=page.getByRole('region',{name:'回放时间轴',exact:true});
- await page.getByRole('slider',{name:'回放进度',exact:true}).press('End');
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'max');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
  await expect(mixing).toHaveAttribute('aria-checked','true');
  await page.keyboard.press('u');await expect(mixing).toHaveAttribute('aria-checked','true');
  expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
- await page.getByRole('slider',{name:'回放进度',exact:true}).press('Home');
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'min');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
  await expect(mixing).toHaveAttribute('aria-checked','false');
 });
@@ -183,7 +184,7 @@ test('回放倒飞时俯仰杆量与配平标记反向，配平设定不变',asy
   return exportReplay({definition,challenge:'downhill',recording:simulation.getRecording()});
  });
  await page.getByLabel('导入回放',{exact:true}).setInputFiles({name:'inverted.json',mimeType:'application/json',buffer:Buffer.from(text)});
- await page.getByRole('slider',{name:'回放进度',exact:true}).press('End');
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'max');
  await expect(page.getByRole('region',{name:'回放时间轴',exact:true})).toHaveAttribute('aria-busy','false');
  await expect.poll(async()=>Number(await page.locator('.stick-pad .stick-position').getAttribute('cy'))).toBeGreaterThan(60);
  const values=await page.evaluate(()=>{

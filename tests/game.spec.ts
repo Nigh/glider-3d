@@ -6,6 +6,7 @@ import type * as PhysicsModule from '../src/physics';
 import type * as ModelModule from '../src/model';
 import type { BufferGeometry, Camera, WebGLRenderer } from 'three';
 import { engineCatalog, FUEL_DENSITY } from '../src/engines';
+import { energyCostScale } from '../src/flight-chart';
 
 type FlightResult = { distance: number; time: number; averageSpeed: number; maxSpeed: number; minSpeed: number; maxHeight: number; landing: string };
 declare global {
@@ -16,7 +17,7 @@ declare global {
       readonly flightReady: boolean;
       readonly time: number;
       readonly recordingLength: number;
-      readonly trajectory: { time: number; distance: number; height: number; speed: number; scoringHeight: number; energyRatio: number; energyPerDistance: number | null }[];
+      readonly trajectory: { time: number; distance: number; height: number; speed: number; scoringHeight: number; energyRatio: number; energyPerDistance: number | null; waterContact: boolean }[];
       readonly metrics: Record<string, number | string>;
       readonly telemetry: { speed: number; altitude: number; distance: number; pitch: number; roll: number; cg: { x: number }; [key: string]: unknown } | undefined;
       readonly flightControls: { smartMixing: boolean };
@@ -95,8 +96,11 @@ function endsOf(d: AircraftDefinition) {
 }
 async function dragHandle(page: Page, index: number, dx: number, dy: number) {
   const handle = page.getByRole('button', { name: `主翼顶点${index + 1}`, exact: true });
+  await dragControl(page, handle, dx, dy);
+}
+async function dragControl(page: Page, handle: Locator, dx: number, dy: number) {
   await handle.scrollIntoViewIfNeeded();
-  const box = await handle.boundingBox();
+  const box = await handle.locator('circle[fill="transparent"]').first().boundingBox();
   if (!box) throw new Error('翼面控制点不可见');
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
   await page.mouse.move(x, y);
@@ -783,7 +787,7 @@ test('固定驾驶员质量，端点数值保持对端不动，安装位置受�
   await expect(github).toHaveAttribute('rel', /noopener/);
 });
 
-test('拖动机身端点不脱离驾驶舱或尾翼，撤销和键盘调整保留独立端点', async ({ page }) => {
+test('拖动机身端点不脱离驾驶舱或尾翼，撤销保留独立端点且手柄不抢键盘焦点', async ({ page }) => {
   await enterDesign(page);
   await page.getByRole('tab', { name: '机身', exact: true }).click();
   await page.getByRole('button', { name: '侧视', exact: true }).click();
@@ -791,11 +795,12 @@ test('拖动机身端点不脱离驾驶舱或尾翼，撤销和键盘调整保�
     const before = await aircraft(page), originalEnds = endsOf(before);
     const handle = page.getByRole('button', { name: label, exact: true });
     await expect(handle).toBeVisible();
-    const box = await handle.boundingBox();
+    const box = await handle.locator('circle[fill="transparent"]').first().boundingBox();
     if (!box) throw new Error('机身端点不可见');
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.mouse.move(end === 'nose' ? 15 : page.viewportSize()!.width - 15, box.y + box.height / 2, { steps: 12 });
+    // The preset already touches its inner support bounds; extend the selected end.
+    await page.mouse.move(box.x + box.width / 2 + (end === 'nose' ? 60 : -60), box.y + box.height / 2, { steps: 12 });
     await page.mouse.up();
     const changed = await aircraft(page), changedEnds = endsOf(changed);
     expect(changedEnds[end]).not.toBeCloseTo(originalEnds[end], 6);
@@ -809,9 +814,10 @@ test('拖动机身端点不脱离驾驶舱或尾翼，撤销和键盘调整保�
     await page.getByRole('button', { name: '重做', exact: true }).click();
     expect(await aircraft(page)).toEqual(changed);
     await handle.focus();
+    await expect(handle).not.toBeFocused();
     await handle.press(end === 'nose' ? 'ArrowRight' : 'ArrowLeft');
     const keyboardEnds = endsOf(await aircraft(page));
-    expect(keyboardEnds[end]).not.toBe(changedEnds[end]);
+    expect(keyboardEnds[end]).toBeCloseTo(changedEnds[end], 8);
     expect(keyboardEnds[opposite]).toBeCloseTo(changedEnds[opposite], 8);
   }
 });
@@ -829,15 +835,15 @@ test('主翼高度滑条与精确值同步，正负支撑质量进入主视图�
   await number(page, '主翼安装高度精确值', 0);
   const baselineMass = Number(await mass.textContent());
   await expect.poll(() => page.evaluate(() => window.glider.scene.support.visible)).toBe(false);
-  await slider.focus();
-  await slider.press('Home');
+  const sliderBounds = (await slider.boundingBox())!;
+  await slider.click({ position: { x: 1, y: sliderBounds.height / 2 } });
   await expect(input).toHaveValue('-0.5');
   expect((await aircraft(page)).assembly.mainWingHeight).toBe(-0.5);
   const negativeArea = Number(await area.textContent()), negativeMass = Number(await supportMass.textContent());
   expect(negativeArea).toBeGreaterThan(0);
   expect(negativeMass).toBeGreaterThan(0);
   expect(Math.abs(Number(await mass.textContent()) - baselineMass - negativeMass)).toBeLessThan(0.11);
-  await slider.press('End');
+  await slider.click({ position: { x: sliderBounds.width - 1, y: sliderBounds.height / 2 } });
   await expect(input).toHaveValue('1');
   expect((await aircraft(page)).assembly.mainWingHeight).toBe(1);
   expect(Number(await area.textContent())).toBeCloseTo(negativeArea * 2, 1);
@@ -988,7 +994,8 @@ test('启动飞行，实时能耗及结算机械能曲线使用真实飞行数�
   await start.focus();
   await start.press('Space');
   await expect(start).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(4.2);
+  // Inspect real free flight after the 2s launch, before this light preset lands.
+  await expect.poll(() => page.evaluate(() => window.glider.time)).toBeGreaterThan(2.2);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
   const actualCost = await page.evaluate(() => Number(window.glider.telemetry!.energyPerDistance));
   expect(actualCost).toBeGreaterThan(0);
@@ -1013,13 +1020,13 @@ test('启动飞行，实时能耗及结算机械能曲线使用真实飞行数�
   const heightPoints = (await chart.locator('.chart-line').getAttribute('points'))!.trim().split(/\s+/).map(point=>point.split(',').map(Number));
   expect(energyPoints.map(point=>point[0])).toEqual(heightPoints.map(point=>point[0]));
   expect(energyPoints[0][1]).toBeCloseTo(22, 2);
-  expect(energyPoints.at(-1)![1]).toBeCloseTo(98-finalRatio*76, 2);
+  expect(energyPoints.at(-1)![1]).toBeCloseTo(170-finalRatio*148, 2);
   const finalCost = await page.evaluate(() => Number(window.glider.telemetry!.energyPerDistance));
-  const maxCost = Math.max(1,...trajectory.map(p=>p.energyPerDistance??0));
-  const costLine = chart.locator('.chart-cost-line');
+  const maxCost = energyCostScale(trajectory);
+  const costLine = chart.getByLabel('实时能耗曲线', { exact: true });
   const costPoints = (await costLine.getAttribute('d'))!.match(/[ML][\d.]+,[\d.]+/g)!.map(point=>point.slice(1).split(',').map(Number));
   expect(costPoints.at(-1)![0]).toBeCloseTo(heightPoints.at(-1)![0], 2);
-  expect(costPoints.at(-1)![1]).toBeCloseTo(98-finalCost/maxCost*76, 2);
+  expect(costPoints.at(-1)![1]).toBeCloseTo(170-Math.min(finalCost,maxCost)/maxCost*148, 2);
   await insideViewport(page, chart.getByText('J/m', { exact: true }));
   await insideViewport(page, chart.getByText('100%', { exact: true }));
   await insideViewport(page, chart.getByText('0%', { exact: true }));
@@ -1113,7 +1120,11 @@ test('三翼页整体位置手柄保留顶点，动力页引擎与油箱复用�
     const before = await aircraft(page);
     const handle = page.getByRole('button', { name: tab + '位置', exact: true });
     await expect(handle).toBeVisible();
-    await handle.press('ArrowRight');
+    await page.getByRole('button', { name: '侧视', exact: true }).click();
+    // Bypass T-tail mount snapping to test free longitudinal placement.
+    await page.keyboard.down('Control');
+    await dragControl(page, handle, 60, 0);
+    await page.keyboard.up('Control');
     const after = await aircraft(page);
     expect(after.assembly[key]).toBeGreaterThan(before.assembly[key]);
     expect(after[key].points).toEqual(before[key].points);
@@ -1127,7 +1138,7 @@ test('三翼页整体位置手柄保留顶点，动力页引擎与油箱复用�
     const before = await aircraft(page);
     const handle = page.getByRole('button', { name: label, exact: true });
     await expect(handle).toBeVisible();
-    await handle.press('ArrowRight');
+    await dragControl(page, handle, 24, 0);
     expect((await aircraft(page))[key].x).toBeGreaterThan(before[key].x);
     await page.getByRole('button', { name: '撤销', exact: true }).click();
     expect(await aircraft(page)).toEqual(before);

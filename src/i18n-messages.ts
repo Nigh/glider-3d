@@ -2,6 +2,10 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ 'W · 前往风洞': ['W · Enter wind tunnel', 'W・風洞へ'],
+ '摩擦阻力（零升阻力）': ['Profile / parasite drag', '形状・有害抗力（非誘導）'],
+ '诱导阻力': ['Induced drag', '誘導抗力'],
+ '非诱导分项包含翼型摩擦与压差阻力、机身及发动机外阻；不是单独的表面摩擦。': ['The non-induced component includes airfoil skin/pressure drag and body/engine drag, not skin friction alone.', '非誘導成分は翼型の摩擦・圧力抗力と胴体・エンジンの外部抗力を含み、表面摩擦のみではありません。'],
  ...laboratoryMessages,
  ...inputMessages,
  "当前受力与力矩": ["Current forces and moments", "現在の力とモーメント"],

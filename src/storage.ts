@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 几何尾迹耦合、镜像地效与近地增升改变载荷；旧轨迹及成绩不能混用。
-export const PHYSICS_VERSION = 'coupled-wakes-v19';
+// 低Re型阻校正改变受力，阻力分项改变关键帧状态图；旧回放不能混用。
+export const PHYSICS_VERSION = 'wind-tunnel-drag-telemetry-v20';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

@@ -57,25 +57,30 @@ const AIR_VISCOSITY = 1.46e-5;
 const SPAN_EFFICIENCY = 0.9;
 /** 尾梁等未解析机体阻力面积；驾驶舱壳体和座舱罩另按可见尺寸计算。 */
 const BODY_DRAG_AREA = 0.07;
+function engineDragArea(definition: AircraftDefinition, mount: EngineMount) {
+  const spec = engineCatalog[definition.engine.type];
+  return Math.PI * spec.radius ** 2 * 0.22 + mount.supportLength * mount.supportWidth * 0.02;
+}
 /**
  * DAE-11原型，XFOIL6.96/Mach0/Ncrit9预测，非TAKUMI-11实测。
- * 每行 alpha[deg], CL500k, CD500k, CL1M, CD1M；垂尾去除升力偏置后作对称代理。
+ * 每行 alpha[deg], CL500k, CD500k, CL1M, CD1M, CD200k；垂尾作对称代理。
+ * http://airfoiltools.com/polar/details?polar=xf-dae11-il-200000
  * http://airfoiltools.com/polar/details?polar=xf-dae11-il-500000
  * http://airfoiltools.com/polar/details?polar=xf-dae11-il-1000000
  */
 const SECTION_POLAR = [
-  [-6, 0.0205, 0.05252, 0.0197, 0.04617],
-  [-4, 0.2041, 0.02022, 0.2024, 0.01203],
-  [-2, 0.4291, 0.01277, 0.4314, 0.00912],
-  [0, 0.6560, 0.01023, 0.6622, 0.00773],
-  [1.25, 0.7988, 0.00899, 0.8047, 0.00610],
-  [3, 0.9975, 0.00938, 1.0049, 0.00648],
-  [5, 1.2203, 0.00977, 1.2299, 0.00705],
-  [7.25, 1.4572, 0.01073, 1.4679, 0.00851],
-  [9.25, 1.6214, 0.01339, 1.6254, 0.01199],
-  [12, 1.6277, 0.02998, 1.6360, 0.02851],
-  [15, 1.6100, 0.06077, 1.6475, 0.05556],
-  [17, 1.5913, 0.08793, 1.6548, 0.07833],
+  [-6, 0.0205, 0.05252, 0.0197, 0.04617, 0.06387],
+  [-4, 0.2041, 0.02022, 0.2024, 0.01203, 0.04209],
+  [-2, 0.4291, 0.01277, 0.4314, 0.00912, 0.02459],
+  [0, 0.6560, 0.01023, 0.6622, 0.00773, 0.01968],
+  [1.25, 0.7988, 0.00899, 0.8047, 0.00610, 0.02081],
+  [3, 0.9975, 0.00938, 1.0049, 0.00648, 0.02294],
+  [5, 1.2203, 0.00977, 1.2299, 0.00705, 0.02158],
+  [7.25, 1.4572, 0.01073, 1.4679, 0.00851, 0.02079],
+  [9.25, 1.6214, 0.01339, 1.6254, 0.01199, 0.02013],
+  [12, 1.6277, 0.02998, 1.6360, 0.02851, 0.03129],
+  [15, 1.6100, 0.06077, 1.6475, 0.05556, 0.06420],
+  [17, 1.5913, 0.08793, 1.6548, 0.07833, 0.09712],
 ] as const;
 /** UIUC DAE-11 camber-line thin-airfoil integral; not measured/XFOIL Cm. */
 export const SECTION_QUARTER_CHORD_CM = -0.12711943970034684;
@@ -146,6 +151,10 @@ export interface AerodynamicReference {
   drag: Vector3;
   torque: Vector3;
   bodyDrag: Vector3;
+  /** Non-induced profile/pressure/skin and body/engine drag, in body axes. */
+  profileDrag: Vector3;
+  /** Lift-induced drag only, including geometric wake coupling. */
+  inducedDrag: Vector3;
   /** 等效作用线距离CG最近的点；零合力时没有有限中心。 */
   liftCenter: Vector3 | null;
   dragCenter: Vector3 | null;
@@ -429,15 +438,21 @@ function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reyn
   const cdLow = a[2] + t * (b[2] - a[2]), cdHigh = a[4] + t * (b[4] - a[4]);
   if (!cambered) sectionCl = Math.sign(alpha) * (sectionCl - (0.656 + re * 0.0062));
   else if (degrees < -6) sectionCl += 2 * (alpha + 6 * DEG);
-  // 200k预测在α0的CL=.6186、CD=.01968；500k以下保守幂律，非新风洞数据。
+  // Low-Re lift remains an engineering proxy; profile drag uses the 200k
+  // polar rather than uniformly scaling the 500k curve (which overstates
+  // drag near zero lift but understates parts of the positive-alpha branch).
   const lowRe = clamp(reynolds / 500_000, 0.05, 1);
+  const cd200k = a[5] + t * (b[5] - a[5]);
+  const profileCd = reynolds < 500_000
+    ? cd200k + clamp((reynolds - 200_000) / 300_000, 0, 1) * (cdLow - cd200k)
+    : cdLow + re * (cdHigh - cdLow);
   sectionCl *= lowRe ** 0.065;
   const finiteWing = 1 / (1 + groundEffect * 6.45 / (Math.PI * SPAN_EFFICIENCY * Math.max(aspect, 0.1)));
   const outside = cambered && degrees < -6 ? (-degrees - 6) / 29 : (Math.abs(degrees) - 17) / 18;
   const blend = clamp(outside, 0, 1), separated = blend * blend * (3 - 2 * blend);
   out.cl = (1 - separated) * sectionCl * finiteWing + separated * 1.05 * Math.sin(2 * alpha);
   // 完全分离后改用下方平板阻力，避免弯度表两端在±π反向来流处造成跳变。
-  out.profileCd = (1 - separated) * (cdLow + re * (cdHigh - cdLow)) / lowRe ** 0.75;
+  out.profileCd = (1 - separated) * profileCd / clamp(reynolds / 200_000, 0.125, 1) ** 0.75;
   out.inducedCd = groundEffect * out.cl ** 2 / (Math.PI * Math.max(aspect, 0.1) * SPAN_EFFICIENCY);
   out.cd = out.profileCd + out.inducedCd + separated * (1.7 * Math.sin(alpha) ** 2 + 0.3 * (1 - Math.cos(alpha)) ** 2);
   out.cm = cambered ? (1 - separated) * SECTION_QUARTER_CHORD_CM : 0;
@@ -773,6 +788,8 @@ class AerodynamicSummary implements AerodynamicReference {
   readonly drag = new Vector3();
   readonly torque = new Vector3();
   readonly bodyDrag = new Vector3();
+  readonly profileDrag = new Vector3();
+  readonly inducedDrag = new Vector3();
   readonly liftMoment = new Vector3();
   readonly dragMoment = new Vector3();
   readonly freeMoment = new Vector3();
@@ -780,6 +797,7 @@ class AerodynamicSummary implements AerodynamicReference {
   dragCenter: Vector3 | null = null;
   readonly wings: WingAerodynamics[];
   readonly bodies: { point: Vector3; projection: Vector3; skinArea: number }[];
+  readonly engines: { point: Vector3; area: number }[];
   readonly bodyTorque = new Vector3();
   bodyPower = 0;
   private readonly liftPoint = new Vector3();
@@ -793,6 +811,7 @@ class AerodynamicSummary implements AerodynamicReference {
   private readonly moment = new Vector3();
 
   constructor(readonly surfaces: AerodynamicSurface[], d: AircraftDefinition) {
+    this.engines = engineMounts(d).map(mount => ({ point: new Vector3(mount.x, mount.y, mount.z), area: engineDragArea(d, mount) }));
     this.bodies = (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).map((shape, index) => {
       // 椭球投影面积 + 湿表面摩擦代理；罩体只取露出壳体的上半部，不重复计算下半部。
       const exposed = index === 0 ? 1 : 0.5, pressure = 0.18 * Math.PI * exposed;
@@ -833,6 +852,7 @@ class AerodynamicSummary implements AerodynamicReference {
     this.alpha = Math.atan2(-this.velocity.y, this.velocity.x);
     this.beta = Math.atan2(this.velocity.z, Math.hypot(this.velocity.x, this.velocity.y));
     this.force.set(0, 0, 0); this.lift.set(0, 0, 0); this.drag.set(0, 0, 0);
+    this.inducedDrag.set(0, 0, 0);
     this.torque.set(0, 0, 0); this.liftMoment.set(0, 0, 0); this.dragMoment.set(0, 0, 0);
     this.freeMoment.set(0, 0, 0);
     for (const wing of this.wings) {
@@ -849,6 +869,8 @@ class AerodynamicSummary implements AerodynamicReference {
       this.arm.copy(surface.point).sub(cg);
       this.localForce.copy(surface.force).applyQuaternion(this.inverse);
       this.localDrag.copy(surface.drag).applyQuaternion(this.inverse);
+      const magnitude = this.localDrag.length();
+      if (magnitude > 1e-12) this.inducedDrag.addScaledVector(this.localDrag, clamp(surface.inducedDrag / magnitude, 0, 1));
       wing.force.add(this.localForce); wing.drag.add(this.localDrag);
       wing.alpha += surface.alpha * surface.area / wing.area;
       wing.groundEffect += surface.groundEffect * surface.area / wing.area;
@@ -868,6 +890,18 @@ class AerodynamicSummary implements AerodynamicReference {
     this.updateBody(cg, this.velocity, omega);
     this.force.add(this.bodyDrag); this.drag.add(this.bodyDrag);
     this.torque.add(this.bodyTorque); this.dragMoment.add(this.bodyTorque);
+    // These loads already participate in FlightSimulation's real force/power
+    // evaluation. Include the same engine envelope in the displayed summary.
+    for (const engine of this.engines) {
+      this.arm.copy(engine.point).sub(cg);
+      this.localVelocity.copy(this.velocity);
+      if (omega) this.localVelocity.add(this.moment.crossVectors(omega, this.arm));
+      this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * AIR_DENSITY * this.localVelocity.length() * engine.area);
+      this.drag.add(this.localDrag); this.force.add(this.localDrag);
+      this.moment.crossVectors(this.arm, this.localDrag);
+      this.torque.add(this.moment); this.dragMoment.add(this.moment);
+    }
+    this.profileDrag.copy(this.drag).sub(this.inducedDrag);
     if (torque) { this.freeMoment.add(this.moment.copy(torque).sub(this.torque)); this.torque.copy(torque); }
     this.liftCenter = this.center(this.lift, this.liftMoment, cg, this.liftPoint);
     this.dragCenter = this.center(this.drag, this.dragMoment, cg, this.dragPoint);
@@ -2064,11 +2098,10 @@ export class FlightSimulation {
     this.localDrag.copy(this.aerodynamics.bodyDrag).applyQuaternion(orientation);
     this.telemetry.force.add(this.localDrag); this.telemetry.drag.add(this.localDrag);
     power += this.aerodynamics.bodyPower;
-    const spec = engineCatalog[this.definition.engine.type];
     for (const engine of this.enginePositions) {
       this.arm.set(engine.x, engine.y, engine.z).sub(this.aircraft.cg);
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      const area = Math.PI * spec.radius ** 2 * 0.22 + engine.supportLength * engine.supportWidth * 0.02;
+      const area = engineDragArea(this.definition, engine);
       this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * AIR_DENSITY * this.localVelocity.length() * area);
       power += this.localDrag.dot(this.localVelocity);
       this.cross.crossVectors(this.arm, this.localDrag); this.torque.add(this.cross);
@@ -2089,6 +2122,7 @@ export class FlightSimulation {
     this.propulsionPower = 0;
     this.thrust = 0;
     if (this.availableThrust > 0) {
+      const spec = engineCatalog[this.definition.engine.type];
       const staticThrust = this.availableThrust / this.enginePositions.length;
       for (const engine of this.enginePositions) {
         this.arm.set(engine.x, engine.y, engine.z).sub(this.aircraft.cg);

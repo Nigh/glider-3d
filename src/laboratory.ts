@@ -88,5 +88,5 @@ export function advanceWindTunnel(actual: WindTunnelSettings, target: WindTunnel
 /** Leave clearance for every pitch/roll attitude, including the largest editable span. */
 export function windTunnelRoom(definition: AircraftDefinition) {
   const radius = Math.max(definition.fuselage.length, definition.mainWing.points[1].y, definition.horizontalTail.points[1].y, definition.verticalTail.points[1].y) + 6;
-  return { halfX: Math.ceil(Math.max(20, radius)), halfY: Math.ceil(Math.max(14, radius)), halfZ: Math.ceil(Math.max(20, radius)), centerY: Math.ceil(Math.max(14, radius)) + 2 };
+  return { halfX: Math.ceil(Math.max(40, radius)), halfY: Math.ceil(Math.max(28, radius)), halfZ: Math.ceil(Math.max(40, radius)), centerY: Math.ceil(Math.max(28, radius)) + 2 };
 }

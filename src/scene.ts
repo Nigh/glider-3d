@@ -10,6 +10,7 @@ import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges'
 import { engineCatalog } from './engines';
 import { isLaboratory, TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from './laboratory';
 import { LaboratoryScene } from './laboratory-scene';
+import { constrainWindCamera } from './wind-camera';
 import { language, t } from './i18n';
 import { cgGeometryRadius, loadMagnitude, MOMENT_AXES, momentDirection, solidForceArrow, solidMomentArrow, updateMomentArrow } from './wind-forces';
 
@@ -44,6 +45,7 @@ type WingRenderSection = {
   root: THREE.Vector3; tip: THREE.Vector3;
   rootRotation: THREE.Quaternion; tipRotation: THREE.Quaternion;
   referenceRoot: THREE.Vector3; referenceTip: THREE.Vector3;
+  neutralRoot: THREE.Vector3; neutralTip: THREE.Vector3; neutralIncidence: number;
 };
 type FragmentRender = {
   id: number; wingIndex: number; mesh: THREE.Mesh; hinge: THREE.LineSegments;
@@ -122,6 +124,8 @@ export class SceneView {
   private readonly deformationTipTangent = new THREE.Vector3();
   private readonly deformationAxis = new THREE.Vector3();
   private readonly deformationHinge = new THREE.Vector3();
+  private readonly neutralReference = new THREE.Vector3();
+  private readonly incidenceRotation = new THREE.Quaternion();
   private renderBlend = 1;
   private readonly hingeLines: THREE.LineSegments[] = [];
   private readonly surfaceParameters = new Float64Array(3).fill(NaN);
@@ -806,8 +810,14 @@ export class SceneView {
   }
 
   private constrainCamera(): void {
+    this.controls.minZoom = 0;
     if (this.editorTarget && !this.simulation) return;
     const target = this.controls.enabled ? this.controls.target : this.target;
+    if (this.simulation?.challenge === 'wind-tunnel' && this.laboratoryScene) {
+      this.cameraClearanceOffset.set(0, 0, 0);
+      this.controls.minZoom = constrainWindCamera(this.camera, target, this.laboratoryScene.room);
+      return;
+    }
     const origin = this.cameraClearanceOrigin.copy(this.camera.position);
     const offset = this.cameraClearanceOffset;
     offset.set(0, 0, 0);
@@ -1016,7 +1026,7 @@ export class SceneView {
     for (let i = 0; i < 3; i++) {
       const group = document.createElementNS(SVG_NS, 'g');
       group.setAttribute('role', 'button');
-      group.setAttribute('tabindex', '0');
+      group.setAttribute('tabindex', '-1');
       group.classList.add('editor-control', 'editor-chord', i === 0 ? 'editor-root-chord' : 'editor-tip-chord');
       group.style.cssText = 'pointer-events:none;cursor:grab';
       for (const halo of [true, false]) {
@@ -1060,7 +1070,7 @@ export class SceneView {
     for (let i = 0; i < 8; i++) {
       const group = document.createElementNS(SVG_NS, 'g');
       group.setAttribute('role', 'button');
-      group.setAttribute('tabindex', '0');
+      group.setAttribute('tabindex', '-1');
       group.classList.add('editor-control', 'editor-point');
       group.style.cssText = 'pointer-events:all;cursor:grab';
       const hit = document.createElementNS(SVG_NS, 'circle');
@@ -1352,7 +1362,6 @@ export class SceneView {
     this.editorOverlay.setPointerCapture(event.pointerId);
     const group = (segment ? this.editorSegments[index] : this.editorHandles[index]).group;
     group.style.cursor = 'grabbing';
-    group.focus();
   }
 
   private moveEditorDrag(event: PointerEvent): void {
@@ -2266,6 +2275,7 @@ export class SceneView {
           root: new THREE.Vector3(), tip: new THREE.Vector3(),
           rootRotation: new THREE.Quaternion(), tipRotation: new THREE.Quaternion(),
           referenceRoot: new THREE.Vector3(), referenceTip: new THREE.Vector3(),
+          neutralRoot: new THREE.Vector3(), neutralTip: new THREE.Vector3(), neutralIncidence: angle,
         };
         if (previous) previous.next = section;
         previous = section;
@@ -2315,6 +2325,7 @@ export class SceneView {
             else section.skin.push(a, b, b + profileCount, a, b + profileCount, a + profileCount);
           }
         }
+        section.neutralRoot.copy(section.referenceRoot); section.neutralTip.copy(section.referenceTip);
         for (let cap = 0; cap < 2; cap++) {
           const base = vertices.length / 3, source = section.vertexStart + (cap === 0 ? 0 : rows * profileCount);
           if (cap === 0) section.rootCap = base;
@@ -2501,7 +2512,11 @@ export class SceneView {
         const fragment = bodyId === 0 ? undefined : this.fragmentRender(bodyId, index);
         const sideIndex = index === 2 || section.side < 0 ? 0 : 1;
         const direction = index === 0 ? -1 : index === 1 ? -section.side : 1;
-        this.deformationAxis.copy(this.wingAxes[index][sideIndex]);
+        // Physical reference geometry can rotate live in the tunnel. Transform
+        // the original skin/hinge frame into that reference before elastic and
+        // control deflection; detached strips retain their release incidence.
+        this.incidenceRotation.setFromAxisAngle(this.vector.set(0, 0, 1), (physical?.surface.incidence ?? section.neutralIncidence) - section.neutralIncidence);
+        this.deformationAxis.copy(this.wingAxes[index][sideIndex]).applyQuaternion(this.incidenceRotation);
         this.controlRotation.setFromAxisAngle(this.deformationAxis, physical?.controlDeflection ?? angle * direction);
         const count = (section.rows + 1) * 32;
         let previousT = -1;
@@ -2510,16 +2525,17 @@ export class SceneView {
             : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
           const t = local < count ? Math.floor(local / 32) / section.rows : local < count + 32 ? 0 : 1;
           if (t !== previousT) {
+            this.neutralReference.lerpVectors(section.neutralRoot, section.neutralTip, t);
             this.deformationCenter.lerpVectors(section.referenceRoot, section.referenceTip, t);
             this.deformPoint(section, this.deformationCenter, t);
             previousT = t;
           }
-          this.deformationPoint.fromArray(neutral, vertex * 3);
+          this.deformationPoint.fromArray(neutral, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
           if (this.wingMovable[index][vertex]) {
-            this.deformationHinge.fromArray(hinges, vertex * 3);
+            this.deformationHinge.fromArray(hinges, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
             this.deformationPoint.sub(this.deformationHinge).applyQuaternion(this.controlRotation).add(this.deformationHinge);
           }
-          this.deformationPoint.sub(this.deformationReference).applyQuaternion(this.deformationRotation).add(this.deformationCenter);
+          this.deformationPoint.applyQuaternion(this.deformationRotation).add(this.deformationCenter);
           if (fragment) this.deformationPoint.sub(fragment.cg);
           position.setXYZ(vertex, this.deformationPoint.x, this.deformationPoint.y, this.deformationPoint.z);
         }

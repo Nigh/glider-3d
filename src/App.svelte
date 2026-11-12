@@ -20,6 +20,7 @@
  import InputSettings from './InputSettings.svelte';
  import InputReadout from './InputReadout.svelte';
  import { InputManager } from './input';
+ import { isTextEntry } from './focus-policy';
  import { trimStep, trimFromPointer, pitchDisplay } from './trim';
  import { FixedGameClock } from './game-clock';
  import { energyCostScale } from './flight-chart';
@@ -194,11 +195,12 @@
  }
  function clearControls(){stick=false;stickPointer=yawPointer=null;stickX=stickY=yawInput=0;input.clear();controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
  function syncWindDesign(){if(simulation?.challenge!=='wind-tunnel')return;const actual=simulation.definition;if(aircraft.assembly.mainIncidence===actual.assembly.mainIncidence&&aircraft.assembly.tailIncidence===actual.assembly.tailIncidence)return;aircraft=clone(actual);selectedId='';commit();}
- function start(replay=false,imported?:Replay){
+ function enterWindTunnel(){if(screen==='design'&&!showLibrary)start(false,undefined,'wind-tunnel');}
+ function start(replay=false,imported?:Replay,mode?:ChallengeMode){
   seekVersion++;seeking=false;trimPitch=trimRoll=0;autoTrim=smartMixing=adaptiveControls=false;throttle=1;
   try{
    if(!replay)syncWindDesign();
-   const selectedChallenge=imported?.challenge??(replay?lastChallenge:challenge),definition=forChallenge(imported?.definition??(replay?lastDefinition:aircraft),selectedChallenge);
+   const selectedChallenge=imported?.challenge??(replay?lastChallenge:mode??challenge),definition=forChallenge(imported?.definition??(replay?lastDefinition:aircraft),selectedChallenge);
    const next=new FlightSimulation(definition,selectedChallenge,undefined,testSettings);
    if(replay&&(imported?.recording??recording))next.loadReplay(imported?.recording??recording!);
    if(selectedChallenge==='wind-tunnel'){windSettings={...windSettings,mainIncidence:definition.assembly.mainIncidence,tailIncidence:definition.assembly.tailIncidence};next.setWindTunnel(windSettings);}
@@ -264,15 +266,15 @@
   if(e.code==='Escape'&&!e.repeat){e.preventDefault();if(screen==='flight'||screen==='result')design();else if(screen==='design'){if(showLibrary)showLibrary=false;else screen='menu';}return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&!target?.closest('input,textarea,[contenteditable="true"]')){e.preventDefault();e.shiftKey?redo():undo();return;}
   if(e.ctrlKey||e.metaKey||e.altKey)return;
-  if(target?.closest('input:not([type=range]):not([type=checkbox]):not([type=file]),textarea,select,summary,[contenteditable="true"]'))return;
-  if(target?.matches('input[type=range]')&&['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
-  if(e.code==='Space'&&target?.closest('button,a'))return;
+  if(isTextEntry(target))return;
+  if(screen==='design'&&!showLibrary&&(e.code==='Space'||e.code==='KeyW')){e.preventDefault();if(!e.repeat){if(e.code==='KeyW')enterWindTunnel();else start();}return;}
+  if(screen==='flight'&&lastChallenge==='wind-tunnel'&&e.code==='Space'){e.preventDefault();if(!e.repeat)toggleWind();return;}
   if((screen==='flight'||screen==='result')&&input.key(e.code,true))e.preventDefault();
  }
  function inputActions(elapsed:number){
   if(input.pressed('restart')&&(screen==='result'||screen==='flight'&&flightReady&&paused)){start();return;}
   if(screen!=='flight'||seeking)return;
-  if(input.pressed('pause')){audio.unlock();if(flightReady)togglePause();else beginFlight();}
+  if(input.pressed('pause')){audio.unlock();if(lastChallenge==='wind-tunnel')toggleWind();else if(flightReady)togglePause();else beginFlight();}
   if(input.pressed('camera')){
    if(lastChallenge==='wind-tunnel')selectWindCamera(windViews[(windViews.indexOf(windCamera)+1)%windViews.length]);
    else selectCamera(availableViews[(availableViews.indexOf(flightCamera)+1)%availableViews.length]);
@@ -408,7 +410,7 @@ window.addEventListener('pointermove',mouse);
 {/snippet}
 {#snippet aeroWindow()}
 {#if aero&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
-{#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"],["阻力",hud.aerodynamics.drag.length(),"N"],["侧向力",hud.aerodynamics.force.z,"N"],["攻角",hud.alpha,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""],["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
+{#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"],["阻力",hud.aerodynamics.drag.length(),"N"],["摩擦阻力（零升阻力）",hud.aerodynamics.profileDrag.length(),"N"],["诱导阻力",hud.aerodynamics.inducedDrag.length(),"N"],["侧向力",hud.aerodynamics.force.z,"N"],["攻角",hud.alpha,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""],["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt title={item[0]==="摩擦阻力（零升阻力）"?t("非诱导分项包含翼型摩擦与压差阻力、机身及发动机外阻；不是单独的表面摩擦。"):undefined}>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
 </dl></aside>{/if}
 
 {/snippet}
@@ -437,7 +439,7 @@ window.addEventListener('pointermove',mouse);
    <button class="brand" onclick={()=>{if(screen==='flight')togglePause();else{screen='menu';showLibrary=false;}}} aria-label={t("返回主菜单")}><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>{t('翼构方程')}<small>{t('设计与驾驶')}</small></span></button>
    <a class="github-link" href="https://github.com/Nigh/glider-3d" target="_blank" rel="noopener noreferrer" aria-label={t("GitHub 项目源码（新标签页）")} title={t("GitHub 项目源码")}><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
   </div>
-  {#if screen!=='menu'}<nav aria-label={t("游戏流程")}><button class:active={screen==='design'} onclick={design}>{t("设计")}</button><button class:active={screen==='flight'||screen==='result'} onclick={()=>start()}>{t("试飞")}</button></nav>{/if}
+  {#if screen!=='menu'}<nav aria-label={t("游戏流程")}><button class:active={screen==='design'} onclick={design}>{t("设计")}</button><button class:active={(screen==='flight'||screen==='result')&&lastChallenge!=='wind-tunnel'} onclick={()=>start()}>{t("试飞")}</button><button class:active={screen==='flight'&&lastChallenge==='wind-tunnel'} title={t('W · 前往风洞')} onclick={()=>{if(screen!=='design'||showLibrary)design();enterWindTunnel();}}>{t('风洞')}</button></nav>{/if}
   <div class="top-actions">
    <label class="language-label"><span>{t('语言')}</span><select aria-label={t('语言')} value={$language} onchange={e=>setLanguage(e.currentTarget.value as Language)}><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label>
    <AudioSettings {audio} error={audioError}/>
