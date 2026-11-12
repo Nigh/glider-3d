@@ -195,5 +195,8 @@ test('回放倒飞时俯仰杆量与配平标记反向，配平设定不变',asy
  expect(Math.abs(values.pitch)).toBeGreaterThan(0.1);
  expect(values.cy).toBeCloseTo(60-values.pitch*Math.cos(values.roll)*35,5);
  expect(Number(values.marker.split(' ')[2])).toBeCloseTo(60-values.trim*Math.cos(values.roll)*35,5);
- await expect(page.getByRole('slider',{name:'升降舵配平',exact:true})).toHaveValue(String((values.trim+1)*50));
+ expect(values.trim).toBeCloseTo(0.4);
+ const replayDot=page.locator('.replay-inputs .stick-position');
+ await expect(replayDot).toBeVisible();
+ expect(Number(await replayDot.getAttribute('cy'))).toBeCloseTo(values.cy,5);
 });

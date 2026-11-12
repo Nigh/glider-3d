@@ -519,7 +519,7 @@ window.addEventListener('pointermove',mouse);
  </div>
  {#if lastChallenge==='wind-tunnel'}<section class="wind-speed-hud" aria-label={t('风洞风速')}><span>{t('当前风速')}</span><strong><output aria-label={t('当前风速')}>{(hud.wind?.speed??0).toFixed(1)}</output><small>m/s</small></strong></section>{/if}
  {#if isReplay}<section class="replay-inputs" aria-label={t("实时杆量")}>
- <InputReadout pitch={actualPitch} roll={actualRoll} yaw={hud.controlInputs?.rudder??0} throttle={hud.throttle??0}/>
+ <InputReadout pitch={actualPitch*pitchDisplayScale} roll={actualRoll} yaw={hud.controlInputs?.rudder??0} throttle={hud.throttle??0}/>
  <button class="toggle-switch" role="switch" aria-label={t("智能混控（U）")} aria-checked={hud.smartMixing??false} disabled><span>{t("智能混控")}</span></button>
  </section>{/if}
  {#if lastChallenge!=='wind-tunnel'}<section class="stick-panel" aria-label={t("杆量与配平")}>
