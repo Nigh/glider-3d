@@ -73,6 +73,10 @@ export const messages: Record<string, readonly [string, string]> = {
  "拖动控制俯仰与滚转": ["Drag to control pitch and roll", "ドラッグでピッチとロールを操作"],
  "自动升降舵配平": ["Auto pitch trim", "自動ピッチトリム"],
  "自动升降舵配平（T）": ["Auto pitch trim (T)", "自動ピッチトリム（T）"],
+ "智能混控（U）": ["Smart mixing (U)", "スマートミキシング（U）"],
+ "舵面响应轴": ["Control surface axes", "舵面の応答軸"],
+ "{axis}响应": ["{axis} response", "{axis}応答"],
+ "普通混控按响应轴分配；智能混控使用所有可用舵面。实际力矩取决于安装几何。": ["Normal mixing follows the response axes; smart mixing uses all available control surfaces. Actual moments depend on mounting geometry.", "通常のミキシングは応答軸に従い、スマートミキシングは使用可能なすべての舵面を使います。実際のモーメントは取り付け形状によって決まります。"],
  "自适应杆量": ["Adaptive controls", "構造強度連動の操舵制限"],
  "自适应杆量（Y）": ["Adaptive controls (Y)", "構造強度連動の操舵制限（Y）"],
  "左偏航": ["Yaw left", "左ヨー"],
@@ -548,6 +552,38 @@ export const messages: Record<string, readonly [string, string]> = {
  "估算失速速度": [
   "Estimated stall speed",
   "推定失速速度"
+ ],
+ "推重比": [
+  "Thrust-to-weight ratio",
+  "推力重量比"
+ ],
+ "海平面最大静推力 / 重量；满油至空油": [
+  "Maximum sea-level static thrust / weight; full to empty fuel",
+  "海面高度の最大静止推力 / 重量・満タンから空まで"
+ ],
+ "重心Y": [
+  "Center of gravity Y",
+  "重心Y"
+ ],
+ "重心Z": [
+  "Center of gravity Z",
+  "重心Z"
+ ],
+ "全机升力中心Y": [
+  "Aircraft lift center Y",
+  "全機揚力中心Y"
+ ],
+ "全机升力中心Z": [
+  "Aircraft lift center Z",
+  "全機揚力中心Z"
+ ],
+ "全机阻力中心Y": [
+  "Aircraft drag center Y",
+  "全機抗力中心Y"
+ ],
+ "全机阻力中心Z": [
+  "Aircraft drag center Z",
+  "全機抗力中心Z"
  ],
  "重心 CG": [
   "Center of gravity CG",

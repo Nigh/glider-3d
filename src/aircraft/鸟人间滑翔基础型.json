@@ -30,6 +30,9 @@
     "rootReference": 0.75,
     "dihedral": 5.9,
     "controlSurface": 0,
+    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlResponse": 1,
+    "controlReversed": false,
     "materialId": "spruce",
     "materialAmount": 1.77,
     "structure": {
@@ -59,6 +62,9 @@
     ],
     "dihedral": 0,
     "controlSurface": 0,
+    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlResponse": 1,
+    "controlReversed": false,
     "materialId": "spruce",
     "materialAmount": 1,
     "structure": {
@@ -89,6 +95,9 @@
     "rootReference": 0.45,
     "dihedral": 0,
     "controlSurface": 1,
+    "controlAxes": { "roll": false, "pitch": false, "yaw": true },
+    "controlResponse": 1,
+    "controlReversed": false,
     "materialId": "spruce",
     "materialAmount": 1,
     "structure": {

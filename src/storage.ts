@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 固定60Hz与连续超限累积改变失效时序，保留旧成绩但不混榜。
-export const PHYSICS_VERSION = 'fixed60-accumulated-fracture-v16';
+// 几何混控与独立舵面状态改变轨迹和录像帧格式，旧成绩保留但不混榜。
+export const PHYSICS_VERSION = 'surface-mixing-v17';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

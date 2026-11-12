@@ -23,13 +23,18 @@ test('起飞前保留油门与配平设置，自动配平禁止鼠标与键盘�
  await page.keyboard.press('KeyK');
  expect(await page.evaluate(() => window.glider.flightControls.autoTrim)).toBe(true);
  await autoTrim.click();
- await expect(pitch).toHaveValue('65');
+ await expect(pitch).toHaveValue('50');
  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => window.glider.telemetry?.throttle)).toBeCloseTo(0.4, 2);
  expect(await page.evaluate(() => window.glider.flightControls.adaptiveControls)).toBe(true);
  await expect.poll(() => page.evaluate(() => window.glider.telemetry?.engineRpm)).toBeGreaterThan(0);
  const state = await throttle.evaluate(element => ({ rpm: Number.parseFloat((element.parentElement as HTMLElement).style.getPropertyValue('--rpm')), target: Number((element as HTMLInputElement).value) * 100 }));
  expect(state.rpm).toBeLessThan(state.target);
+ await page.getByRole('button', { name: '暂停', exact: true }).click();
+ await pitch.fill('65');
+ await autoTrim.click();
+ await autoTrim.click();
+ await expect(pitch).toHaveValue('50');
 });
 
 test('精确尾翼端点编辑保持其他端点位置且支持向下垂尾', async ({ page }) => {

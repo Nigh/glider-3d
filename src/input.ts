@@ -1,5 +1,5 @@
 export const signedActions = ['pitch', 'roll', 'yaw', 'lookX', 'lookY'] as const;
-export const actions = ['pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight', 'throttleUp', 'throttleDown', 'throttle', 'lookLeft', 'lookRight', 'lookUp', 'lookDown', 'pause', 'restart', 'camera', 'trimPitchUp', 'trimPitchDown', 'trimRollLeft', 'trimRollRight', 'autoTrim', 'adaptive', 'mouseStick', ...signedActions] as const;
+export const actions = ['pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight', 'throttleUp', 'throttleDown', 'throttle', 'lookLeft', 'lookRight', 'lookUp', 'lookDown', 'pause', 'restart', 'camera', 'trimPitchUp', 'trimPitchDown', 'trimRollLeft', 'trimRollRight', 'autoTrim', 'smartMixing', 'adaptive', 'mouseStick', ...signedActions] as const;
 export type Action = typeof actions[number];
 export type Profile = 'keyboard' | 'gamepad' | 'joystick';
 export type Binding = { kind: 'key' | 'button' | 'axis' | 'hat'; code?: string; index?: number; direction?: number; inverted?: boolean };
@@ -9,7 +9,7 @@ export const actionLabels: Record<Action, string> = {
   pitchUp: '低头', pitchDown: '抬头', rollLeft: '左滚转', rollRight: '右滚转', yawLeft: '左偏航', yawRight: '右偏航',
   throttleUp: '增加油门', throttleDown: '减少油门', throttle: '绝对油门', lookLeft: '向左看', lookRight: '向右看', lookUp: '向上看', lookDown: '向下看',
   pause: '开始／暂停', restart: '重新开始', camera: '切换视角', trimPitchUp: '增加俯仰配平', trimPitchDown: '减少俯仰配平',
-  trimRollLeft: '向左滚转配平', trimRollRight: '向右滚转配平', autoTrim: '自动配平', adaptive: '自适应控制', mouseStick: '鼠标操纵杆',
+  trimRollLeft: '向左滚转配平', trimRollRight: '向右滚转配平', autoTrim: '自动配平', smartMixing: '智能混控', adaptive: '自适应控制', mouseStick: '鼠标操纵杆',
 };
 
 type DeviceProfile = Exclude<Profile, 'keyboard'>;
@@ -56,7 +56,7 @@ function defaults(): Settings {
   keys('rollLeft', 'KeyA', 'ArrowLeft'); keys('rollRight', 'KeyD', 'ArrowRight');
   keys('yawLeft', 'KeyQ'); keys('yawRight', 'KeyE'); keys('throttleUp', 'Digit1', 'Numpad1'); keys('throttleDown', 'Digit2', 'Numpad2');
   keys('pause', 'Space'); keys('restart', 'KeyR'); keys('camera', 'KeyC'); keys('trimRollLeft', 'KeyH'); keys('trimRollRight', 'KeyL');
-  keys('trimPitchDown', 'KeyJ'); keys('trimPitchUp', 'KeyK'); keys('autoTrim', 'KeyT'); keys('adaptive', 'KeyY'); keys('mouseStick', 'KeyX');
+  keys('trimPitchDown', 'KeyJ'); keys('trimPitchUp', 'KeyK'); keys('autoTrim', 'KeyT'); keys('smartMixing', 'KeyU'); keys('adaptive', 'KeyY'); keys('mouseStick', 'KeyX');
   const axis = (profile: DeviceProfile, action: Action, index: number, inverted = false) => { bindings[profile][action] = [{ kind: 'axis', index, inverted }]; };
   const button = (profile: DeviceProfile, action: Action, index: number, direction?: number) => { bindings[profile][action].push(direction === undefined ? { kind: 'button', index } : { kind: 'button', index, direction }); };
   for (const profile of ['gamepad', 'joystick'] as const) {
@@ -129,8 +129,9 @@ function parseSettings(raw: string): Settings {
   for (const profile of profiles) {
     const bindings = data.bindings[profile];
     if (!object(bindings) || !exactKeys(bindings, storedActions)) throw new Error('invalid');
-    for (const action of actions) settings.bindings[profile][action] = [];
+    for (const action of actions) if (action !== 'smartMixing' || bindings.smartMixing !== undefined) settings.bindings[profile][action] = [];
     for (const action of storedActions) {
+      if (action === 'smartMixing' && bindings[action] === undefined) continue;
       const row = bindings[action];
       if (!Array.isArray(row) || row.length > 32 || !row.every(binding => validBinding(binding, profile, legacy))) throw new Error('invalid');
       if (!legacy && ((!profileActions(profile).includes(action) && row.length) || row.some(binding => binding.kind === 'button' && binding.direction !== undefined && !isSigned(action)))) throw new Error('invalid');

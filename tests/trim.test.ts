@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { trimStep, trimFromPointer } from '../src/trim';
+import { mixTrim, trimStep, trimFromPointer } from '../src/trim';
 it('trim keys add 1 displayed percentage point from any value and stop at endpoints', () => {
  expect(trimStep(0,1)).toBeCloseTo(0.02);
  expect(trimStep(0,-1)).toBeCloseTo(-0.02);
@@ -15,4 +15,20 @@ it('pointer trim only snaps near the neutral 50 percent tick',()=>{
  expect(trimFromPointer(54)).toBeCloseTo(0.08);
  expect(trimFromPointer(39)).toBeCloseTo(-0.22);
  expect(trimFromPointer(0)).toBe(-1);expect(trimFromPointer(100)).toBe(1);
+});
+
+it('trim shifts neutral without taking either endpoint away from the pilot', () => {
+ for (const trim of [-1, -0.4, 0, 0.7, 1]) {
+  expect(mixTrim(0, trim)).toBe(trim);
+  expect(mixTrim(-1, trim)).toBe(-1);
+  expect(mixTrim(1, trim)).toBe(1);
+  let previous = -1;
+  for (let step = -100; step <= 100; step++) {
+   const input = mixTrim(step / 100, trim);
+   expect(input).toBeGreaterThanOrEqual(previous);
+   expect(input).toBeGreaterThanOrEqual(-1);
+   expect(input).toBeLessThanOrEqual(1);
+   previous = input;
+  }
+ }
 });

@@ -8,7 +8,7 @@ import { seekReplay } from '../src/playback';
 const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const sample = () => {
   const sim = new FlightSimulation(defaultAircraft, 'birdman', 0.005);
-  for (let i = 0; i < 15; i++) sim.step({ ...neutral, weight: i % 2 ? 0.5 : -0.5, adaptiveControls: true, trimPitch: 0.1 });
+  for (let i = 0; i < 15; i++) sim.step({ ...neutral, weight: i % 2 ? 0.5 : -0.5, adaptiveControls: true, smartMixing: i % 3 === 0, trimPitch: 0.1 });
   return { definition: clone(defaultAircraft), challenge: 'birdman' as const, recording: sim.getRecording() };
 };
 afterEach(() => vi.restoreAllMocks());
@@ -31,6 +31,8 @@ it('exports lossless JSON and reproduces every recorded state after import', asy
     expect(second.position.toArray()).toEqual(first.position.toArray());
     expect(second.quaternion.toArray()).toEqual(first.quaternion.toArray());
     expect(second.telemetry.controlInputs).toEqual(first.telemetry.controlInputs);
+    expect(second.telemetry.smartMixing).toBe(first.telemetry.smartMixing);
+    expect(second.structure.sections.map(section => section.controlDeflection)).toEqual(first.structure.sections.map(section => section.controlDeflection));
   }
   expect(second.getRecording()).toEqual(source.recording);
 });
@@ -84,6 +86,10 @@ it('validates every input field at both JSON and simulation boundaries', () => {
     }
   }
   expect(() => validateRecording({ ...valid, frames: new Float64Array(valid.frames.length + 1) })).toThrow();
+  for (const value of [-1, 0.5]) {
+    const recording = { ...valid, frames: valid.frames.slice() }; recording.frames[11] = value;
+    expect(() => validateRecording(recording)).toThrow('输入');
+  }
 });
 
 it('hashes actual map geometry and detects terrain edits', async () => {

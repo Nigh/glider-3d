@@ -5,6 +5,8 @@ import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges'
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type WingFragment } from './structure';
 import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
+import { mixTrim } from './trim';
+import { mixControlSurfaces, type MixingSurface } from './control-mixing';
 
 export const GRAVITY = 9.81;
 /** Production clock; diagnostic step(dt) calls share this overload interval. */
@@ -76,7 +78,7 @@ const SECTION_POLAR = [
   [17, 1.5913, 0.08793, 1.6548, 0.07833],
 ] as const;
 export const MAX_FRAMES = 36_000;
-export const FRAME_WIDTH = 11;
+export const FRAME_WIDTH = 12;
 const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 0 };
 const AILERON_LIMIT = 18 * DEG, ELEVATOR_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
 /** 标准化舵量每秒最多变化1.25，减少高载荷下结构/操纵反馈的激励。 */
@@ -87,6 +89,7 @@ const ADAPTIVE_STRESS_TARGET = 0.9;
 export interface FlightControls extends Controls {
   autoTrim?: boolean;
   adaptiveControls?: boolean;
+  smartMixing?: boolean;
   trimPitch?: number;
   trimRoll?: number;
 }
@@ -149,11 +152,9 @@ export interface AerodynamicReference {
   dragMoment: Vector3;
   freeMoment: Vector3;
 }
-export interface AerodynamicSurface {
+export interface AerodynamicSurface extends MixingSurface {
   name: string;
   bodyId: number;
-  /** 断片保留断裂时舵面输入；不再响应主体操纵。 */
-  frozenControls?: Controls;
   point: Vector3;
   force: Vector3;
   drag: Vector3;
@@ -175,6 +176,10 @@ export interface AerodynamicSurface {
   normal: Vector3;
   incidence: number;
   controlEffectiveness: number;
+  /** Actual independent actuator state, normalized to this wing's travel limit. */
+  controlCommand: number;
+  controlProjection: Vector3;
+  controlMoment: Vector3;
   kind: 'main' | 'tail' | 'vertical';
   side: number;
   alpha: number;
@@ -210,7 +215,7 @@ export interface FlightTelemetry {
   /** 侧向移动改变惯量时，驾驶员克服/吸收转动能所做的真实功；前后仍用原准静态近似。 */
   controlWork: number;
   throttle: number; engineRpm: number; fuelRemaining: number; thrust: number; aboveHeightTime: number;
-  autoTrim: boolean; adaptiveControls: boolean; trimPitch: number; trimRoll: number; controlLimit: number;
+  autoTrim: boolean; adaptiveControls: boolean; smartMixing: boolean; trimPitch: number; trimRoll: number; controlLimit: number;
   controlInputs: { weight: number; lateral: number; elevator: number; aileron: number; rudder: number };
   propulsionWork: number;
   /** 燃油排出带走的机械能；不含燃料化学能。 */
@@ -236,7 +241,7 @@ export function validateRecording(recording: InputRecording): void {
   for (let i = 0; i < recording.frames.length; i++) {
     const value = recording.frames[i], field = i % FRAME_WIDTH;
     const valid = field === 0 ? value > 0 && value <= 0.25
-      : field === 7 || field === 8 ? value === 0 || value === 1
+      : field === 7 || field === 8 || field === 11 ? value === 0 || value === 1
       : field === 6 ? value >= 0 && value <= 1 : Math.abs(value) <= 1;
     if (!Number.isFinite(value) || !valid) throw new Error('飞行记录包含无效输入');
   }
@@ -482,6 +487,9 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
           sweep: sweepAngle(w), clearance: Infinity, groundEffect: 1, inducedDrag: 0,
           incidence,
           controlEffectiveness: effectiveness(w.controlSurface),
+          controlAxes: w.controlAxes ?? { roll: !vertical, pitch: !vertical, yaw: vertical },
+          controlResponse: w.controlResponse ?? 1, controlReversed: w.controlReversed ?? false,
+          controlProjection: new Vector3(), controlMoment: new Vector3(), controlCommand: 0, controlCandidate: 0,
           kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
           force: new Vector3(), drag: new Vector3() });
       }
@@ -491,14 +499,12 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
 }
 
 /** 与飞行积分共用单翼计算；力、阻力输出先保留在机体坐标中。 */
-function evaluateSurface(surface: AerodynamicSurface, input: Controls, mainDownwash: number, mainAspect: number,
+function evaluateSurface(surface: AerodynamicSurface, deflection: number, mainDownwash: number, mainAspect: number,
   velocity: Vector3, coefficient: Polar, liftDirection: Vector3) {
   const speed = velocity.length(), normalSpeed = velocity.dot(surface.normal);
   // Installation incidence already rotates the physical normal and chord; only control/downwash offsets remain.
-  let incidence = 0;
-  if (surface.kind === 'main') incidence -= surface.side * input.aileron * AILERON_LIMIT * surface.controlEffectiveness;
-  else if (surface.kind === 'tail') incidence -= mainDownwash * 1.56 / (Math.PI * mainAspect) - input.elevator * ELEVATOR_LIMIT * surface.controlEffectiveness;
-  else incidence -= input.rudder * RUDDER_LIMIT * surface.controlEffectiveness;
+  const incidence = deflection * surface.controlEffectiveness
+    - (surface.kind === 'tail' ? mainDownwash * 1.56 / (Math.PI * mainAspect) : 0);
   // 后掠法向条带近似；弹性法向/作用点由结构模型更新，非真实非定常升力线或颤振求解。
   // 侧滑改变两侧有效动压，后掠产生上反效应，前掠产生反向效应。
   const crossflow = velocity.dot(surface.crossflowDirection);
@@ -654,7 +660,7 @@ function evaluateReference(aircraft: AircraftProperties) {
     summary.updateBody(aircraft.cg, velocity);
     force.copy(summary.bodyDrag);
     for (const surface of summary.surfaces) {
-      const cl = evaluateSurface(surface, ZERO_CONTROLS, mainLift, aircraft.aspect, velocity, coefficient, direction);
+      const cl = evaluateSurface(surface, 0, mainLift, aircraft.aspect, velocity, coefficient, direction);
       if (surface.kind === 'main') mainLift += cl * surface.area / aircraft.wingArea;
       force.add(surface.force);
     }
@@ -936,9 +942,11 @@ export class FlightSimulation {
   private readonly requestedControls: Controls = { ...ZERO_CONTROLS };
   private readonly fullControls: Controls = { ...ZERO_CONTROLS };
   private readonly predictedControls: Controls = { ...ZERO_CONTROLS };
+  private readonly trimOmega = new Vector3();
   private controlLimit = 1;
   private controlAuthority = 1;
   private trimPitch = 0;
+  private trimPitchBias = 0;
   private trimPitchInput = 0;
   private autoTrim = false;
 
@@ -1003,7 +1011,7 @@ export class FlightSimulation {
       dissipatedEnergy: 0, initialEnergy: 0, liftDragRatio: 0, aerodynamics: this.aerodynamics,
       challengeProgress: 0, groundClearance: 0, score: 0, completed: false, timingStarted: false, controlWork: 0,
       throttle: 0, engineRpm: 0, fuelRemaining: 0, thrust: 0, aboveHeightTime: 0, propulsionWork: 0, fuelEnergyRemoved: 0,
-      autoTrim: false, adaptiveControls: false, trimPitch: 0, trimRoll: 0, controlLimit: 1,
+      autoTrim: false, adaptiveControls: false, smartMixing: false, trimPitch: 0, trimRoll: 0, controlLimit: 1,
       controlInputs: { weight: 0, lateral: 0, elevator: 0, aileron: 0, rudder: 0 },
       waterContact: false, waterContactPoint: new Vector3(), waterWork: 0 };
     this.reset();
@@ -1046,9 +1054,9 @@ export class FlightSimulation {
       this.fuelPart.iz = this.fuelPart.mass * this.fuelLocalInertia.z;
     }
     Object.assign(this.effective, ZERO_CONTROLS);
-    this.effective.autoTrim = false; this.effective.adaptiveControls = false;
+    this.effective.autoTrim = false; this.effective.adaptiveControls = false; this.effective.smartMixing = false;
     this.effective.trimPitch = 0; this.effective.trimRoll = 0;
-    this.trimPitch = 0; this.trimPitchInput = 0; this.autoTrim = false;
+    this.trimPitch = 0; this.trimPitchBias = 0; this.trimPitchInput = 0; this.autoTrim = false;
     Object.assign(this.applied, ZERO_CONTROLS);
     this.controlLimit = this.controlAuthority = 1;
     Object.assign(this.controlDeflections, { aileron: 0, elevator: 0, rudder: 0 });
@@ -1057,7 +1065,7 @@ export class FlightSimulation {
     for (const surface of this.surfaces) {
       surface.force.set(0, 0, 0); surface.drag.set(0, 0, 0); surface.alpha = 0;
       surface.clearance = Infinity; surface.groundEffect = 1; surface.inducedDrag = 0;
-      surface.frozenControls = undefined;
+      surface.controlCommand = surface.controlCandidate = 0;
     }
     this.telemetry.force.set(0, 0, 0); this.telemetry.drag.set(0, 0, 0); this.telemetry.torque.set(0, 0, 0);
     this.telemetry.physicsMs = 0; this.telemetry.aeroPower = 0;
@@ -1159,10 +1167,10 @@ export class FlightSimulation {
     this.velocity.set(0, 0, 0);
     this.laboratoryState.windVelocity.set(this.laboratoryState.windTunnel.speed, 0, 0);
     for (const axis of CONTROL_AXES) this.applied[axis] = this.laboratoryState.windTunnel[axis];
-    this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
-    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
-    this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
-    for (const s of this.structure.sections) if (s.bodyId === 0) s.controlDeflection = s.wingKey === 'mainWing' ? -this.controlDeflections.aileron : s.wingKey === 'horizontalTail' ? -s.side * this.controlDeflections.elevator : this.controlDeflections.rudder;
+    this.updateControlDirections();
+    mixControlSurfaces(this.surfaces, this.applied, this.effective.smartMixing === true);
+    for (const surface of this.surfaces) if (surface.bodyId === 0) surface.controlCommand = surface.controlCandidate;
+    this.updateControlDeflections();
   }
 
   private integrateWindTunnel(dt: number) {
@@ -1274,6 +1282,7 @@ export class FlightSimulation {
       input.adaptiveControls = this.replay.frames[offset + 8] === 1;
       input.trimPitch = this.replay.frames[offset + 9];
       input.trimRoll = this.replay.frames[offset + 10];
+      input.smartMixing = this.replay.frames[offset + 11] === 1;
       this.replayIndex++;
       this.replayFinished = this.replayIndex >= this.replay.length;
     } else {
@@ -1283,6 +1292,7 @@ export class FlightSimulation {
       input.throttle = controls.throttle ?? 0;
       input.autoTrim = controls.autoTrim ?? false;
       input.adaptiveControls = controls.adaptiveControls ?? false;
+      input.smartMixing = controls.smartMixing ?? false;
       input.trimPitch = controls.trimPitch ?? 0;
       input.trimRoll = controls.trimRoll ?? 0;
     }
@@ -1309,10 +1319,13 @@ export class FlightSimulation {
       this.recording[offset + 8] = input.adaptiveControls ? 1 : 0;
       this.recording[offset + 9] = input.trimPitch;
       this.recording[offset + 10] = input.trimRoll;
+      this.recording[offset + 11] = input.smartMixing ? 1 : 0;
     }
     if (this.definition.birdman) { input.elevator = 0; input.aileron = 0; }
     const autoTrim = !this.definition.birdman && input.autoTrim === true;
-    if (!autoTrim || !this.autoTrim || input.trimPitch !== this.trimPitchInput) this.trimPitch = this.definition.birdman ? 0 : input.trimPitch!;
+    if (autoTrim !== this.autoTrim || input.trimPitch !== this.trimPitchInput) this.trimPitchBias = 0;
+    if (this.definition.birdman || this.autoTrim && !autoTrim) this.trimPitch = 0;
+    else if (input.trimPitch !== this.trimPitchInput || autoTrim && !this.autoTrim) this.trimPitch = input.trimPitch!;
     this.trimPitchInput = input.trimPitch!;
     this.autoTrim = autoTrim;
     this.elapsed += dt;
@@ -1383,14 +1396,7 @@ export class FlightSimulation {
     // Quasi-static impact loads use the nominal physics interval. Narrowing a
     // swept-contact search must not turn the same impulse into infinite stress.
     this.controlLimit = 1;
-    // 比例项提供即时俯仰阻尼；慢积分仅负责配平，避免把角速度持续积成反向大舵量。
     const trimming = this.autoTrim && !this.launching && Math.abs(input.elevator) < 0.05 && this.velocity.lengthSq() >= 25;
-    const trimRate = trimming ? clamp(this.omega.z * 0.2, -0.05, 0.05) : 0;
-    for (const axis of CONTROL_AXES) {
-      const trim = this.definition.birdman ? 0 : axis === 'elevator' ? this.trimPitch : axis === 'aileron' ? input.trimRoll! : 0;
-      const damping = axis === 'elevator' && trimming ? clamp(this.omega.z * 0.35, -0.3, 0.3) : 0;
-      this.requestedControls[axis] = clamp(input[axis] + trim + damping, -1, 1);
-    }
     this.updatePropulsion(input.throttle!, dt);
     // 前后移动仍沿用原准静态代理；侧移使用完整非对称惯量并守恒机体轴角动量。
     this.weight += clamp(input.weight - this.weight, -dt * 1.5, dt * 1.5);
@@ -1419,6 +1425,12 @@ export class FlightSimulation {
       this.omega.set(0, 0, this.railStart.pitchDerivative * railSpeed);
       this.telemetry.controlWork += this.mass * this.velocity.lengthSq() / 2 + rotationalEnergy(this.inertiaTensor, this.omega) - oldKinetic;
     }
+    this.updateControlDirections();
+    const pitchDamping = trimming ? this.updateAutoTrim(dt) : 0;
+    for (const axis of CONTROL_AXES) {
+      const trim = this.definition.birdman ? 0 : axis === 'elevator' ? clamp(this.trimPitch + pitchDamping, -1, 1) : axis === 'aileron' ? input.trimRoll! : 0;
+      this.requestedControls[axis] = mixTrim(input[axis], trim);
+    }
     if (input.adaptiveControls) {
       const magnitude = Math.max(Math.abs(this.requestedControls.aileron), Math.abs(this.requestedControls.elevator), Math.abs(this.requestedControls.rudder));
       for (const axis of CONTROL_AXES) this.fullControls[axis] = magnitude > 0 ? this.requestedControls[axis] / magnitude : 0;
@@ -1429,25 +1441,23 @@ export class FlightSimulation {
     } else this.controlAuthority = 1;
     for (const axis of CONTROL_AXES) {
       const target = this.requestedControls[axis] * this.controlLimit;
+      this.fullControls[axis] = target;
       this.applied[axis] = clamp(this.applied[axis] + clamp(target - this.applied[axis], -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt),
         -this.controlLimit, this.controlLimit);
     }
+    mixControlSurfaces(this.surfaces, this.fullControls, input.smartMixing === true);
+    for (const surface of this.surfaces) if (surface.bodyId === 0) {
+      const target = surface.controlCandidate;
+      surface.controlCommand = clamp(surface.controlCommand + clamp(target - surface.controlCommand,
+        -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt), -this.controlLimit, this.controlLimit);
+    }
     if (input.adaptiveControls) {
-      // 反向/回中的行程中间态不一定与目标同向，必须单独预测，收紧安全上限优先于舵机速度。
-      const transitionLimit = this.adaptiveControlLimit(this.applied);
+      // A reversing actuator's intermediate state may be less safe than its target.
+      const transitionLimit = this.adaptiveControlLimit();
       for (const axis of CONTROL_AXES) this.applied[axis] *= transitionLimit;
+      for (const surface of this.surfaces) if (surface.bodyId === 0) surface.controlCommand *= transitionLimit;
     }
-    // 当前子步实际舵量包含结构限幅和舵机滞后；只阻止加深饱和，始终允许反向退积分。
-    if (trimming && trimRate * (this.requestedControls.elevator - this.applied.elevator) <= 1e-10) {
-      this.trimPitch = clamp(this.trimPitch + trimRate * dt, -1, 1);
-    }
-    this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
-    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
-    this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
-    for (const section of this.structure.sections) if (section.bodyId === 0) {
-      section.controlDeflection = section.wingKey === 'mainWing' ? -this.controlDeflections.aileron
-        : section.wingKey === 'horizontalTail' ? -section.side * this.controlDeflections.elevator : this.controlDeflections.rudder;
-    }
+    this.updateControlDeflections();
     if (this.launching && this.challenge === 'test-space' && this.testSpace.catapult) {
       this.integrateTestCatapult(input, dt); return;
     }
@@ -1511,14 +1521,82 @@ export class FlightSimulation {
     this.integrateFlight(input, dt);
   }
 
-  private predictControlStress(controls: Controls, scale: number): number {
-    for (const axis of CONTROL_AXES) this.predictedControls[axis] = controls[axis] * scale;
-    this.evaluateForces(ZERO_CONTROLS, this.velocity, this.omega, this.quaternion, this.position, this.predictedControls);
+  /** Actual deformed geometry and local airflow define independent actuator authority. */
+  private updateControlDirections() {
+    this.inverse.copy(this.quaternion).invert();
+    this.bodyVelocity.copy(this.challenge === 'wind-tunnel' ? this.laboratoryState.windVelocity : this.velocity).applyQuaternion(this.inverse);
+    for (const surface of this.surfaces) if (surface.bodyId === 0) {
+      this.arm.subVectors(surface.point, this.cg);
+      surface.controlProjection.crossVectors(this.arm, surface.normal).normalize();
+      if (!this.effective.smartMixing || surface.controlEffectiveness === 0 || surface.controlResponse === 0) {
+        surface.controlMoment.set(0, 0, 0);
+        continue;
+      }
+      this.localVelocity.crossVectors(this.omega, this.arm).add(this.bodyVelocity);
+      const limit = surface.kind === 'main' ? AILERON_LIMIT : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT;
+      const center = surface.controlCommand * limit, delta = 0.001;
+      evaluateSurface(surface, center - delta, 0, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      this.localDrag.copy(surface.force);
+      evaluateSurface(surface, center + delta, 0, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      this.localDrag.subVectors(surface.force, this.localDrag).multiplyScalar(limit / (2 * delta));
+      surface.controlMoment.crossVectors(this.arm, this.localDrag);
+    }
+  }
+
+  private updateControlDeflections() {
+    this.controlDeflections.aileron = this.applied.aileron * AILERON_LIMIT;
+    this.controlDeflections.elevator = -this.applied.elevator * ELEVATOR_LIMIT;
+    this.controlDeflections.rudder = this.applied.rudder * RUDDER_LIMIT;
+    for (const section of this.structure.sections) if (section.bodyId === 0) {
+      const surface = section.surface as AerodynamicSurface;
+      // Rotation axes point outboard on horizontal wings and along signed fin height.
+      const incidence = surface.controlCommand * (surface.kind === 'main' ? AILERON_LIMIT
+        : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT);
+      section.controlDeflection = incidence * (surface.kind === 'vertical' ? -Math.sign(surface.spanDirection.y) : surface.side);
+    }
+  }
+
+  /** Predict equilibrium trim; apply rate damping separately, without another low-pass delay. */
+  private updateAutoTrim(dt: number) {
+    this.trimOmega.copy(this.omega); this.trimOmega.z = 0;
+    Object.assign(this.predictedControls, this.applied);
+    const low = Math.max(-1, this.applied.elevator - 0.01), high = Math.min(1, this.applied.elevator + 0.01);
+    this.predictedControls.elevator = low;
+    this.evaluateForces(ZERO_CONTROLS, this.velocity, this.trimOmega, this.quaternion, this.position, this.predictedControls);
+    this.angularMomentum.copy(this.trimOmega).applyMatrix3(this.inertiaTensor);
+    this.cross.crossVectors(this.trimOmega, this.angularMomentum);
+    const lowAcceleration = this.angularAcceleration.copy(this.torque).sub(this.cross).applyMatrix3(this.inverseInertia).z;
+    this.predictedControls.elevator = high;
+    this.evaluateForces(ZERO_CONTROLS, this.velocity, this.trimOmega, this.quaternion, this.position, this.predictedControls);
+    this.angularMomentum.copy(this.trimOmega).applyMatrix3(this.inertiaTensor);
+    this.cross.crossVectors(this.trimOmega, this.angularMomentum);
+    const highAcceleration = this.angularAcceleration.copy(this.torque).sub(this.cross).applyMatrix3(this.inverseInertia).z;
+    const authority = (highAcceleration - lowAcceleration) / (high - low);
+    // A stalled or missing elevator cannot provide the requested restoring moment.
+    if (authority >= -1e-6) return 0;
+    const equilibrium = clamp(low - lowAcceleration / authority, -1, 1);
+    const damping = clamp(-4 * this.omega.z / authority, -1, 1);
+    // Remove persistent prediction/midpoint error; never wind up against travel or structural limits.
+    const correction = -8 * this.omega.z / authority * dt;
+    const requested = equilibrium + this.trimPitchBias + damping;
+    if (correction * (this.requestedControls.elevator - this.applied.elevator) <= 1e-10
+      && correction * (requested - clamp(requested, -1, 1)) <= 1e-10) {
+      this.trimPitchBias = clamp(this.trimPitchBias + correction, -1, 1);
+    }
+    const target = clamp(equilibrium + this.trimPitchBias, -1, 1);
+    const change = (target - this.trimPitch) * -Math.expm1(-dt / 0.25);
+    this.trimPitch = clamp(this.trimPitch + clamp(change, -0.5 * dt, 0.5 * dt), -1, 1);
+    return damping;
+  }
+
+  private predictControlStress(controls: Controls | undefined, scale: number): number {
+    if (controls) for (const axis of CONTROL_AXES) this.predictedControls[axis] = controls[axis] * scale;
+    this.evaluateForces(ZERO_CONTROLS, this.velocity, this.omega, this.quaternion, this.position, controls ? this.predictedControls : undefined, controls ? 1 : scale);
     return this.structure.predictStress(this, this.telemetry.force, this.telemetry.torque);
   }
 
   /** 冻结当前状态，直接重算候选舵量的气动力、惯性载荷及真实梁利用率。 */
-  private adaptiveControlLimit(controls: Controls): number {
+  private adaptiveControlLimit(controls?: Controls): number {
     // 零舵已有的气动/惯性/水载不能靠限制杆量消除，也不钳制真实应力或免除断裂。
     if (this.predictControlStress(controls, 0) >= ADAPTIVE_STRESS_TARGET) return 0;
     if (this.predictControlStress(controls, 1) <= ADAPTIVE_STRESS_TARGET) return 1;
@@ -1606,7 +1684,8 @@ export class FlightSimulation {
     }
   }
 
-  private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3, controls: Controls = this.applied) {
+  private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3, controls?: Controls, surfaceScale = 1) {
+    if (controls) mixControlSurfaces(this.surfaces, controls, this.effective.smartMixing === true);
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
     const speed = velocity.length();
@@ -1627,7 +1706,9 @@ export class FlightSimulation {
         surface.groundEffect = groundEffectFactor(surface.clearance, span);
       }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      const cl = evaluateSurface(surface, controls, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
+      const command = controls ? surface.controlCandidate : surface.controlCommand * surfaceScale;
+      const limit = surface.kind === 'main' ? AILERON_LIMIT : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT;
+      const cl = evaluateSurface(surface, command * limit, mainDownwash, this.aircraft.aspect, this.localVelocity, this.polar, this.liftDirection);
       const wet = this.surfaceWater(surface, orientation, position);
       if (surface.kind === 'main' && this.aircraft.wingArea > 0) mainDownwash += cl * (1 - wet) * surface.groundEffect * surface.area / this.aircraft.wingArea;
       // 升力与局部来流正交；空气/水阻计耗散，浮力功单独累计。
@@ -2133,9 +2214,6 @@ export class FlightSimulation {
         candidateVelocity: new Vector3(), candidateOmega: new Vector3(),
       };
       this.structure.detach(boundary, fragment.id);
-      for (const section of this.structure.sections) if (section.bodyId === fragment.id) {
-        (section.surface as AerodynamicSurface).frozenControls ??= { ...this.applied };
-      }
       this.fragmentMass(fragment);
       // 无额外分离冲量/假能量损失：两部分继承同一速度场，完整张量平行轴分解守恒动量和动能。
       this.arm.copy(fragment.cg).sub(oldCg);
@@ -2171,7 +2249,8 @@ export class FlightSimulation {
         surface.groundEffect = groundEffectFactor(surface.clearance, surface.span * Math.hypot(this.cross.x, this.cross.z));
       }
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      evaluateSurface(surface, surface.frozenControls ?? ZERO_CONTROLS, 0, surface.aspect, this.localVelocity, this.polar, this.liftDirection);
+      const limit = surface.kind === 'main' ? AILERON_LIMIT : surface.kind === 'tail' ? ELEVATOR_LIMIT : RUDDER_LIMIT;
+      evaluateSurface(surface, surface.controlCommand * limit, 0, surface.aspect, this.localVelocity, this.polar, this.liftDirection);
       fragment.aeroPower += surface.drag.dot(this.localVelocity);
       fragment.torque.add(this.cross.crossVectors(this.arm, surface.force));
       surface.force.applyQuaternion(orientation); surface.drag.applyQuaternion(orientation);
@@ -2670,6 +2749,7 @@ export class FlightSimulation {
     t.throttle = this.definition.engine.count > 0 ? this.effective.throttle ?? 0 : 0;
     t.engineRpm = this.engineRpm; t.fuelRemaining = this.fuelRemaining; t.thrust = this.thrust;
     t.autoTrim = this.autoTrim; t.adaptiveControls = this.effective.adaptiveControls === true;
+    t.smartMixing = this.effective.smartMixing === true;
     t.trimPitch = this.definition.birdman ? this.effective.trimPitch ?? 0 : this.trimPitch; t.trimRoll = this.effective.trimRoll ?? 0;
     t.controlLimit = t.adaptiveControls ? this.controlLimit : 1;
     t.controlInputs.weight = this.weight; t.controlInputs.lateral = this.lateral;
@@ -2913,7 +2993,7 @@ function snapshotSimulation(sim: FlightSimulation, launchRoll: number): Simulati
   return { binding: template.binding, changes, extra };
 }
 
-const controlSnapshotKeys = ['weight', 'lateral', 'throttle', 'rudder', 'elevator', 'aileron', 'autoTrim', 'adaptiveControls', 'trimPitch', 'trimRoll'];
+const controlSnapshotKeys = ['weight', 'lateral', 'throttle', 'rudder', 'elevator', 'aileron', 'autoTrim', 'adaptiveControls', 'smartMixing', 'trimPitch', 'trimRoll'];
 const fragmentSnapshotKeys = ['id', 'position', 'quaternion', 'velocity', 'omega', 'cg', 'mass', 'inertiaTensor', 'inverseInertia', 'landed', 'force', 'torque', 'drag', 'aeroPower', 'midpointVelocity', 'midpointOmega', 'midpointPosition', 'midpointQuaternion', 'candidateVelocity', 'candidateOmega'];
 const resultSnapshotKeys = ['maxG', 'distance', 'time', 'averageSpeed', 'maxSpeed', 'minSpeed', 'maxHeight', 'landing', 'takeoffHeight', 'takeoffSpeed', 'platformHeight', 'challenge', 'score', 'completed', 'checkpointScores', 'speedScore', 'heightPenalty'];
 
@@ -2997,11 +3077,6 @@ export function restoreReplayKeyframe(definition: AircraftDefinition, challenge:
       if (value === null || value === undefined) return;
       if (key === 'energyPerDistance') { if (typeof value !== 'number' || !Number.isFinite(value)) fail(); return; }
       if (key === 'liftCenter' || key === 'dragCenter') { check(value, new Vector3()); return; }
-      if (key === 'frozenControls') {
-        if (!value || typeof value !== 'object' || Object.keys(value).some(name => !controlSnapshotKeys.includes(name))) fail();
-        for (const [name, item] of Object.entries(value)) if (typeof item !== (name === 'autoTrim' || name === 'adaptiveControls' ? 'boolean' : 'number') || typeof item === 'number' && !Number.isFinite(item)) fail();
-        return;
-      }
       if (key === 'result') {
         if (!value || typeof value !== 'object' || Object.keys(value).some(name => !resultSnapshotKeys.includes(name))) fail();
         const result = stateRecord(value as object);
@@ -3073,7 +3148,7 @@ export function restoreReplayKeyframe(definition: AircraftDefinition, challenge:
     for (const name of Object.keys(actual)) {
       if (omitSnapshotField(template!.simulation, base, name) || names.includes(name)) continue;
       if (!controls.includes(actual) || !controlSnapshotKeys.includes(name)) fail();
-      check(actual[name], name === 'autoTrim' || name === 'adaptiveControls' ? false : 0, name);
+      check(actual[name], name === 'autoTrim' || name === 'adaptiveControls' || name === 'smartMixing' ? false : 0, name);
     }
   };
   check(sim, template.simulation);
