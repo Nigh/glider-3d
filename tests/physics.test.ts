@@ -470,15 +470,15 @@ describe('气动、质量、能量与消费者边界', () => {
     expect(coefficients(0, 5, 500_000, false).cl).toBe(0);
   });
 
-  it('地效逐条带使用净空和完整翼展，只降低诱导阻力，不改变水平翼迎角', () => {
+  it('地效按净空与完整翼展减弱自身及翼间下洗，近地增升并降低诱导阻力', () => {
     const low = probe(undefined, s => { s.position.y = 2; }), high = probe(undefined, s => { s.position.y = 280; });
     const a = low.telemetry.aerodynamics.wings[0], b = high.telemetry.aerodynamics.wings[0];
     expect(a.inducedDrag).toBeLessThan(b.inducedDrag); expect(low.telemetry.liftDragRatio).toBeGreaterThan(high.telemetry.liftDragRatio);
-    expect(a.lift.distanceTo(b.lift)).toBeLessThan(0.001);
-    expect(low.telemetry.aerodynamics.wings[1].alpha).toBeCloseTo(high.telemetry.aerodynamics.wings[1].alpha, 6);
+    expect(a.lift.y).toBeGreaterThan(b.lift.y);
+    expect(low.telemetry.aerodynamics.wings[1].alpha).not.toBeCloseTo(high.telemetry.aerodynamics.wings[1].alpha, 6);
     for (let i = 0; i < low.surfaces.length; i++) {
       const near = low.surfaces[i], far = high.surfaces[i];
-      if (near.kind === 'main') expect(near.drag.length() - near.inducedDrag).toBeCloseTo(far.drag.length() - far.inducedDrag, 4);
+      if (near.kind === 'main') expect(near.groundEffect).toBeLessThan(far.groundEffect);
       if (near.kind === 'vertical') expect(near.groundEffect).toBe(1);
     }
     const rolling = probe(undefined, s => { s.position.y = 4; s.quaternion.setFromAxisAngle(axisX, 10 * DEG); });
@@ -575,7 +575,7 @@ describe('驾驶舱与尾翼几何的物理消费者', () => {
     let power = 0;
     for (const surface of s.surfaces) {
       const arm = surface.point.clone().sub(s.cg);
-      force.add(surface.force); torque.add(new Vector3().crossVectors(arm, surface.force));
+      force.add(surface.force); torque.add(new Vector3().crossVectors(arm, surface.force)).add(surface.moment);
       power += surface.drag.dot(new Vector3().crossVectors(omega, arm));
     }
     expect(s.telemetry.force.clone().sub(force).distanceTo(body.force)).toBeLessThan(1e-9);

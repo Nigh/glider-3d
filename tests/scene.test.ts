@@ -1206,17 +1206,24 @@ it.each([false, true])('renders per-strip control directions for front/rear tail
     const tailMovement: number[] = [];
     for (let index = 0; index < 3; index++) {
       for (const section of view.wingSections[index]) {
-        const vertex = section.vertexStart + Math.floor(section.rows / 2) * 32 + 16;
-        const neutral = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
-        const hinge = new Vector3().fromArray(view.wingHinges[index], vertex * 3);
-        const axis = view.wingAxes[index][index === 2 || section.side < 0 ? 0 : 1];
-        const expected = neutral.clone().sub(hinge).applyAxisAngle(axis, section.physics.controlDeflection).add(hinge);
-        const rendered = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
-        expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
-        if (index > 0 && section.side === 1 && section.spanStart === 0) {
-          tailMovement.push(index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z);
+        // Pitch and roll share these actuators, so main-wing strips need not move
+        // in opposite vertical directions. Check each local hinge rotation instead.
+        const rowStart = section.vertexStart + Math.floor(section.rows / 2) * 32;
+        for (const chordVertex of [0, 12, 16, 20]) {
+          const vertex = rowStart + chordVertex;
+          const neutral = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
+          const hinge = new Vector3().fromArray(view.wingHinges[index], vertex * 3);
+          const axis = view.wingAxes[index][index === 2 || section.side < 0 ? 0 : 1];
+          const expected = neutral.clone();
+          if (view.wingMovable[index][vertex]) {
+            expected.sub(hinge).applyAxisAngle(axis, section.physics.controlDeflection).add(hinge);
+          }
+          const rendered = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
+          expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
+          if (chordVertex === 16 && index > 0 && section.side === 1 && section.spanStart === 0) {
+            tailMovement.push(index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z);
+          }
         }
-        if (index === 0) expect((rendered.y - neutral.y) * section.side).toBeGreaterThan(0);
       }
     }
     movement.push(tailMovement);

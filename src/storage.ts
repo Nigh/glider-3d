@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 水平翼共用弯度极曲线与舵角行程，旧轨迹及成绩不能混用。
-export const PHYSICS_VERSION = 'equivalent-wings-v18';
+// 几何尾迹耦合、镜像地效与近地增升改变载荷；旧轨迹及成绩不能混用。
+export const PHYSICS_VERSION = 'coupled-wakes-v19';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

@@ -16,6 +16,8 @@ test('test space configures the balloon platform before launch and keeps results
  await page.getByRole('button', { name: /^测试空间/ }).click();
  await expect(page.getByRole('heading', { name: '飞机工坊', exact: true })).toBeVisible();
  await page.getByRole('button', { name: '重置设计', exact: true }).click();
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ await page.locator('[data-aircraft-id="system:基础单发型"]').getByRole('button', { name: '加载', exact: true }).click();
  await page.getByRole('button', { name: /前往测试空间/ }).click();
  const height = page.getByLabel('平台高度数值', { exact: true });
  await height.fill('1200');
@@ -99,7 +101,19 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await cameras.getByRole('button', { name: '自由', exact: true }).click();
  const cameraTarget = await page.evaluate(() => (window as any).glider.scene.target);
  await page.mouse.move(viewport.width / 2, viewport.height * 0.48); await page.mouse.down();
- await page.mouse.move(viewport.width / 2, viewport.height * 0.18, { steps: 15 }); await page.mouse.up();
+ for (let step = 1; step <= 30; step++) {
+  await page.mouse.move(viewport.width / 2, viewport.height * (0.48 - step * 0.01), { steps: 3 });
+  const clearance = await page.evaluate(() => {
+   const frame = Promise.withResolvers<number>();
+   requestAnimationFrame(() => {
+    const scene = (window as any).glider.scene;
+    frame.resolve(scene.camera.y - scene.groundHeight);
+   });
+   return frame.promise;
+  });
+  if (clearance <= 0.551) break;
+ }
+ await page.mouse.up();
  await expect.poll(() => page.evaluate(() => { const scene = (window as any).glider.scene; return scene.camera.y - scene.groundHeight; })).toBeLessThan(0.551);
  const collisionTime = await page.evaluate(() => (window as any).glider.time);
  await expect.poll(() => page.evaluate(() => (window as any).glider.time)).toBeGreaterThan(collisionTime + 0.5);
@@ -138,8 +152,8 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.getByLabel('气流速度数值', { exact: true }).fill('200');
  await page.getByLabel('滚转角度数值', { exact: true }).fill('30');
  await page.getByLabel('俯仰角度数值', { exact: true }).fill('8');
- await page.getByLabel('副翼控制比例数值', { exact: true }).fill('40');
- await page.getByLabel('升降舵控制比例数值', { exact: true }).fill('30');
+ await page.getByLabel('滚转控制数值', { exact: true }).fill('40');
+ await page.getByLabel('俯仰控制数值', { exact: true }).fill('30');
  await page.getByLabel('方向舵控制比例数值', { exact: true }).fill('-25');
  expect(await page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(0);
  await expect(currentSpeed).toHaveText('0.0'); // Configured target is 200; show actual flow.
@@ -167,7 +181,43 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await expect(page.getByLabel('气流速度数值', { exact: true })).toHaveValue('200.0');
  await expect(cameras.getByRole('button', { name: '侧视', exact: true })).toHaveAttribute('aria-pressed', 'true');
  await page.screenshot({ path: info.outputPath('wind-tunnel-restored.png') });
+ await page.getByLabel('主翼安装角数值', { exact: true }).fill('6');
+ await page.getByLabel('副翼安装角数值', { exact: true }).fill('-2');
+ await expect(page.getByLabel('主翼安装角实际值', { exact: true })).toHaveText('6.0');
+ await expect(page.getByLabel('副翼安装角实际值', { exact: true })).toHaveText('-2.0');
  await page.getByRole('button', { name: '返回设计', exact: true }).click();
  await expect(page.getByRole('heading', { name: '飞机工坊', exact: true })).toBeVisible();
+ const tuned = await page.evaluate(() => window.glider.aircraft);
+ expect(tuned.assembly.mainIncidence).toBe(6); expect(tuned.assembly.tailIncidence).toBe(-2);
+ await page.getByRole('button', { name: /前往风洞/ }).click();
+ await expect(page.getByLabel('主翼安装角数值', { exact: true })).toHaveValue('6.0');
+ await expect(page.getByLabel('主翼安装角实际值', { exact: true })).toHaveText('6.0');
+ await page.getByRole('button', { name: '返回设计', exact: true }).click();
  expect(errors).toEqual([]);
+});
+
+test('wind tunnel keeps axis labels for pilot displacement and locks fin-mounted incidence', async ({ page }) => {
+ await page.getByRole('button', { name: /^风洞/ }).click();
+ await page.getByRole('button', { name: '重置设计', exact: true }).click();
+ const before = await page.evaluate(() => window.glider.aircraft);
+ expect(before.birdman).toBe(true);
+ await page.getByRole('button', { name: /前往风洞/ }).click();
+ await expect(page.getByRole('slider', { name: '滚转控制', exact: true })).toBeVisible();
+ await expect(page.getByRole('slider', { name: '俯仰控制', exact: true })).toBeVisible();
+ await expect(page.getByText('驾驶员横移', { exact: false })).toBeVisible();
+ await page.getByLabel('滚转控制数值', { exact: true }).fill('0.05');
+ await page.getByLabel('俯仰控制数值', { exact: true }).fill('-0.1');
+ await expect(page.getByLabel('滚转控制实际值', { exact: true })).toHaveText('0.05');
+ await expect(page.getByLabel('俯仰控制实际值', { exact: true })).toHaveText('-0.10');
+ await page.getByLabel('主翼安装角数值', { exact: true }).fill('4');
+ await expect(page.getByLabel('主翼安装角实际值', { exact: true })).toHaveText('4.0');
+ await page.getByRole('button', { name: '返回设计', exact: true }).click();
+ expect((await page.evaluate(() => window.glider.aircraft)).assembly.mainIncidence).toBe(4);
+ await page.getByRole('button', { name: '撤销', exact: true }).click();
+ expect((await page.evaluate(() => window.glider.aircraft)).assembly.mainIncidence).toBe(before.assembly.mainIncidence);
+ await page.getByRole('tab', { name: '副翼', exact: true }).click();
+ await page.getByRole('switch', { name: '副翼安装至垂尾顶端', exact: true }).click();
+ await page.getByRole('button', { name: /前往风洞/ }).click();
+ await expect(page.getByLabel('副翼安装角数值', { exact: true })).toHaveCount(0);
+ await expect(page.getByText('副翼安装在垂尾顶端，安装角锁定为 0°。', { exact: true })).toBeVisible();
 });

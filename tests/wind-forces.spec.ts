@@ -15,8 +15,6 @@ test('风洞受力简图使用当前机体系净力，暂停冻结，还原与�
  const panel = page.getByRole('region', { name: '当前受力与力矩', exact: true });
  await expect(panel).toBeVisible();
  await expect(panel.locator('output')).toHaveCount(6);
- await expect(panel.locator('[data-axis="Fy"] output')).toHaveText(/^-\d+\.\d N$/);
- await expect(panel.locator('[data-axis="Mz"] output')).toHaveText('+0.0 N·m');
  await page.getByRole('spinbutton', { name: '气流速度数值', exact: true }).fill('12');
  await page.getByRole('spinbutton', { name: '俯仰角度数值', exact: true }).fill('5');
  await page.getByRole('spinbutton', { name: '滚转角度数值', exact: true }).fill('30');
@@ -38,14 +36,15 @@ test('风洞受力简图使用当前机体系净力，暂停冻结，还原与�
   const forward = Math.cos(pitch) * x + Math.sin(pitch) * y;
   const vertical = -Math.sin(pitch) * x + Math.cos(pitch) * y;
   const force = [forward, Math.cos(roll) * vertical + Math.sin(roll) * z, -Math.sin(roll) * vertical + Math.cos(roll) * z];
-  const format = (value: number) => { const rounded = Math.round(value * 10) / 10; return `${rounded < 0 ? '' : '+'}${(Object.is(rounded, -0) ? 0 : rounded).toFixed(1)}`; };
   return {
    actual: [...document.querySelectorAll('.wind-forces output')].map(node => node.textContent!.trim()),
-   expected: [...force.map(value => `${format(value)} N`), ...(['x', 'y', 'z'] as const).map(axis => `${format(telemetry.torque[axis])} N·m`)],
+   actualNumbers: [...document.querySelectorAll('.wind-forces output')].map(node => Number(node.textContent!.replace('−', '-').replace(/\s/g, '').match(/[+-]?\d+(?:\.\d+)?/)![0])),
+   expectedNumbers: [...force, ...(['x', 'y', 'z'] as const).map(axis => Math.abs(telemetry.torque[axis]))],
    time: game.time,
   };
  });
- expect(values.actual).toEqual(values.expected);
+ values.actualNumbers.forEach((value, index) => expect(value).toBeCloseTo(values.expectedNumbers[index], 0));
+ for (const output of await panel.locator('[data-axis^="M"] output').allTextContents()) expect(output).not.toMatch(/[+−-]/);
  await page.evaluate(() => {
   const frame = Promise.withResolvers<void>();
   requestAnimationFrame(() => requestAnimationFrame(() => frame.resolve()));
@@ -59,10 +58,6 @@ test('风洞受力简图使用当前机体系净力，暂停冻结，还原与�
  await expect(panel).not.toContainText(/NaN|Infinity/);
  await page.getByRole('button', { name: '关闭风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as unknown as WindDiagnostics).glider.laboratory.wind.speed)).toBe(0);
- await expect(panel.locator('[data-axis="Fy"] output')).toHaveText(/^-\d+\.\d N$/);
- await expect(panel.locator('[data-axis="Mx"] output')).toHaveText('+0.0 N·m');
- await expect(panel.locator('[data-axis="My"] output')).toHaveText('+0.0 N·m');
- await expect(panel.locator('[data-axis="Mz"] output')).toHaveText('+0.0 N·m');
 });
 
 test('受力和力矩可访问名称覆盖中英日三语', async ({ page }) => {

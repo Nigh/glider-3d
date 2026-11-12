@@ -6,7 +6,7 @@ import { beamSection, materialCatalog } from './materials';
 export const MAX_ELASTIC_ROTATION = 0.25;
 
 export interface StructuralSurface {
-  point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3;
+  point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3; moment: Vector3;
   chordDirection: Vector3; crossflowDirection: Vector3;
   kind: 'main' | 'tail' | 'vertical'; side: number; spanStart: number; spanEnd: number;
   area: number; chord: number; incidence: number; bodyId: number;
@@ -229,6 +229,7 @@ export class WingStructure {
       load.moment.sub(this.force.add(this.moment.crossVectors(body.omega, this.cross)));
       this.force.copy(s.surface.force).applyQuaternion(this.inverse);
       load.force.add(this.force); load.moment.add(this.moment.crossVectors(s.surface.point, this.force));
+      load.moment.add(this.moment.copy(s.surface.moment).applyQuaternion(this.inverse));
       if (contacts) { load.force.add(contacts[s.id].force); load.moment.add(contacts[s.id].moment); }
       if (commit) s.load.copy(load.force);
     }

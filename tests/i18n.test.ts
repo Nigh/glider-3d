@@ -55,6 +55,16 @@ describe('shared translations', () => {
   expect(t('副翼配平', {}, 'en')).toBe('Roll trim');
   expect(t('副翼配平', {}, 'ja')).toBe('ロールトリム');
  });
+ it('translates wind tunnel axes, pilot motion and live incidence labels', () => {
+  const labels = ['滚转控制', '俯仰控制', '主翼安装角', '副翼安装角'];
+  for (const source of labels) for (const suffix of ['', '数值', '实际值']) {
+   expect(t(source + suffix, {}, 'en')).not.toBe(source + suffix);
+   expect(t(source + suffix, {}, 'ja')).not.toBe(source + suffix);
+  }
+  expect(t('滚转控制', {}, 'en')).toBe('Roll control');
+  expect(t('俯仰控制', {}, 'ja')).toBe('ピッチ操作');
+  for (const source of ['驾驶员横移', '驾驶员前后移']) for (const locale of ['en', 'ja'] as const) expect(t(source, {}, locale)).not.toBe(source);
+ });
  it('translates product names, catalogs, presets, prompts and interpolated values', () => {
   const names = [defaultAircraft.name, ...presets.map(preset => preset.name), ...Object.values(materialCatalog).flatMap(material => [material.name, material.note, material.strengthLabel]), ...Object.values(challengeDefinitions).map(challenge => challenge.name)];
   for (const name of names) expect(messages[name], name).toBeDefined();

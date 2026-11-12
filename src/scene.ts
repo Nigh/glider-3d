@@ -4,13 +4,14 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
-import { LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
+import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
 import { isLaboratory, TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from './laboratory';
 import { LaboratoryScene } from './laboratory-scene';
 import { language, t } from './i18n';
+import { cgGeometryRadius, loadMagnitude, momentDirection, solidForceArrow, solidMomentArrow } from './wind-forces';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
 const UP = new THREE.Vector3(0, 1, 0);
@@ -244,6 +245,12 @@ export class SceneView {
   private wingTrailActive = false;
   private readonly arrows: THREE.ArrowHelper[] = [];
   private readonly applicationMarkers: THREE.Mesh[] = [];
+  private readonly netForceArrow = solidForceArrow();
+  private readonly netMomentFrame = new THREE.Group();
+  private readonly netMomentArrow = solidMomentArrow();
+  private readonly loadPickObjects = [this.netForceArrow, this.netMomentArrow];
+  private readonly momentNormal = new THREE.Vector3(0, 0, 1);
+  private readonly loadScratch = new THREE.Vector3();
   private readonly splashPositions = new Float32Array(PARTICLES * 3);
   private readonly splashVelocities = new Float32Array(PARTICLES * 3);
   private readonly splashGeometry = new THREE.BufferGeometry();
@@ -364,6 +371,8 @@ export class SceneView {
       this.arrows.push(arrow);
       this.debugGroup.add(arrow);
     }
+    this.netMomentFrame.add(this.netMomentArrow);
+    this.debugGroup.add(this.netForceArrow, this.netMomentFrame);
     const markerGeometry = new THREE.SphereGeometry(0.1, 8, 6);
     const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffd777, depthTest: false });
     const marker = new THREE.Mesh(markerGeometry, markerMaterial);
@@ -533,6 +542,19 @@ export class SceneView {
       controlSurfaces: this.wingMeshes.map((_mesh, index) => ({ fraction: this.surfaceParameters[index], angle: this.wingAngles[index], hingeVisible: this.hingeLines[index].visible })),
       centers: { cg: position(this.cg.position), lift: position(this.liftCenter.position), drag: position(this.dragCenter.position), thrust: position(this.thrustCenter.position) },
       centerVisibility: { cg: this.cg.visible, lift: this.liftCenter.visible, drag: this.dragCenter.visible, thrust: this.thrustCenter.visible },
+      loads: {
+        visible: this.debugGroup.visible,
+        lift: { visible: this.arrows[0].visible, origin: position(this.arrows[0].position) },
+        drag: { visible: this.arrows[1].visible, origin: position(this.arrows[1].position) },
+        force: { visible: this.netForceArrow.visible, origin: position(this.netForceArrow.position),
+          pickNdc: position(new THREE.Vector3(0, this.netForceArrow.children[0].position.y, 0).applyQuaternion(this.netForceArrow.quaternion).add(this.netForceArrow.position).project(this.camera)),
+          direction: position(new THREE.Vector3(0, 1, 0).applyQuaternion(this.netForceArrow.quaternion)) },
+        moment: { visible: this.netMomentArrow.visible, center: position(this.netMomentFrame.position), radius: this.netMomentArrow.scale.x,
+          pickNdc: position(new THREE.Vector3(0, this.netMomentArrow.scale.y, 0).applyQuaternion(this.netMomentArrow.quaternion).applyQuaternion(this.netMomentFrame.quaternion).add(this.netMomentFrame.position).project(this.camera)),
+          axisBody: position(new THREE.Vector3(0, 0, 1).applyQuaternion(this.netMomentArrow.quaternion)),
+          axisWorld: position(new THREE.Vector3(0, 0, 1).applyQuaternion(this.netMomentArrow.quaternion).applyQuaternion(this.netMomentFrame.quaternion)) },
+        hover: this.renderer.domElement.title,
+      },
       thrustCenter: { body: position(this.designThrustCenter), direction: position(new THREE.Vector3(0, 1, 0).applyQuaternion(this.thrustCenter.quaternion)) },
       wingGeometry: this.wingMeshes.map((mesh, index) => {
         const points = mesh.geometry.getAttribute('position');
@@ -922,6 +944,7 @@ export class SceneView {
       && Math.hypot(event.clientX - this.selectionX, event.clientY - this.selectionY) > 5) this.selectionMoved = true;
     if (this.selectionPointer < 0 && !this.cameraDragging) this.setHoveredPart(this.pickPart(event));
     else this.setHoveredPart(null);
+    this.hoverLoads(event);
   }
 
   private endPartSelection(event: PointerEvent): void {
@@ -942,7 +965,37 @@ export class SceneView {
     this.setHoveredPart(null);
   }
 
-  private leavePartSelection(): void { this.setHoveredPart(null); }
+  private leavePartSelection(): void {
+    this.setHoveredPart(null);
+    this.renderer.domElement.title = '';
+  }
+
+  private hoverLoads(event: PointerEvent): void {
+    const canvas = this.renderer.domElement, sim = this.simulation;
+    if (!this.debug || !sim || this.cameraDragging) { canvas.title = ''; return; }
+    const rect = canvas.getBoundingClientRect();
+    this.partPointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
+    this.partRay.setFromCamera(this.partPointer, this.camera);
+    this.partHits.length = 0;
+    for (const object of this.loadPickObjects) {
+      if (object.visible) {
+        object.updateWorldMatrix(true, true);
+        this.partRay.intersectObject(object, true, this.partHits);
+      }
+    }
+    const hit = this.partHits[0]?.object;
+    if (!hit) { canvas.title = ''; return; }
+    const force = hit.parent === this.netForceArrow;
+    this.vector.copy(sim.telemetry.force);
+    this.vector.y -= GRAVITY * sim.telemetry.mass;
+    this.vector.applyQuaternion(this.headInverse.copy(sim.quaternion).invert());
+    const load = force ? this.vector : sim.telemetry.torque;
+    const values = force
+      ? `Fx ${load.x.toFixed(1)} · Fy ${load.y.toFixed(1)} · Fz ${load.z.toFixed(1)} N`
+      : `Mx ${t(momentDirection(0, load.x))} ${loadMagnitude(load.x)} · My ${t(momentDirection(1, load.y))} ${loadMagnitude(load.y)} · Mz ${t(momentDirection(2, load.z))} ${loadMagnitude(load.z)} N·m`;
+    canvas.title = `${t(force ? '净外力 · 机体' : '重心力矩 · 机体')}\n${values}\n${t(force ? '含重力，不含支架反力；表示解除固定时主体的平移趋势。' : '机体轴关于当前重心的外力矩，不含支架反力矩；箭头遵循右手定则，数值为绝对值。')}`;
+    canvas.style.cursor = 'help';
+  }
 
   private buildEditorOverlay(): void {
     const overlay = this.editorOverlay;
@@ -1484,6 +1537,16 @@ export class SceneView {
 
   private orthographicSpan(): number {
     const aspect = this.width / this.height;
+    if (this.debug && this.simulation?.challenge === 'wind-tunnel') {
+      this.body.updateWorldMatrix(true, true);
+      const radius = cgGeometryRadius(this.body, this.aircraft.position, this.loadScratch) * 1.2;
+      const parent = this.host.parentElement;
+      const left = parent?.querySelector('.flight-sidebar')?.getBoundingClientRect().width ?? 300;
+      const right = parent?.querySelector('.flight-right')?.getBoundingClientRect().width ?? 280;
+      const availableWidth = Math.max(240, this.width - left - right - 96);
+      const availableHeight = Math.max(240, this.height - 160);
+      return Math.max(6, radius * this.height / Math.min(availableWidth, availableHeight) * 1.1);
+    }
     const key = this.editorTarget;
     if (!key) return Math.max(6, this.definition.fuselage.length) / Math.min(1, aspect);
     if (key === 'propulsion') {
@@ -1716,6 +1779,7 @@ export class SceneView {
         diamond.castShadow = diamond.receiveShadow = false;
       }
       plume.visible = false;
+      plume.userData.excludeLoadEnvelope = true;
       group.add(plume);
       this.exhausts.push(plume);
       const support = this.mesh(supportGeometry, graphite, this.body);
@@ -1903,6 +1967,7 @@ export class SceneView {
       this.body.position.copy(this.designCG).negate();
       for (const arrow of this.arrows) arrow.visible = false;
       for (const marker of this.applicationMarkers) marker.visible = false;
+      this.netForceArrow.visible = this.netMomentArrow.visible = false;
       this.cameraView('orbit');
     }
     this.updateControlSurfaces();
@@ -2009,8 +2074,10 @@ export class SceneView {
     });
     this.cg.visible = !this.simulation || enabled;
     this.liftCenter.visible = !this.simulation || enabled;
+    if (this.simulation?.challenge === 'wind-tunnel') this.resize();
     this.updateEnvironment();
     this.updateCenters();
+    if (!enabled) this.renderer.domElement.title = '';
   }
 
   /** 在每个物理步之前保存状态；显示插值不回写物理仿真。 */
@@ -3752,9 +3819,17 @@ export class SceneView {
     if (!this.debug || !this.simulation) return;
     const sim = this.simulation;
     this.cg.position.copy(this.aircraft.position);
-    this.vector.copy(sim.telemetry.force).sub(sim.telemetry.drag);
-    this.setArrow(this.arrows[0], this.aircraft.position, this.vector, 0.005);
-    this.setArrow(this.arrows[1], this.aircraft.position, sim.telemetry.drag, 0.008);
+    const aero = sim.telemetry.aerodynamics;
+    if (aero.liftCenter) {
+      this.loadScratch.copy(aero.liftCenter).sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+      this.vector.copy(aero.lift).applyQuaternion(this.aircraft.quaternion);
+      this.setArrow(this.arrows[0], this.loadScratch, this.vector, 0.005);
+    } else this.arrows[0].visible = false;
+    if (aero.dragCenter) {
+      this.loadScratch.copy(aero.dragCenter).sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
+      this.vector.copy(aero.drag).applyQuaternion(this.aircraft.quaternion);
+      this.setArrow(this.arrows[1], this.loadScratch, this.vector, 0.008);
+    } else this.arrows[1].visible = false;
     this.vector.set(0, -9.81 * sim.telemetry.mass, 0);
     this.setArrow(this.arrows[2], this.aircraft.position, this.vector, 0.005);
     this.setArrow(this.arrows[3], this.aircraft.position, sim.velocity, 0.3);
@@ -3766,10 +3841,40 @@ export class SceneView {
         const fragment = this.fragmentRender(surface.bodyId);
         if (fragment) marker.position.copy(surface.point).sub(fragment.cg).applyQuaternion(fragment.mesh.quaternion).add(fragment.mesh.position);
         else marker.position.copy(surface.point).sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);
-        this.setArrow(this.arrows[i + 4], marker.position, surface.force, 0.007);
+        this.vector.copy(surface.force).sub(surface.drag);
+        this.setArrow(this.arrows[i + 4], marker.position, this.vector, 0.007);
       } else {
         this.arrows[i + 4].visible = false;
       }
+    }
+    this.updateNetLoads();
+  }
+
+  private updateNetLoads(): void {
+    const sim = this.simulation!;
+    // Physics forces use world axes. Reproject through physics body axes to match the interpolated aircraft.
+    this.vector.copy(sim.telemetry.force);
+    this.vector.y -= GRAVITY * sim.telemetry.mass;
+    this.vector.applyQuaternion(this.headInverse.copy(sim.quaternion).invert()).applyQuaternion(this.aircraft.quaternion);
+    const length = Math.min(18, this.vector.length() * 0.005);
+    this.netForceArrow.visible = length > 0.001;
+    if (this.netForceArrow.visible) {
+      this.netForceArrow.position.copy(this.aircraft.position);
+      this.netForceArrow.quaternion.setFromUnitVectors(UP, this.vector.normalize());
+      const head = Math.min(0.4, length * 0.25), shaft = length - head;
+      this.netForceArrow.children[0].scale.y = shaft;
+      this.netForceArrow.children[0].position.y = shaft / 2;
+      this.netForceArrow.children[1].scale.setScalar(head / 0.32);
+      this.netForceArrow.children[1].position.y = shaft + head / 2;
+    }
+    this.netMomentArrow.visible = sim.telemetry.torque.lengthSq() >= 0.05 ** 2;
+    if (this.netMomentArrow.visible) {
+      this.body.updateWorldMatrix(true, true);
+      const radius = cgGeometryRadius(this.body, this.aircraft.position, this.loadScratch) * 1.2;
+      this.netMomentFrame.position.copy(this.aircraft.position);
+      this.netMomentFrame.quaternion.copy(this.aircraft.quaternion);
+      this.netMomentArrow.scale.setScalar(radius);
+      this.netMomentArrow.quaternion.setFromUnitVectors(this.momentNormal, this.vector.copy(sim.telemetry.torque).normalize());
     }
   }
 

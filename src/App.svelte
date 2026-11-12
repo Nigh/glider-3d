@@ -1,8 +1,9 @@
 <script lang="ts">
- import { onMount } from 'svelte';
+ import { onDestroy, onMount } from 'svelte';
  import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, fuselageEndLimits, resizeFuselage, mainWingMountLimits, mainWingSupport, wingMountLimits, cockpitLimits, cockpitRearLengthLimits, fuelCapacityLimit, normalizeAircraftGeometry, editWingPoint, engineMountLimits, engineMounts, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Wing } from './model';
  import { FlightSimulation, derive, GRAVITY, LAUNCH, type FlightControls } from './physics';
  import { engineCatalog, FUEL_DENSITY } from './engines';
+ import type { CruiseReference } from './cruise';
  import { challengeDefinitions, challengeLaunch, LOW_ALTITUDE, type ChallengeMode } from './challenges';
  import { SceneView, type PilotHudFrame } from './scene';
  import LaboratoryControls from './LaboratoryControls.svelte';
@@ -39,6 +40,26 @@
  let challenge=$state<ChallengeMode>('birdman'),lastChallenge=$state<ChallengeMode>('birdman');
  let testSettings=$state<TestSpaceSettings>({...defaultTestSpace}),windSettings=$state<WindTunnelSettings>({...defaultWindTunnel});
  let saved=$state.raw<SavedAircraft[]>([]),selectedId=$state(''),message=$state(''),showLibrary=$state(false),debug=$state(false),aero=$state(false),stick=$state(false),stickX=$state(0),stickY=$state(0),paused=$state(false),flightReady=$state(false);let best=$state(0);let result=$state<any>(null),hud=$state<any>({speed:0,altitude:LAUNCH.height,distance:0,alpha:0,pitch:0,roll:0,sink:0,glide:0,time:0,liftDragRatio:0,potentialEnergy:0,kineticEnergy:0,dissipatedEnergy:0,initialEnergy:0,launching:true});let perf=$state<any>({});
+ let cruiseReferences=$state.raw<Record<string,CruiseReference|null|'error'|undefined>>({});
+ let cruiseWorker:Worker|null=null;
+ function requestCruise(id:string,definition:AircraftDefinition){
+  if(Object.hasOwn(cruiseReferences,id))return;
+  cruiseReferences={...cruiseReferences,[id]:undefined};
+  try{
+   if(!cruiseWorker){
+    cruiseWorker=new Worker(new URL('./cruise-worker.ts',import.meta.url),{type:'module'});
+    cruiseWorker.onmessage=event=>{const {id,reference,error}=event.data;cruiseReferences={...cruiseReferences,[id]:error?'error':reference};};
+    cruiseWorker.onerror=()=>{
+     const next={...cruiseReferences};
+     for(const key of Object.keys(next))if(next[key]===undefined)next[key]='error';
+     cruiseReferences=next;cruiseWorker?.terminate();cruiseWorker=null;
+    };
+   }
+   cruiseWorker.postMessage({id,definition:clone(definition)});
+  }catch{cruiseReferences={...cruiseReferences,[id]:'error'};}
+ }
+ $effect(()=>{if(showLibrary)for(const entry of saved)if(entry.builtIn&&entry.definition.engine.count>0)requestCruise(entry.id,entry.definition);});
+ onDestroy(()=>cruiseWorker?.terminate());
  let stats=$derived(derive(aircraft));let main=$derived(planform(aircraft.mainWing));let wingKey=$derived<'mainWing'|'horizontalTail'|'verticalTail'>(tab==='副翼'?'horizontalTail':tab==='垂直尾翼'?'verticalTail':'mainWing');
  const controlAxisOptions=[{key:'roll',label:'滚转'},{key:'pitch',label:'俯仰'},{key:'yaw',label:'偏航'}] as const;
  let wingControlAxes=$derived(aircraft[wingKey].controlAxes??{roll:wingKey!=='verticalTail',pitch:wingKey!=='verticalTail',yaw:wingKey==='verticalTail'});
@@ -172,13 +193,15 @@
  input.value='';
  }
  function clearControls(){stick=false;stickPointer=yawPointer=null;stickX=stickY=yawInput=0;input.clear();controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
+ function syncWindDesign(){if(simulation?.challenge!=='wind-tunnel')return;const actual=simulation.definition;if(aircraft.assembly.mainIncidence===actual.assembly.mainIncidence&&aircraft.assembly.tailIncidence===actual.assembly.tailIncidence)return;aircraft=clone(actual);selectedId='';commit();}
  function start(replay=false,imported?:Replay){
   seekVersion++;seeking=false;trimPitch=trimRoll=0;autoTrim=smartMixing=adaptiveControls=false;throttle=1;
   try{
+   if(!replay)syncWindDesign();
    const selectedChallenge=imported?.challenge??(replay?lastChallenge:challenge),definition=forChallenge(imported?.definition??(replay?lastDefinition:aircraft),selectedChallenge);
    const next=new FlightSimulation(definition,selectedChallenge,undefined,testSettings);
    if(replay&&(imported?.recording??recording))next.loadReplay(imported?.recording??recording!);
-   if(selectedChallenge==='wind-tunnel')next.setWindTunnel(windSettings);
+   if(selectedChallenge==='wind-tunnel'){windSettings={...windSettings,mainIncidence:definition.assembly.mainIncidence,tailIncidence:definition.assembly.tailIncidence};next.setWindTunnel(windSettings);}
    simulation=next;if(!replay&&!isLaboratory(selectedChallenge))cacheFlight(next);
    lastDefinition=clone(definition);lastChallenge=selectedChallenge;
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
@@ -222,7 +245,7 @@
  function beginFlight(){if(screen!=='flight'||!simulation||flightReady||seeking)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='wind-tunnel'&&(lastChallenge!=='test-space'||testSettings.catapult)&&lastChallenge!=='low-altitude')audio.launch();}
  function togglePause(){if(screen==='flight'&&lastChallenge!=='wind-tunnel'&&flightReady&&!seeking){paused=!paused;clearControls();}}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;if(result?.landing==='terrain'){audio.crash();scene.markCrash(()=>audio.stroke());}clearControls();recordedLength=simulation.recordingLength;screen='result';scene.cameraView('轨道');if(!isReplay&&!isLaboratory(lastChallenge)){recording=simulation.getRecording();cacheRecording(simulation,recording);replaySamples.set(recording,new Map(samples.map(p=>[p.time,p])));try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
- function design(){seekVersion++;seeking=false;activeReplay=null;showLibrary=false;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
+ function design(){syncWindDesign();seekVersion++;seeking=false;activeReplay=null;showLibrary=false;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
  function challengeAircraft(){return challenge==='birdman'||isLaboratory(challenge)&&aircraft.birdman?defaultAircraft:presets.find(p=>p.name===(challenge==='low-altitude'?'基础单发型':'高性能滑翔型'))!;}
  function enterChallenge(next:ChallengeMode){const previous=challenge;challenge=next;if(!isAircraftCompatible(aircraft,next)){aircraft=clone(challengeAircraft());selectedId='';history=new History(clone(aircraft));historyVersion=0;}else if(isLaboratory(previous)&&!isLaboratory(next)){history=new History(clone(aircraft));historyVersion=0;}showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
  function toggleAutoTrim(){if(screen!=='flight'||isReplay||lastDefinition.birdman)return;if(autoTrim)trimPitch=0;autoTrim=!autoTrim;}
@@ -399,7 +422,7 @@ window.addEventListener('pointermove',mouse);
  <article class="saved-plane" class:incompatible={!compatible} data-aircraft-id={s.id}>
  {#if s.builtIn}<h3>{t(s.name)}</h3>{:else}<input aria-label={t("重命名{p0}",{p0:s.name})} value={s.name} maxlength="60" onchange={e=>renameSaved(s.id,e.currentTarget.value)}/>{/if}
  <small>{s.builtIn?t("系统飞机"):new Date(s.updatedAt).toLocaleString($language)} · {t(s.definition.birdman?"鸟人间飞机":"普通飞机")}{selectedId===s.id?t(" · 当前飞机"):''}</small>
- {#if s.builtIn&&s.definition.engine.count>0}<p>{t("巡航油门 {throttle}% · 巡航速度 {speed} m/s",{throttle:s.definition.engine.count===2?68:72,speed:s.definition.engine.count===2?29:24})}</p>{/if}
+ {#if s.builtIn&&s.definition.engine.count>0}{@const cruise=cruiseReferences[s.id]}<p>{cruise===undefined?t('正在计算巡航参考…'):cruise==='error'?t('巡航参考计算失败'):cruise?t("巡航油门 {throttle}% · 巡航速度 {speed} m/s",{throttle:(cruise.throttle*100).toFixed(0),speed:cruise.speed.toFixed(0)}):t('巡航参考不可配平')}</p>{/if}
  {#if !compatible}<p class="compatibility-note">{t(challenge==='birdman'?"鸟人间比赛只允许无动力鸟人间设计":"当前挑战不可使用鸟人间飞机，请选择普通飞机。")}</p>{/if}
  <div><button class="load-plane" disabled={!compatible} onclick={()=>load(s.id)}>{t("加载")}</button><button onclick={()=>{try{duplicateAircraft(s.id);saved=listAircraft();}catch(e){notify((e as Error).message);}}}>{t("复制")}</button><button onclick={()=>fileExport(s.id)}>{t("导出")}</button>
  {#if !s.builtIn}<button class="delete-plane" onclick={()=>{if(confirm(t('删除“{name}”？此操作不可撤销。',{name:s.name}))){try{deleteAircraft(s.id);saved=listAircraft();if(selectedId===s.id)selectedId='';}catch(e){notify((e as Error).message);}}}}>{t("删除")}</button>{/if}</div>
@@ -531,7 +554,7 @@ window.addEventListener('pointermove',mouse);
  </svg>{/if}
  <div class="flight-sidebar">
  {#if isLaboratory(lastChallenge)}
-  <LaboratoryControls mode={lastChallenge} ready={flightReady} windEnabled={hud.windEnabled??false} cameraView={windCamera} {testSettings} {windSettings} actualWind={hud.wind??defaultWindTunnel} onTestSettings={configureTest} onWindSettings={configureWind} onStop={stopTest} onToggleWind={toggleWind} onRestore={restoreWindAircraft} onCamera={selectWindCamera}/>
+  <LaboratoryControls mode={lastChallenge} definition={lastDefinition} ready={flightReady} windEnabled={hud.windEnabled??false} cameraView={windCamera} {testSettings} {windSettings} actualWind={hud.wind??defaultWindTunnel} onTestSettings={configureTest} onWindSettings={configureWind} onStop={stopTest} onToggleWind={toggleWind} onRestore={restoreWindAircraft} onCamera={selectWindCamera}/>
   {#if lastChallenge==='wind-tunnel'}<button onclick={design}>{t('返回设计')}</button>{/if}
  {/if}
  {#if lastChallenge!=='wind-tunnel'}<section class="flight-hud" class:compact-hud={lastChallenge!=='birdman'} aria-label={t("飞行数据")}>
