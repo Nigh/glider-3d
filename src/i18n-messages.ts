@@ -4,6 +4,9 @@ import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
  ...laboratoryMessages,
  ...inputMessages,
+ "返回工坊": ["Back to workshop", "工房に戻る"],
+ "自由飞行 · 可调平台": ["Free flight · Launch setup", "自由飛行 · 発射台設定"],
+ "来流与姿态 · 气动和结构": ["Aero & structure", "空力 · 構造テスト"],
  "鸟人间滑翔基础型": ["Basic Birdman glider", "鳥人間基本滑空型"],
  "高性能滑翔型": ["High-performance glider", "高性能滑空型"],
  "基础双发型": ["Basic twin-engine aircraft", "基本双発型"],
@@ -294,44 +297,44 @@ export const messages: Record<string, readonly [string, string]> = {
   "性能"
  ],
  "不同飞机，": [
-  "Different aircraft,",
-  "機体を変えて、"
+  "Design.",
+  "設計して、"
  ],
  "不同挑战。": [
-  "different challenges.",
-  "挑戦を変える。"
+  "Take flight.",
+  "飛び立とう。"
  ],
  "选择挑战，进入对应飞机工坊。": [
-  "Choose a challenge and open its aircraft workshop.",
-  "挑戦を選んで、機体工房を開きます。"
+  "Pick a challenge. Build your aircraft.",
+  "挑戦を選んで、機体をつくろう。"
  ],
  "湖面比距离，山谷竞速，低空贴地闯关。": [
-  "Glide over the lake, race down a valley, or score at low altitude.",
-  "湖上で距離を競い、山谷で速さを競い、低空で得点を狙います。"
+  "Lake glides, valley races, low-level runs.",
+  "湖で飛距離、渓谷で速さ、低空でスコア。"
  ],
  "鸟人间挑战": [
-  "Birdman challenge",
-  "鳥人間チャレンジ"
+  "Birdman",
+  "鳥人間"
  ],
  "无动力 · 湖面距离": [
-  "Unpowered · distance over water",
-  "無動力 · 湖上の飛距離"
+  "Unpowered · Distance",
+  "無動力 · 飛距離"
  ],
  "高山速降": [
-  "Alpine downhill",
-  "山岳ダウンヒル"
+  "Downhill",
+  "山岳レース"
  ],
  "山顶弹射 · 山谷竞速": [
-  "Summit catapult · valley time trial",
-  "山頂射出 · 渓谷タイムアタック"
+  "Catapult · Valley race",
+  "山頂射出 · 渓谷レース"
  ],
  "低空飞行": [
-  "Low-altitude flight",
+  "Low flight",
   "低空飛行"
  ],
  "跑道起飞 · 河谷计分": [
-  "Runway takeoff · river-valley scoring",
-  "滑走路離陸 · 河谷で得点"
+  "Runway · River score",
+  "滑走路 · 河谷スコア"
  ],
  "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · 1 / 2 油门": [
   "W / S pitch · A / D roll · Q / E yaw · 1 / 2 throttle",

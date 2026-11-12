@@ -2920,7 +2920,8 @@ export class SceneView {
   }
 
   private buildDownhillRuins(): void {
-    const concrete = this.groundMaterial(0x777b77), dark = new THREE.MeshStandardMaterial({color:0x293335,roughness:1});
+    // Window decals need a depth bias at long range as well as physical wall clearance.
+    const concrete = this.groundMaterial(0x777b77), dark = new THREE.MeshStandardMaterial({color:0x293335,roughness:1,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});
     const box = new THREE.BoxGeometry(1,1,1), transform = new THREE.Object3D(), local = new THREE.Matrix4(), matrix = new THREE.Matrix4();
     const bodies = new THREE.InstancedMesh(box,concrete,downhillRuins.length);
     const bands = new THREE.InstancedMesh(box,dark,downhillRuins.reduce((sum,r)=>sum+Math.ceil(r.length/6)*2+1,0));
@@ -2933,10 +2934,10 @@ export class SceneView {
       transform.scale.set(1,1,1);transform.updateMatrix();
       // Floor/window bands share one draw call across the ruined city.
       for (let floor=-ruin.length/2+4;floor<ruin.length/2-2;floor+=6) for (const side of [-1,1]) {
-        local.makeScale(0.08,ruin.height*0.68,3.5).setPosition(side*(ruin.width/2+0.02),0,floor);
+        local.makeScale(0.08,ruin.height*0.68,3.5).setPosition(side*(ruin.width/2+0.06),0,floor);
         bands.setMatrixAt(band++,matrix.multiplyMatrices(transform.matrix,local));
       }
-      local.makeScale(ruin.width*0.8,ruin.height*0.8,0.08).setPosition(0,0,ruin.length/2+0.03);
+      local.makeScale(ruin.width*0.8,ruin.height*0.8,0.08).setPosition(0,0,ruin.length/2+0.06);
       bands.setMatrixAt(band++,matrix.multiplyMatrices(transform.matrix,local));
     }
     bands.count=band;

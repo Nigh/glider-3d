@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test('持久化日语后切换语言，声音、翼面、参数和已有错误同步更新', async ({ page }) => {
  await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'ja'));
  await page.goto('/');
- await page.getByRole('button', { name: '鳥人間チャレンジ' }).click();
+ await page.locator('.mode-buttons button').first().click();
  const definition = await page.evaluate(() => window.glider.aircraft);
  await page.getByText('4頂点を数値で編集', { exact: true }).click();
  await page.locator('#px0').fill('');

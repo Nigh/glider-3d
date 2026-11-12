@@ -5,8 +5,34 @@ import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, 
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
-import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
+import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, downhillRuins, type ChallengeMode } from '../src/challenges';
 import { TEST_SPACE, testSpaceTerrainHeight } from '../src/laboratory';
+
+it('废墟窗带完整位于所属墙面外，倾斜建筑也不与墙面相交', () => {
+  const view = Object.assign(Object.create(SceneView.prototype), {
+    mountainEnvironment: new Group(), renderer: { capabilities: { getMaxAnisotropy: () => 1 } },
+  });
+  view.buildDownhillRuins();
+  const bodies = view.mountainEnvironment.getObjectByName('fallen-highrises') as InstancedMesh;
+  const bands = view.mountainEnvironment.getObjectByName('ruin-window-bands') as InstancedMesh;
+  const bodyMatrix = new Matrix4(), bandMatrix = new Matrix4(), relative = new Matrix4();
+  const position = new Vector3(), rotation = new Quaternion(), dimensions = new Vector3();
+  const cube = new Box3(new Vector3(-0.5,-0.5,-0.5),new Vector3(0.5,0.5,0.5));
+  let index = 0;
+  for (const [bodyIndex, ruin] of downhillRuins.entries()) {
+    bodies.getMatrixAt(bodyIndex,bodyMatrix);
+    bodyMatrix.decompose(position,rotation,dimensions);
+    bodyMatrix.compose(position,rotation,new Vector3(1,1,1)).invert();
+    const windowCount = Math.ceil((ruin.length-6)/6)*2+1;
+    for (let window = 0; window < windowCount; window++) {
+      bands.getMatrixAt(index++,bandMatrix);
+      const bounds = cube.clone().applyMatrix4(relative.multiplyMatrices(bodyMatrix,bandMatrix));
+      const clearance = Math.max(bounds.min.x-dimensions.x/2,-dimensions.x/2-bounds.max.x,bounds.min.z-dimensions.z/2);
+      expect(clearance).toBeGreaterThan(0.01);
+    }
+  }
+  expect(index).toBe(bands.count);
+});
 
 it('renders every wing of a combined fin/tail fragment and removes only parts whose owner changed', () => {
   const geometry = () => new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(9), 3)).setIndex([0, 1, 2]);

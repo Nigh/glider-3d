@@ -126,7 +126,7 @@
  let assemblyPositions=$derived([{key:'mainWing',label:'主翼纵向位置',value:aircraft.assembly.mainWing,min:mainMountLimits.min,max:mainMountLimits.max},{key:'horizontalTail',label:'副翼位置',value:aircraft.assembly.horizontalTail,min:wingMountLimits(aircraft,'horizontalTail').min,max:wingMountLimits(aircraft,'horizontalTail').max},{key:'verticalTail',label:'垂直尾翼位置',value:aircraft.assembly.verticalTail,min:wingMountLimits(aircraft,'verticalTail').min,max:wingMountLimits(aircraft,'verticalTail').max},{key:'cockpit',label:'驾驶舱位置',value:aircraft.cockpit.position,min:cockpitMin,max:cockpitMax}] as const);
  function setPosition(key:typeof assemblyPositions[number]['key'],input:HTMLInputElement){const n=Math.round(input.valueAsNumber*100)/100,position=assemblyPositions.find(p=>p.key===key)!;if(Number.isFinite(n)){const supported=clamp(n,position.min,position.max);change(d=>{if(key==='cockpit')d.cockpit.position=supported;else{if(key==='horizontalTail')d.assembly.tailOnFin=false;d.assembly[key]=supported;}});if(n!==supported)notify('已限制在机身支撑范围内；可先延长机头或机尾。');commit();}else notify('位置必须是有限数值');input.value=String(Number((key==='cockpit'?aircraft.cockpit.position:aircraft.assembly[key]).toFixed(2)));}
  function setEnd(end:'nose'|'tail',input:HTMLInputElement){const n=Math.round(input.valueAsNumber*100)/100;if(Number.isFinite(n)){change(d=>resizeFuselage(d,end,n));commit();if(Math.abs(fuselageEnds(aircraft)[end]-n)>1e-6)notify('端点受 3–12 m 机身长度、驾驶舱和尾翼支撑限制。');}else notify('端点必须是有限数值');input.value=String(Number(fuselageEnds(aircraft)[end].toFixed(2)));}
- $effect(()=>{const target=screen==='design'?(tab==='动力'?'propulsion':tab==='机身'?'fuselage':wingKey):null;if(sceneReady)scene.setEditor(target,d=>change(out=>Object.assign(out,d)),commit);});
+ $effect(()=>{const target=screen==='design'&&!showLibrary?(tab==='动力'?'propulsion':tab==='机身'?'fuselage':wingKey):null;if(sceneReady)scene.setEditor(target,d=>change(out=>Object.assign(out,d)),commit);});
  function flightSample(sim:FlightSimulation):FlightSample{const t=sim.telemetry;return {time:sim.elapsedTime,distance:t.distance,height:t.altitude,speed:t.speed,scoringHeight:t.altitude-t.groundClearance+LOW_ALTITUDE.scoringHeight,energyRatio:t.initialEnergy>0?(t.kineticEnergy+t.potentialEnergy)/t.initialEnergy:0,energyPerDistance:t.energyPerDistance,waterContact:t.waterContact,gForce:t.gForce};}
  function sampleFlight(final=false){if(!simulation||isLaboratory(lastChallenge)||(lastChallenge==='birdman'&&simulation.launching))return;if(final||flightElapsed-lastSampleTime>=0.1){const point=flightSample(simulation);samples.push(point);if(isReplay&&activeReplay){let saved=replaySamples.get(activeReplay.recording);if(!saved){saved=new Map();replaySamples.set(activeReplay.recording,saved);}saved.set(point.time,point);}lastSampleTime=flightElapsed;}}
  function refreshHud(){if(!simulation)return;const t=simulation.telemetry,s=simulation.structure;hud={...t,controlInputs:{...t.controlInputs},wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,alpha:t.alpha*180/Math.PI,pitch:t.pitch*180/Math.PI,roll:t.roll*180/Math.PI,time:simulation.time,launching:simulation.launching,maxStressRatio:s.maxStressRatio,maxYieldRatio:s.maxYieldRatio,maxDeflection:s.maxDeflection,fractureCount:s.fractureCount,fragmentCount:simulation.fragments.length,peakWings:s.peakWings,wings:summarizeWingStructure(s.sections,structureWings)};}
@@ -145,9 +145,9 @@
  function forChallenge(definition:AircraftDefinition,mode:ChallengeMode=challenge){const d=validateAircraft(definition);if(!isAircraftCompatible(d,mode))throw Error(mode==='birdman'?'鸟人间比赛只允许无动力鸟人间设计':'当前挑战不可使用鸟人间飞机，请选择普通飞机。');return d;}
  function replace(d:AircraftDefinition){try{aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';scene?.updateAircraft(aircraft);commit();return true;}catch(e){notify((e as Error).message);return false;}}
  function setAircraftType(birdman:boolean){if(!isLaboratory(challenge)||birdman===aircraft.birdman)return;change(d=>{d.birdman=birdman;if(birdman){d.engine.count=0;d.fuelTank.capacity=0;d.mainWing.controlSurface=0;d.horizontalTail.controlSurface=0;}else{d.mainWing.controlSurface=0.28;d.horizontalTail.controlSurface=0.4;}});if(birdman&&tab==='动力')tab='主翼';selectedId='';commit();}
- function undo(){const d=history.undo();if(d){aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
- function redo(){const d=history.redo();if(d){aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
- function library(){try{saved=listAircraft();}catch(e){saved=presets.map(preset=>loadAircraft(`system:${preset.name}`));notify((e as Error).message);}showLibrary=!showLibrary;}
+ function undo(){if(screen!=='design'||showLibrary)return;const d=history.undo();if(d){aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
+ function redo(){if(screen!=='design'||showLibrary)return;const d=history.redo();if(d){aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
+ function library(){try{saved=listAircraft();}catch(e){saved=presets.map(preset=>loadAircraft(`system:${preset.name}`));notify((e as Error).message);}clearControls();showLibrary=true;}
  function save(){try{const definition=forChallenge(aircraft),existing=listAircraft().find(item=>!item.builtIn&&item.name===definition.name);if(existing&&!confirm(t('覆盖“{name}”？原设计将被替换。',{name:existing.name})))return;const item=saveAircraft(definition,existing?.id);selectedId=item.id;saved=listAircraft();notify('飞机已保存在此浏览器','success');}catch(e){notify((e as Error).message);}}
  function load(id:string){try{const item=loadAircraft(id);if(replace(item.definition)){selectedId=id;showLibrary=false;notify(t('已加载 {name}',{name:item.builtIn?t(item.name):item.name}),'success');}}catch(e){notify((e as Error).message);}}
  function renameSaved(id:string,name:string){try{const item=renameAircraft(id,name);saved=listAircraft();if(selectedId===id){change(d=>d.name=item.name);commit();}}catch(e){notify((e as Error).message);}}
@@ -180,7 +180,7 @@
    simulation=next;if(!replay&&!isLaboratory(selectedChallenge))cacheFlight(next);
    lastDefinition=clone(definition);lastChallenge=selectedChallenge;
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
-   samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;if(!replay&&!flightViews.includes(flightCamera))flightCamera='追尾';screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
+   samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;if(!replay&&!flightViews.includes(flightCamera))flightCamera='追尾';showLibrary=false;screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
    scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);
    if(selectedChallenge==='wind-tunnel'){aero=true;windCamera='侧视';}
    scene.setDebug(aero);scene.cameraView(selectedChallenge==='wind-tunnel'?'侧视':flightCamera);
@@ -220,7 +220,7 @@
  function beginFlight(){if(screen!=='flight'||!simulation||flightReady||seeking)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='wind-tunnel'&&(lastChallenge!=='test-space'||testSettings.catapult)&&lastChallenge!=='low-altitude')audio.launch();}
  function togglePause(){if(screen==='flight'&&lastChallenge!=='wind-tunnel'&&flightReady&&!seeking){paused=!paused;clearControls();}}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;if(result?.landing==='terrain'){audio.crash();scene.markCrash(()=>audio.stroke());}clearControls();recordedLength=simulation.recordingLength;screen='result';scene.cameraView('轨道');if(!isReplay&&!isLaboratory(lastChallenge)){recording=simulation.getRecording();cacheRecording(simulation,recording);replaySamples.set(recording,new Map(samples.map(p=>[p.time,p])));try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
- function design(){seekVersion++;seeking=false;activeReplay=null;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
+ function design(){seekVersion++;seeking=false;activeReplay=null;showLibrary=false;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
  function challengeAircraft(){return challenge==='birdman'||isLaboratory(challenge)&&aircraft.birdman?defaultAircraft:presets.find(p=>p.name===(challenge==='low-altitude'?'基础单发型':'高性能滑翔型'))!;}
  function enterChallenge(next:ChallengeMode){const previous=challenge;challenge=next;if(!isAircraftCompatible(aircraft,next)){aircraft=clone(challengeAircraft());selectedId='';history=new History(clone(aircraft));historyVersion=0;}else if(isLaboratory(previous)&&!isLaboratory(next)){history=new History(clone(aircraft));historyVersion=0;}showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
  function toggleAutoTrim(){if(screen!=='flight'||isReplay||lastDefinition.birdman)return;if(autoTrim)trimPitch=0;autoTrim=!autoTrim;}
@@ -236,7 +236,7 @@
   if(!down){input.key(e.code,false);return;}
   if(input.suspended||inputSettingsOpen)return;
   const target=e.target instanceof HTMLElement?e.target:null;
-  if(e.code==='Escape'&&!e.repeat){e.preventDefault();if(screen==='flight'||screen==='result')design();else if(screen==='design'){screen='menu';showLibrary=false;}return;}
+  if(e.code==='Escape'&&!e.repeat){e.preventDefault();if(screen==='flight'||screen==='result')design();else if(screen==='design'){if(showLibrary)showLibrary=false;else screen='menu';}return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&!target?.closest('input,textarea,[contenteditable="true"]')){e.preventDefault();e.shiftKey?redo():undo();return;}
   if(e.ctrlKey||e.metaKey||e.altKey)return;
   if(target?.closest('input:not([type=range]):not([type=checkbox]):not([type=file]),textarea,select,summary,[contenteditable="true"]'))return;
@@ -266,7 +266,7 @@
   stick=mouseStick;
  }
 onMount(()=>{
- scene=new SceneView(host);scene.onEditorSelect=target=>{tab=editorTabs[target];};scene.onDesignViewChange=view=>{designCamera=designViewNames[view]??view;};scene.updateAircraft(aircraft);sceneReady=true;
+ scene=new SceneView(host);scene.onEditorSelect=target=>{if(screen==='design'&&!showLibrary)tab=editorTabs[target];};scene.onDesignViewChange=view=>{designCamera=designViewNames[view]??view;};scene.updateAircraft(aircraft);sceneReady=true;
  const unlock=()=>audio.unlock();
  const click=(e:MouseEvent)=>{const target=e.target instanceof Element?e.target:null;if(target?.closest('button:not(:disabled),summary')&&!target.closest('.flight-controls'))audio.ui('click');};
  document.addEventListener('pointerdown',unlock,true);document.addEventListener('keydown',unlock,true);document.addEventListener('click',click,true);
@@ -387,11 +387,29 @@ window.addEventListener('pointermove',mouse);
 </dl></aside>{/if}
 
 {/snippet}
+{#snippet hangar()}
+ <section class="library" aria-label={t("本地机库")}>
+ <div class="library-title"><h2>{t("本地机库 ·")} {saved.length} {t("架")}</h2><button onclick={()=>showLibrary=false}>{t("返回工坊")}</button></div>
+ <p>{t("系统飞机可复制和导出，不可修改或删除。个人设计保存在当前浏览器，同名保存需确认覆盖。")}</p>
+ <div class="library-actions"><label class="button">{t("导入 JSON")}<input aria-label={t("导入飞机文件")} type="file" accept=".json,application/json" onchange={fileImport}/></label></div>
+ {#each saved as s}
+ {@const compatible=isAircraftCompatible(s.definition,challenge)}
+ <article class="saved-plane" class:incompatible={!compatible} data-aircraft-id={s.id}>
+ {#if s.builtIn}<h3>{t(s.name)}</h3>{:else}<input aria-label={t("重命名{p0}",{p0:s.name})} value={s.name} maxlength="60" onchange={e=>renameSaved(s.id,e.currentTarget.value)}/>{/if}
+ <small>{s.builtIn?t("系统飞机"):new Date(s.updatedAt).toLocaleString($language)} · {t(s.definition.birdman?"鸟人间飞机":"普通飞机")}{selectedId===s.id?t(" · 当前飞机"):''}</small>
+ {#if s.builtIn&&s.definition.engine.count>0}<p>{t("巡航油门 {throttle}% · 巡航速度 {speed} m/s",{throttle:s.definition.engine.count===2?72:55,speed:s.definition.engine.count===2?30:17})}</p>{/if}
+ {#if !compatible}<p class="compatibility-note">{t(challenge==='birdman'?"鸟人间比赛只允许无动力鸟人间设计":"当前挑战不可使用鸟人间飞机，请选择普通飞机。")}</p>{/if}
+ <div><button class="load-plane" disabled={!compatible} onclick={()=>load(s.id)}>{t("加载")}</button><button onclick={()=>{try{duplicateAircraft(s.id);saved=listAircraft();}catch(e){notify((e as Error).message);}}}>{t("复制")}</button><button onclick={()=>fileExport(s.id)}>{t("导出")}</button>
+ {#if !s.builtIn}<button class="delete-plane" onclick={()=>{if(confirm(t('删除“{name}”？此操作不可撤销。',{name:s.name}))){try{deleteAircraft(s.id);saved=listAircraft();if(selectedId===s.id)selectedId='';}catch(e){notify((e as Error).message);}}}}>{t("删除")}</button>{/if}</div>
+ </article>
+ {/each}
+ </section>
+{/snippet}
 <div class="app" class:flying={screen==='flight'} class:designing={screen==='design'} class:powered-flight={screen==='flight'&&lastDefinition.engine.count>0&&lastChallenge!=='wind-tunnel'} class:low-flying={screen==='flight'&&lastChallenge==='low-altitude'} class:awaiting-flight={screen==='flight'&&!flightReady} class:wind-tunnel={screen==='flight'&&lastChallenge==='wind-tunnel'} class:laboratory-flight={screen==='flight'&&isLaboratory(lastChallenge)}>
  <div class="scene" bind:this={host} aria-label={t("三维滑空机与湖面场景")}></div>
  <header class="topbar">
   <div class="brand-group">
-   <button class="brand" onclick={()=>screen==='flight'?togglePause():screen='menu'} aria-label={t("返回主菜单")}><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>{t('翼构方程')}<small>{t('设计与驾驶')}</small></span></button>
+   <button class="brand" onclick={()=>{if(screen==='flight')togglePause();else{screen='menu';showLibrary=false;}}} aria-label={t("返回主菜单")}><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>{t('翼构方程')}<small>{t('设计与驾驶')}</small></span></button>
    <a class="github-link" href="https://github.com/Nigh/glider-3d" target="_blank" rel="noopener noreferrer" aria-label={t("GitHub 项目源码（新标签页）")} title={t("GitHub 项目源码")}><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
   </div>
   {#if screen!=='menu'}<nav aria-label={t("游戏流程")}><button class:active={screen==='design'} onclick={design}>{t("设计")}</button><button class:active={screen==='flight'||screen==='result'} onclick={()=>start()}>{t("试飞")}</button></nav>{/if}
@@ -405,10 +423,28 @@ window.addEventListener('pointermove',mouse);
   </div>
  </header>
  {#if screen==='menu'}
- <main class="welcome"><h1>{t("不同飞机，")}<br/>{t("不同挑战。")}</h1><p>{t("选择挑战，进入对应飞机工坊。")}<br/>{t("湖面比距离，山谷竞速，低空贴地闯关。")}</p><div class="mode-buttons"><button class="primary large" onclick={()=>enterChallenge('birdman')}>{t("鸟人间挑战")} <small>{t("无动力 · 湖面距离")}</small></button><button class="secondary large" onclick={()=>enterChallenge('downhill')}>{t("高山速降")} <small>{t("山顶弹射 · 山谷竞速")}</small></button><button class="secondary large" onclick={()=>enterChallenge('low-altitude')}>{t("低空飞行")} <small>{t("跑道起飞 · 河谷计分")}</small></button></div><div class="lab-mode-buttons"><button class="secondary" onclick={()=>enterChallenge('test-space')}>{t("测试空间")}<small>{t("自由飞行 · 可调平台")}</small></button><button class="secondary" onclick={()=>enterChallenge('wind-tunnel')}>{t("风洞")}<small>{t("来流与姿态 · 气动和结构")}</small></button></div><label class="button secondary large replay-import">{t("导入回放")}<input aria-label={t("导入回放")} disabled={replayBusy} type="file" accept=".json,application/json" onchange={replayImport}/></label><div class="welcome-note">{t("W / S 俯仰 · A / D 滚转 · Q / E 偏航 · 1 / 2 油门")}</div></main>
+ <main class="welcome">
+ <h1><span>{t("不同飞机，")}</span><span>{t("不同挑战。")}</span></h1>
+ <p><span>{t("选择挑战，进入对应飞机工坊。")}</span> <span>{t("湖面比距离，山谷竞速，低空贴地闯关。")}</span></p>
+ <div class="mode-buttons">
+ <button class="primary large" onclick={()=>enterChallenge('birdman')}><span>{t("鸟人间挑战")}</span><small>{t("无动力 · 湖面距离")}</small></button>
+ <button class="secondary large" onclick={()=>enterChallenge('downhill')}><span>{t("高山速降")}</span><small>{t("山顶弹射 · 山谷竞速")}</small></button>
+ <button class="secondary large" onclick={()=>enterChallenge('low-altitude')}><span>{t("低空飞行")}</span><small>{t("跑道起飞 · 河谷计分")}</small></button>
+ </div>
+ <div class="lab-mode-buttons">
+ <button class="secondary" onclick={()=>enterChallenge('test-space')}><span>{t("测试空间")}</span><small>{t("自由飞行 · 可调平台")}</small></button>
+ <button class="secondary" onclick={()=>enterChallenge('wind-tunnel')}><span>{t("风洞")}</span><small>{t("来流与姿态 · 气动和结构")}</small></button>
+ </div>
+ <label class="button secondary large replay-import">{t("导入回放")}<input aria-label={t("导入回放")} disabled={replayBusy} type="file" accept=".json,application/json" onchange={replayImport}/></label>
+ <div class="welcome-note">{t("W / S 俯仰 · A / D 滚转 · Q / E 偏航 · 1 / 2 油门")}</div>
+ </main>
  <aside class="menu-caption"><span>{t(defaultAircraft.name)}</span><p>{t("{span} m 翼展",{span:planform(defaultAircraft.mainWing).span.toFixed(2)})} <b>·</b> {t("参数化轻型滑空机")}</p></aside>
  {:else if screen==='design'}
- <aside class="editor"><div class="editor-heading"><div><h1>{t("飞机工坊")}</h1><p>{t(challengeDefinitions[challenge].name)} {t(isLaboratory(challenge)?"· 调整设计，开始测试。":"· 调整设计，前往挑战。")}</p></div><button class="hangar-button" aria-expanded={showLibrary} onclick={library}>{t("机库")}</button></div><div class="name-row"><input aria-label={t("飞机名称")} value={aircraft.name} maxlength="60" onchange={e=>{change(d=>d.name=e.currentTarget.value);commit();}}/><button onclick={save}>{t("保存")}</button></div><div class="history"><button disabled={!historyVersion||!history.canUndo} onclick={undo}>{t("撤销")}</button><button disabled={!historyVersion||!history.canRedo} onclick={redo}>{t("重做")}</button><button onclick={()=>{replace(challengeAircraft());selectedId='';}}>{t("重置设计")}</button></div>
+ <aside class="editor">
+ {#if showLibrary}
+ {@render hangar()}
+ {:else}
+ <div class="editor-heading"><div><h1>{t("飞机工坊")}</h1><p>{t(challengeDefinitions[challenge].name)} {t(isLaboratory(challenge)?"· 调整设计，开始测试。":"· 调整设计，前往挑战。")}</p></div><button class="hangar-button" onclick={library}>{t("机库")}</button></div><div class="name-row"><input aria-label={t("飞机名称")} value={aircraft.name} maxlength="60" onchange={e=>{change(d=>d.name=e.currentTarget.value);commit();}}/><button onclick={save}>{t("保存")}</button></div><div class="history"><button disabled={!historyVersion||!history.canUndo} onclick={undo}>{t("撤销")}</button><button disabled={!historyVersion||!history.canRedo} onclick={redo}>{t("重做")}</button><button onclick={()=>{replace(challengeAircraft());selectedId='';}}>{t("重置设计")}</button></div>
  {#if isLaboratory(challenge)}<label class="aircraft-type">{t("飞机类型")}<select aria-label={t("飞机类型")} value={aircraft.birdman?'birdman':'normal'} onchange={e=>setAircraftType(e.currentTarget.value==='birdman')}><option value="birdman">{t("鸟人间飞机")}</option><option value="normal">{t("普通飞机")}</option></select></label>{/if}
  <div class="replay-toolbar"><label class="button replay-import">{t("导入回放")}<input aria-label={t("导入回放")} disabled={replayBusy} type="file" accept=".json,application/json" onchange={replayImport}/></label></div><div class="tabs" role="tablist" aria-label={t("部件编辑")}>{#each (aircraft.birdman?['机身','主翼','副翼','垂直尾翼']:['机身','主翼','副翼','垂直尾翼','动力']) as part}<button role="tab" aria-selected={tab===part} class:active={tab===part} onclick={()=>tab=part as Tab}>{t(part)}</button>{/each}</div>
  <div class="editor-content"><h2>{t('{part}设计',{part:t(tab)})}</h2><p class="help">{t(hints[tab])}</p>
@@ -449,7 +485,9 @@ window.addEventListener('pointermove',mouse);
  <fieldset class="control-axis-settings"><legend>{t("舵面响应轴")}</legend>{#each controlAxisOptions as axis}<button class="toggle-switch" role="switch" aria-label={t("{axis}响应",{axis:t(axis.label)})} aria-checked={wingControlAxes[axis.key]} onclick={()=>toggleControlAxis(axis.key)}>{t(axis.label)}</button>{/each}</fieldset>
  <p class="help">{t("普通混控按响应轴分配；智能混控使用所有可用舵面。实际力矩取决于安装几何。")}</p>
  {/if}
- </div><div class="editor-footer"><span>{t(challengeDefinitions[challenge].name)}</span><button class="primary" onclick={()=>start()}>{t(challenge==='test-space'?'前往测试空间':challenge==='wind-tunnel'?'前往风洞':"前往挑战")} <span>↗</span></button></div></aside>
+ </div><div class="editor-footer"><span>{t(challengeDefinitions[challenge].name)}</span><button class="primary" onclick={()=>start()}>{t(challenge==='test-space'?'前往测试空间':challenge==='wind-tunnel'?'前往风洞':"前往挑战")} <span>↗</span></button></div>
+ {/if}
+ </aside>
  <div class="viewport-tools" aria-label={t("设计相机")}>{#each ['自由','俯视','侧视','正视','后视'] as c}<button class:active={designCamera===c} aria-pressed={designCamera===c} onclick={()=>selectDesignCamera(c)}>{t(c)}</button>{/each}</div>
  <section class="design-instruments" aria-label={t("设计实时仪表")}>
  <section class="design-metrics" aria-label={t("飞机性能估算")}>
@@ -556,24 +594,6 @@ window.addEventListener('pointermove',mouse);
  {/if}
  {/if}
  {#if activeReplay&&screen==='flight'}<div class="replay-panel"><ReplayTimeline replay={activeReplay} position={replayPosition} {seeking} {paused} onseek={seekTo}/></div>{/if}
- {#if showLibrary&&screen==='design'}
- <section class="library" aria-label={t("本地机库")}>
- <div class="library-title"><h2>{t("本地机库 ·")} {saved.length} {t("架")}</h2><button onclick={()=>showLibrary=false}>{t("关闭")}</button></div>
- <p>{t("系统飞机可复制和导出，不可修改或删除。个人设计保存在当前浏览器，同名保存需确认覆盖。")}</p>
- <div class="library-actions"><label class="button">{t("导入 JSON")}<input aria-label={t("导入飞机文件")} type="file" accept=".json,application/json" onchange={fileImport}/></label></div>
- {#each saved as s}
- {@const compatible=isAircraftCompatible(s.definition,challenge)}
- <article class="saved-plane" class:incompatible={!compatible} data-aircraft-id={s.id}>
- {#if s.builtIn}<h3>{t(s.name)}</h3>{:else}<input aria-label={t("重命名{p0}",{p0:s.name})} value={s.name} maxlength="60" onchange={e=>renameSaved(s.id,e.currentTarget.value)}/>{/if}
- <small>{s.builtIn?t("系统飞机"):new Date(s.updatedAt).toLocaleString($language)} · {t(s.definition.birdman?"鸟人间飞机":"普通飞机")}{selectedId===s.id?t(" · 当前飞机"):''}</small>
- {#if s.builtIn&&s.definition.engine.count>0}<p>{t("巡航油门 {throttle}% · 巡航速度 {speed} m/s",{throttle:s.definition.engine.count===2?72:55,speed:s.definition.engine.count===2?30:17})}</p>{/if}
- {#if !compatible}<p class="compatibility-note">{t(challenge==='birdman'?"鸟人间比赛只允许无动力鸟人间设计":"当前挑战不可使用鸟人间飞机，请选择普通飞机。")}</p>{/if}
- <div><button class="load-plane" disabled={!compatible} onclick={()=>load(s.id)}>{t("加载")}</button><button onclick={()=>{try{duplicateAircraft(s.id);saved=listAircraft();}catch(e){notify((e as Error).message);}}}>{t("复制")}</button><button onclick={()=>fileExport(s.id)}>{t("导出")}</button>
- {#if !s.builtIn}<button class="delete-plane" onclick={()=>{if(confirm(t('删除“{name}”？此操作不可撤销。',{name:s.name}))){try{deleteAircraft(s.id);saved=listAircraft();if(selectedId===s.id)selectedId='';}catch(e){notify((e as Error).message);}}}}>{t("删除")}</button>{/if}</div>
- </article>
- {/each}
- </section>
- {/if}
  {#if debug}<aside class="performance" aria-label={t("开发性能面板")}><h2>{t("性能实测")} <button onclick={()=>debug=false}>{t("关闭")}</button></h2><p>{t(qualityNames[perf.quality]??perf.quality??'')} · {Number(perf.fps||0).toFixed(1)} FPS</p><p>{t("平均")} {Number(perf.mean||0).toFixed(2)} ms · P95 {Number(perf.p95||0).toFixed(2)} ms · P99 {Number(perf.p99||0).toFixed(2)} ms</p><p>{t("物理")} {Number(perf.physicsMs||0).toFixed(3)} {t("ms · 渲染提交")} {Number(perf.renderMs||0).toFixed(2)} ms</p><p>{t("几何")} {Number(perf.geometryMs||0).toFixed(2)} ms · {perf.drawCalls||0} {t('绘制调用')} · {perf.triangles||0} {t('三角形')}</p><p>{t("几何与纹理估算")} {typeof perf.memory==='number'?perf.memory.toFixed(2)+' MiB':t("不可用")}</p><small>{t("帧率来自当前环境，不代表真实手机性能。")}</small></aside>{/if}
  {#if message}<div class="toast" role="status">{t(message)}<button aria-label={t("关闭提示")} onclick={()=>message=''}>{t("关闭")}</button></div>{/if}
 </div>

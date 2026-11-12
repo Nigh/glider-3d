@@ -109,7 +109,7 @@ for (const mode of ['高山速降', '低空飞行']) {
   await page.getByRole('button', { name: '机库', exact: true }).click();
   const personal = page.locator('.saved-plane').filter({ has: page.getByRole('textbox', { name: '重命名导入鸟人间禁用机', exact: true }) });
   await expect(personal.getByRole('button', { name: '加载', exact: true })).toBeDisabled();
-  await page.getByRole('region', { name: '本地机库', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('region', { name: '本地机库', exact: true }).getByRole('button', { name: '返回工坊', exact: true }).click();
   await page.getByRole('button', { name: '前往挑战', exact: false }).click();
   await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('flight');
   expect((await page.evaluate(() => window.glider.aircraft)).birdman).toBe(false);

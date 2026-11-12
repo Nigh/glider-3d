@@ -272,13 +272,12 @@ test.describe('桌面完整交互', () => {
     await page.getByRole('button', { name: '机库', exact: true }).click();
     const exported = { ...await aircraft(page), name: '重命名测试机' };
     const downloadPromise = page.waitForEvent('download');
-    await original.locator('summary').click();
-    await original.getByRole('button', { name: '导出 JSON', exact: true }).click();
+    await original.getByRole('button', { name: '导出', exact: true }).click();
     const download = await downloadPromise;
     const exportPath = testInfo.outputPath('aircraft.json');
     await download.saveAs(exportPath);
     expect(JSON.parse(await readFile(exportPath, 'utf8'))).toEqual(exported);
-    await library.getByRole('button', { name: '关闭', exact: true }).click();
+    await library.getByRole('button', { name: '返回工坊', exact: true }).click();
     await page.getByRole('button', { name: '重置设计', exact: true }).click();
     expect(await aircraft(page)).not.toEqual(exported);
     await page.getByRole('button', { name: '机库', exact: true }).click();
@@ -365,7 +364,7 @@ test('手机竖屏与横屏无页面溢出，保留相机操作并移除虚拟�
   }
   await page.getByRole('button', { name: '机库', exact: true }).tap();
   await noOverflow(page);
-  await page.getByRole('region', { name: '本地机库' }).getByRole('button', { name: '关闭', exact: true }).tap();
+  await page.getByRole('region', { name: '本地机库' }).getByRole('button', { name: '返回工坊', exact: true }).tap();
   await insideViewport(page, page.getByRole('button', { name: '前往挑战' }));
   await page.getByRole('button', { name: '前往挑战' }).tap();
   await beginFlight(page);
