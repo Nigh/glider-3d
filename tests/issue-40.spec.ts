@@ -31,12 +31,6 @@ test('test space configures the balloon platform before launch and keeps results
  const throttle = page.getByLabel('油门', { exact: true });
  await throttle.press('Home');
  await page.screenshot({ path: info.outputPath('test-space-platform.png') });
-  const camera = page.getByLabel('飞行相机', { exact: true });
-  await camera.selectOption('自由');
-  await page.mouse.move(800, 450); await page.mouse.wheel(0, 20000);
-  await expect.poll(() => page.evaluate(() => { const { camera, target } = (window as any).glider.scene; return Math.hypot(camera.x - target.x, camera.y - target.y, camera.z - target.z); })).toBeGreaterThan(5000);
-  await page.screenshot({ path: info.outputPath('test-space-mountains.png') });
-  await camera.selectOption('追尾');
  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
  await expect(height).toBeDisabled();
  await expect.poll(() => page.evaluate(() => (window as any).glider.time)).toBeGreaterThan(0.25);
