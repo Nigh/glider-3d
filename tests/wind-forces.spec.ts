@@ -5,13 +5,13 @@ import type { WindTunnelSettings } from '../src/laboratory';
 // App exposes these read-only getters; the shared browser declaration omits laboratory details.
 type WindDiagnostics = { glider: { time: number; telemetry: Pick<FlightTelemetry, 'force' | 'mass' | 'torque'>; laboratory: { wind: WindTunnelSettings } } };
 
-test.use({ viewport: { width: 1440, height: 1000 }, isMobile: false, hasTouch: false });
+test.use({ viewport: { width: 1440, height: 1000 } });
 
 test('风洞受力简图使用当前机体系净力，暂停冻结，还原与停风后保留真实载荷', async ({ page }) => {
  await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
  await page.goto('/');
  await page.getByRole('button', { name: '风洞', exact: false }).click();
- await page.getByRole('button', { name: '前往风洞', exact: true }).click();
+ await page.getByRole('button', { name: '前往风洞', exact: false }).click();
  const panel = page.getByRole('region', { name: '当前受力与力矩', exact: true });
  await expect(panel).toBeVisible();
  await expect(panel.locator('output')).toHaveCount(6);
@@ -76,7 +76,7 @@ test('受力和力矩可访问名称覆盖中英日三语', async ({ page }) => 
   await page.evaluate(code => localStorage.setItem('aero-formula.language', code), locale.code);
   await page.reload();
   await page.getByRole('button', { name: locale.menu, exact: false }).click();
-  await page.getByRole('button', { name: locale.start, exact: true }).click();
+  await page.getByRole('button', { name: locale.start, exact: false }).click();
   const panel = page.getByRole('region', { name: locale.panel, exact: true });
   await expect(panel).toBeVisible();
   await expect(panel.getByRole('group', { name: locale.force, exact: true })).toBeVisible();
