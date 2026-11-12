@@ -1,6 +1,6 @@
 <script lang="ts">
  import { language, t as translate } from './i18n';
- import { loadMagnitude, momentDirection, type WindForceSnapshot } from './wind-forces';
+ import { loadMagnitude, MOMENT_AXES, momentDirection, type WindForceSnapshot } from './wind-forces';
  let { loads }: { loads: WindForceSnapshot } = $props();
  const t = $derived.by(() => { const locale = $language; return (source: string) => translate(source, undefined, locale); });
  const axes = ['x', 'y', 'z'] as const;
@@ -21,13 +21,13 @@
     {@const value = group.values[index]}
     {@const end = 50 + 42 * value / scale}
     <div class="wind-load-row" data-axis={`${group.symbol}${axis}`}>
-     <span>{group.symbol}<sub>{axis}</sub></span>
+     <span title={group.key === 'moment' ? t(MOMENT_AXES[index].name) : undefined}>{group.symbol}<sub>{axis}</sub></span>
      <svg viewBox="0 0 100 24" aria-hidden="true">
       {#if group.key === 'moment'}
        <circle class="wind-load-axis" cx="50" cy="12" r="9"/>
        {#if Math.abs(value) >= 0.05}
         {@const side = Math.sign(value)}
-        <path class="wind-load-vector" d={`M${50-side*8} 17A9.43 9.43 0 1 ${side>0?1:0} ${50+side*8} 17M${50+side*12.8} 14.1L${50+side*8} 17L${50+side*8.5} 11.4`}/>
+        <path class="wind-load-vector" style:stroke={MOMENT_AXES[index].color} d={`M${50-side*8} 17A9.43 9.43 0 1 ${side>0?1:0} ${50+side*8} 17M${50+side*12.8} 14.1L${50+side*8} 17L${50+side*8.5} 11.4`}/>
        {:else}<circle class="wind-load-zero" cx="50" cy="12" r="2"/>{/if}
       {:else}
        <path class="wind-load-axis" d="M8 12H92M50 5V19"/>

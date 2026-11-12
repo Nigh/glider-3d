@@ -1,4 +1,4 @@
-import { ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, TorusGeometry, Vector3, type Object3D, type Quaternion } from 'three';
+import { ConeGeometry, CylinderGeometry, DynamicDrawUsage, Group, Mesh, MeshBasicMaterial, Sphere, TorusGeometry, Vector3, type BufferAttribute, type Object3D, type Quaternion } from 'three';
 import type { FlightTelemetry } from './physics';
 import { GRAVITY } from './physics';
 
@@ -44,18 +44,55 @@ export function solidForceArrow(): Group {
  return group;
 }
 
-/** Local +Z right-hand rotation. Tip follows the increasing-angle arc tangent. */
-export function solidMomentArrow(): Group {
+export const MOMENT_AXES = [
+ { name: '滚转力矩', color: '#e18349' },
+ { name: '偏航力矩', color: '#3bada1' },
+ { name: '俯仰力矩', color: '#8468bd' },
+] as const;
+const MOMENT_SEGMENTS = 24, MOMENT_TUBE_SEGMENTS = 6;
+
+/** Unit-radius body-axis arcs: roll above CG; yaw and pitch ahead of CG. */
+export function solidMomentArrow(axis: number): Group {
  const group = new Group();
- const material = new MeshBasicMaterial({ color: 0xe18349, depthTest: false, depthWrite: false, toneMapped: false });
- const angle = Math.PI * 1.5;
- const arc = new Mesh(new TorusGeometry(1, 0.012, 8, 64, angle), material);
+ const material = new MeshBasicMaterial({ color: MOMENT_AXES[axis].color, depthTest: false, depthWrite: false, toneMapped: false });
+ const geometry = new TorusGeometry(1, 0.012, MOMENT_TUBE_SEGMENTS, MOMENT_SEGMENTS, Math.PI / 3);
+ (geometry.getAttribute('position') as BufferAttribute).setUsage(DynamicDrawUsage);
+ geometry.boundingSphere = new Sphere(new Vector3(), 1.02);
+ const arc = new Mesh(geometry, material);
  const head = new Mesh(new ConeGeometry(0.045, 0.1, 12), material);
- head.position.set(Math.cos(angle), Math.sin(angle), 0);
- head.rotation.z = angle;
  group.add(arc, head);
+ if (axis === 0) {
+  group.rotation.y = Math.PI / 2;
+  group.rotateZ(Math.PI / 2);
+ } else if (axis === 1) group.rotation.x = -Math.PI / 2;
+ group.userData.momentAxis = axis;
  group.visible = false;
  return group;
+}
+
+/** Fixed 100 N·m full scale; 10–60° arcs, independent of other axes. */
+export function updateMomentArrow(arrow: Group, value: number): void {
+ arrow.visible = Math.abs(value) >= 0.05;
+ if (arrow.userData.value === value) return;
+ arrow.userData.value = value;
+ const degrees = 10 + 50 * Math.min(Math.abs(value) / 100, 1);
+ arrow.userData.arcDegrees = degrees;
+ if (!arrow.visible) return;
+ const sign = Math.sign(value), angle = degrees * Math.PI / 180, start = -angle / 2;
+ const arc = arrow.children[0] as Mesh<TorusGeometry>, head = arrow.children[1];
+ const positions = arc.geometry.getAttribute('position');
+ for (let i = 0; i <= MOMENT_SEGMENTS; i++) {
+  const theta = start + angle * i / MOMENT_SEGMENTS;
+  const x = Math.cos(theta), y = Math.sin(theta);
+  for (let j = 0; j <= MOMENT_TUBE_SEGMENTS; j++) {
+   const tube = j / MOMENT_TUBE_SEGMENTS * Math.PI * 2, radius = 1 + 0.012 * Math.cos(tube);
+   positions.setXYZ(j * (MOMENT_SEGMENTS + 1) + i, radius * x, radius * y, 0.012 * Math.sin(tube));
+  }
+ }
+ positions.needsUpdate = true;
+ const end = sign * angle / 2;
+ head.position.set(Math.cos(end) + sign * Math.sin(end) * 0.05, Math.sin(end) - sign * Math.cos(end) * 0.05, 0);
+ head.rotation.z = end + (sign < 0 ? Math.PI : 0);
 }
 
 /** Exact drawn-vertex radius about a fixed world-space CG, not an AABB diagonal.

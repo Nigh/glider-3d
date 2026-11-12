@@ -3,7 +3,7 @@ import { ArrowHelper, BufferAttribute, BufferGeometry, Group, Mesh, MeshBasicMat
 import { clone, defaultAircraft } from '../src/model';
 import { FlightSimulation, GRAVITY } from '../src/physics';
 import { defaultWindTunnel } from '../src/laboratory';
-import { cgGeometryRadius, loadMagnitude, momentDirection, solidForceArrow, solidMomentArrow, windForceSnapshot } from '../src/wind-forces';
+import { cgGeometryRadius, loadMagnitude, MOMENT_AXES, momentDirection, solidForceArrow, solidMomentArrow, updateMomentArrow, windForceSnapshot } from '../src/wind-forces';
 import { SceneView } from '../src/scene';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0, throttle: 0 };
@@ -95,16 +95,37 @@ describe('solid load geometry', () => {
   expect(cgGeometryRadius(root, new Vector3(1, 0, 0), new Vector3())).toBe(6);
  });
 
- it.each([1, -1])('keeps torque tip tangent right-handed for sign %s on every body axis', sign => {
+ it.each([1, -1])('keeps each body-axis arrow tangent and correctly located for sign %s', sign => {
+  const colors = new Set<number>();
   for (let axis = 0; axis < 3; axis++) {
-   const arrow = solidMomentArrow(), normal = new Vector3().setComponent(axis, sign);
-   arrow.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), normal);
+   const arrow = solidMomentArrow(axis), normal = new Vector3().setComponent(axis, sign);
+   updateMomentArrow(arrow, sign * 50);
    const head = arrow.children[1];
    const radial = head.position.clone().applyQuaternion(arrow.quaternion);
    const tangent = new Vector3(0, 1, 0).applyQuaternion(head.quaternion).applyQuaternion(arrow.quaternion);
-   expect(radial.length()).toBeCloseTo(1, 12);
    expect(new Vector3().crossVectors(radial, tangent).dot(normal)).toBeCloseTo(1, 12);
+   const anchor = new Vector3(1, 0, 0).applyQuaternion(arrow.quaternion);
+   expect(anchor.distanceTo(axis === 0 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0))).toBeLessThan(1e-12);
+   colors.add(((arrow.children[0] as Mesh).material as MeshBasicMaterial).color.getHex());
+   const positions = (arrow.children[0] as Mesh).geometry.getAttribute('position');
+   const measuredArc = () => {
+    let minimum = Infinity, maximum = -Infinity;
+    for (let vertex = 0; vertex < positions.count; vertex++) {
+     const theta = Math.atan2(positions.getY(vertex), positions.getX(vertex));
+     minimum = Math.min(minimum, theta); maximum = Math.max(maximum, theta);
+    }
+    return (maximum - minimum) * 180 / Math.PI;
+   };
+   const middle = measuredArc();
+   expect(middle).toBeGreaterThan(10); expect(middle).toBeLessThan(60);
+   updateMomentArrow(arrow, sign * 0.05);
+   expect(measuredArc()).toBeGreaterThanOrEqual(10 - 1e-5); expect(measuredArc()).toBeLessThan(middle);
+   updateMomentArrow(arrow, sign * 1000);
+   expect(measuredArc()).toBeGreaterThan(middle); expect(measuredArc()).toBeCloseTo(60, 4);
+   updateMomentArrow(arrow, 0);
+   expect(arrow.visible).toBe(false);
   }
+  expect(colors.size).toBe(3);
  });
 
  it('places lift/drag at real centers, preserves auxiliary lift, and draws net loads from CG', () => {
@@ -124,7 +145,7 @@ describe('solid load geometry', () => {
    simulation: sim, debug: true, cg: new Group(), aircraft, body, renderCG: sim.telemetry.cg.clone(),
    arrows, applicationMarkers: sim.surfaces.map(() => new Mesh()), fragments: [],
    vector: new Vector3(), vector2: new Vector3(), loadScratch: new Vector3(), headInverse: new Quaternion(),
-   netForceArrow: solidForceArrow(), netMomentFrame: new Group(), netMomentArrow: solidMomentArrow(), momentNormal: new Vector3(0, 0, 1),
+   netForceArrow: solidForceArrow(), momentFrame: new Group(), momentArrows: MOMENT_AXES.map((_axis, index) => solidMomentArrow(index)),
   });
   const tail = sim.surfaces.findIndex(surface => surface.kind === 'tail');
   sim.surfaces[tail].force.set(0, 10, 0); sim.surfaces[tail].drag.set(0, 0, 0);
@@ -137,13 +158,22 @@ describe('solid load geometry', () => {
   expect(view.netForceArrow.position.equals(aircraft.position)).toBe(true);
   const expectedForce = sim.telemetry.force.clone().add(new Vector3(0, -GRAVITY * sim.telemetry.mass, 0)).normalize();
   expect(new Vector3(0, 1, 0).applyQuaternion(view.netForceArrow.quaternion).distanceTo(expectedForce)).toBeLessThan(1e-10);
-  expect(view.netMomentArrow.scale.x).toBeCloseTo(1.2 * new Vector3(4, 0, 0).sub(view.renderCG).length(), 10);
-  expect(view.netMomentFrame.quaternion.equals(aircraft.quaternion)).toBe(true);
+  for (const arrow of view.momentArrows) expect(arrow.scale.x).toBeCloseTo(1.2 * new Vector3(4, 0, 0).sub(view.renderCG).length(), 10);
+  expect(view.momentFrame.quaternion.equals(aircraft.quaternion)).toBe(true);
   sim.telemetry.force.set(0, GRAVITY * sim.telemetry.mass, 0); sim.telemetry.torque.set(0, 0, 0);
   sim.telemetry.aerodynamics.liftCenter = sim.telemetry.aerodynamics.dragCenter = null;
   view.updateDebug();
-  expect(view.netForceArrow.visible).toBe(false); expect(view.netMomentArrow.visible).toBe(false);
+  expect(view.netForceArrow.visible).toBe(false); expect(view.momentArrows.every((arrow: Group) => !arrow.visible)).toBe(true);
   expect(arrows[0].visible).toBe(false); expect(arrows[1].visible).toBe(false);
+  sim.telemetry.torque.set(-1, 2, -3);
+  view.updateNetLoads();
+  const flight = new FlightSimulation(defaultAircraft, 'test-space', 0);
+  flight.telemetry.torque.copy(sim.telemetry.torque);
+  view.simulation = flight; view.updateNetLoads();
+  expect(view.momentFrame.visible).toBe(false);
+  expect(view.momentArrows.every((arrow: Group) => !arrow.visible)).toBe(true);
+  view.simulation = sim; view.updateNetLoads();
+  expect(view.momentArrows.every((arrow: Group) => arrow.visible)).toBe(true);
  });
 
  it('reaches solid arrows through the real pointer raycast and clears hover when leaving', () => {
@@ -160,5 +190,24 @@ describe('solid load geometry', () => {
   expect(canvas.title).toContain('N'); expect(canvas.style.cursor).toBe('help');
   view.hoverLoads({ clientX: 0, clientY: 0 });
   expect(canvas.title).toBe('');
+ });
+
+ it.each([0, 1, 2])('picks component %s and shows only its moment details', axis => {
+  const arrow = solidMomentArrow(axis); updateMomentArrow(arrow, 40);
+  const anchor = new Vector3(1, 0, 0).applyQuaternion(arrow.quaternion);
+  const normal = new Vector3().setComponent(axis, 1);
+  const camera = new PerspectiveCamera(45, 1, 0.1, 100);
+  camera.position.copy(anchor).addScaledVector(normal, 3); camera.lookAt(anchor); camera.updateMatrixWorld();
+  const canvas = { title: '', style: { cursor: '' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }) };
+  const view = Object.assign(Object.create(SceneView.prototype), {
+   debug: true, cameraDragging: false, renderer: { domElement: canvas }, camera,
+   simulation: { quaternion: new Quaternion(), telemetry: { force: new Vector3(), torque: new Vector3(40, 40, 40), mass: 1 } },
+   partPointer: new Vector2(), partRay: new Raycaster(), partHits: [], loadPickObjects: [arrow],
+   netForceArrow: solidForceArrow(), vector: new Vector3(), headInverse: new Quaternion(),
+  });
+  view.hoverLoads({ clientX: 50, clientY: 50 });
+  expect(canvas.title).toContain(MOMENT_AXES[axis].name);
+  expect(canvas.title).toContain('40.0 N·m');
+  for (let other = 0; other < 3; other++) if (other !== axis) expect(canvas.title).not.toContain(MOMENT_AXES[other].name);
  });
 });

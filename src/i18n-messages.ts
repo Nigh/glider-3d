@@ -16,6 +16,7 @@ export const messages: Record<string, readonly [string, string]> = {
  "左偏": ["Yaw left", "機首左"],
  "右偏": ["Yaw right", "機首右"],
  "零力矩": ["Zero moment", "モーメントなし"],
+ "滚转力矩": ["Roll moment", "ロールモーメント"],
  "正在计算巡航参考…": ["Calculating cruise reference…", "巡航参考値を計算中…"],
  "巡航参考计算失败": ["Cruise calculation failed", "巡航参考値の計算に失敗"],
  "返回工坊": ["Back to workshop", "工房に戻る"],

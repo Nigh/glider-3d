@@ -11,7 +11,7 @@ import { engineCatalog } from './engines';
 import { isLaboratory, TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from './laboratory';
 import { LaboratoryScene } from './laboratory-scene';
 import { language, t } from './i18n';
-import { cgGeometryRadius, loadMagnitude, momentDirection, solidForceArrow, solidMomentArrow } from './wind-forces';
+import { cgGeometryRadius, loadMagnitude, MOMENT_AXES, momentDirection, solidForceArrow, solidMomentArrow, updateMomentArrow } from './wind-forces';
 
 type Quality = 'Auto' | 'High' | 'Medium' | 'Low';
 const UP = new THREE.Vector3(0, 1, 0);
@@ -246,10 +246,9 @@ export class SceneView {
   private readonly arrows: THREE.ArrowHelper[] = [];
   private readonly applicationMarkers: THREE.Mesh[] = [];
   private readonly netForceArrow = solidForceArrow();
-  private readonly netMomentFrame = new THREE.Group();
-  private readonly netMomentArrow = solidMomentArrow();
-  private readonly loadPickObjects = [this.netForceArrow, this.netMomentArrow];
-  private readonly momentNormal = new THREE.Vector3(0, 0, 1);
+  private readonly momentFrame = new THREE.Group();
+  private readonly momentArrows = MOMENT_AXES.map((_axis, index) => solidMomentArrow(index));
+  private readonly loadPickObjects = [this.netForceArrow, ...this.momentArrows];
   private readonly loadScratch = new THREE.Vector3();
   private readonly splashPositions = new Float32Array(PARTICLES * 3);
   private readonly splashVelocities = new Float32Array(PARTICLES * 3);
@@ -371,8 +370,8 @@ export class SceneView {
       this.arrows.push(arrow);
       this.debugGroup.add(arrow);
     }
-    this.netMomentFrame.add(this.netMomentArrow);
-    this.debugGroup.add(this.netForceArrow, this.netMomentFrame);
+    this.momentFrame.add(...this.momentArrows);
+    this.debugGroup.add(this.netForceArrow, this.momentFrame);
     const markerGeometry = new THREE.SphereGeometry(0.1, 8, 6);
     const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffd777, depthTest: false });
     const marker = new THREE.Mesh(markerGeometry, markerMaterial);
@@ -549,10 +548,15 @@ export class SceneView {
         force: { visible: this.netForceArrow.visible, origin: position(this.netForceArrow.position),
           pickNdc: position(new THREE.Vector3(0, this.netForceArrow.children[0].position.y, 0).applyQuaternion(this.netForceArrow.quaternion).add(this.netForceArrow.position).project(this.camera)),
           direction: position(new THREE.Vector3(0, 1, 0).applyQuaternion(this.netForceArrow.quaternion)) },
-        moment: { visible: this.netMomentArrow.visible, center: position(this.netMomentFrame.position), radius: this.netMomentArrow.scale.x,
-          pickNdc: position(new THREE.Vector3(0, this.netMomentArrow.scale.y, 0).applyQuaternion(this.netMomentArrow.quaternion).applyQuaternion(this.netMomentFrame.quaternion).add(this.netMomentFrame.position).project(this.camera)),
-          axisBody: position(new THREE.Vector3(0, 0, 1).applyQuaternion(this.netMomentArrow.quaternion)),
-          axisWorld: position(new THREE.Vector3(0, 0, 1).applyQuaternion(this.netMomentArrow.quaternion).applyQuaternion(this.netMomentFrame.quaternion)) },
+        moments: this.momentArrows.map((arrow, axis) => ({
+          name: MOMENT_AXES[axis].name, color: MOMENT_AXES[axis].color,
+          visible: this.momentFrame.visible && arrow.visible, center: position(this.momentFrame.position),
+          radius: arrow.scale.x, arcDegrees: arrow.userData.arcDegrees,
+          anchorBody: position(new THREE.Vector3(1, 0, 0).applyQuaternion(arrow.quaternion)),
+          pickNdc: position(new THREE.Vector3().copy(arrow.children[1].position).multiplyScalar(arrow.scale.x).applyQuaternion(arrow.quaternion).applyQuaternion(this.momentFrame.quaternion).add(this.momentFrame.position).project(this.camera)),
+          axisBody: position(new THREE.Vector3(0, 0, 1).applyQuaternion(arrow.quaternion)),
+          axisWorld: position(new THREE.Vector3(0, 0, 1).applyQuaternion(arrow.quaternion).applyQuaternion(this.momentFrame.quaternion)),
+        })),
         hover: this.renderer.domElement.title,
       },
       thrustCenter: { body: position(this.designThrustCenter), direction: position(new THREE.Vector3(0, 1, 0).applyQuaternion(this.thrustCenter.quaternion)) },
@@ -986,14 +990,15 @@ export class SceneView {
     const hit = this.partHits[0]?.object;
     if (!hit) { canvas.title = ''; return; }
     const force = hit.parent === this.netForceArrow;
+    const axis = hit.parent!.userData.momentAxis as number;
     this.vector.copy(sim.telemetry.force);
     this.vector.y -= GRAVITY * sim.telemetry.mass;
     this.vector.applyQuaternion(this.headInverse.copy(sim.quaternion).invert());
     const load = force ? this.vector : sim.telemetry.torque;
     const values = force
       ? `Fx ${load.x.toFixed(1)} · Fy ${load.y.toFixed(1)} · Fz ${load.z.toFixed(1)} N`
-      : `Mx ${t(momentDirection(0, load.x))} ${loadMagnitude(load.x)} · My ${t(momentDirection(1, load.y))} ${loadMagnitude(load.y)} · Mz ${t(momentDirection(2, load.z))} ${loadMagnitude(load.z)} N·m`;
-    canvas.title = `${t(force ? '净外力 · 机体' : '重心力矩 · 机体')}\n${values}\n${t(force ? '含重力，不含支架反力；表示解除固定时主体的平移趋势。' : '机体轴关于当前重心的外力矩，不含支架反力矩；箭头遵循右手定则，数值为绝对值。')}`;
+      : `M${'xyz'[axis]} ${t(momentDirection(axis, load.getComponent(axis)))} ${loadMagnitude(load.getComponent(axis))} N·m`;
+    canvas.title = `${t(force ? '净外力 · 机体' : MOMENT_AXES[axis].name)}\n${values}\n${t(force ? '含重力，不含支架反力；表示解除固定时主体的平移趋势。' : '机体轴关于当前重心的外力矩，不含支架反力矩；箭头遵循右手定则，数值为绝对值。')}`;
     canvas.style.cursor = 'help';
   }
 
@@ -1967,7 +1972,8 @@ export class SceneView {
       this.body.position.copy(this.designCG).negate();
       for (const arrow of this.arrows) arrow.visible = false;
       for (const marker of this.applicationMarkers) marker.visible = false;
-      this.netForceArrow.visible = this.netMomentArrow.visible = false;
+      this.netForceArrow.visible = this.momentFrame.visible = false;
+      for (const arrow of this.momentArrows) arrow.visible = false;
       this.cameraView('orbit');
     }
     this.updateControlSurfaces();
@@ -3867,15 +3873,21 @@ export class SceneView {
       this.netForceArrow.children[1].scale.setScalar(head / 0.32);
       this.netForceArrow.children[1].position.y = shaft + head / 2;
     }
-    this.netMomentArrow.visible = sim.telemetry.torque.lengthSq() >= 0.05 ** 2;
-    if (this.netMomentArrow.visible) {
-      this.body.updateWorldMatrix(true, true);
-      const radius = cgGeometryRadius(this.body, this.aircraft.position, this.loadScratch) * 1.2;
-      this.netMomentFrame.position.copy(this.aircraft.position);
-      this.netMomentFrame.quaternion.copy(this.aircraft.quaternion);
-      this.netMomentArrow.scale.setScalar(radius);
-      this.netMomentArrow.quaternion.setFromUnitVectors(this.momentNormal, this.vector.copy(sim.telemetry.torque).normalize());
+    const tunnel = sim.challenge === 'wind-tunnel';
+    this.momentFrame.visible = tunnel;
+    let visible = false;
+    for (let axis = 0; axis < this.momentArrows.length; axis++) {
+      const arrow = this.momentArrows[axis];
+      if (tunnel) updateMomentArrow(arrow, sim.telemetry.torque.getComponent(axis));
+      else arrow.visible = false;
+      visible ||= arrow.visible;
     }
+    if (!visible) return;
+    this.body.updateWorldMatrix(true, true);
+    const radius = cgGeometryRadius(this.body, this.aircraft.position, this.loadScratch) * 1.2;
+    this.momentFrame.position.copy(this.aircraft.position);
+    this.momentFrame.quaternion.copy(this.aircraft.quaternion);
+    for (const arrow of this.momentArrows) arrow.scale.setScalar(radius);
   }
 
   private setArrow(arrow: THREE.ArrowHelper, origin: THREE.Vector3, force: THREE.Vector3, scale: number): void {
