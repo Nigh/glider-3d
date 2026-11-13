@@ -71,10 +71,10 @@ function advanceAttitude(motion: AttitudeMotion, target: number, rate: number, d
   // Snap only below a microdegree, where the residual motion is negligible.
   if (Math.abs(target - motion.command) < 1e-9 && Math.abs(target - motion.lag) < 1e-6 && Math.abs(target - motion.value) < 1e-6) motion.command = motion.lag = motion.value = target;
 }
-export function windTunnelSettings(value: WindTunnelSettings): WindTunnelSettings {
+export function windTunnelSettings(value: WindTunnelSettings, birdman = false): WindTunnelSettings {
   const limits = { speed: [1, 200], roll: [-180, 180], pitch: [-45, 45], elevator: [-1, 1], aileron: [-1, 1], rudder: [-1, 1], mainIncidence: [-10, 18], tailIncidence: [-12, 12] };
   for (const key of Object.keys(limits) as (keyof WindTunnelSettings)[]) if (!Number.isFinite(value[key]) || value[key] < limits[key][0] || value[key] > limits[key][1]) throw Error('风洞参数无效');
-  return { ...value };
+  return { ...value, speed: Math.min(value.speed, birdman ? 50 : 200) };
 }
 export function advanceWindTunnel(actual: WindTunnelSettings, target: WindTunnelSettings, dt: number, enabled: boolean, motion: ReturnType<typeof createWindTunnelMotion>) {
   for (const key of Object.keys(windTunnelRates) as (keyof WindTunnelSettings)[]) {

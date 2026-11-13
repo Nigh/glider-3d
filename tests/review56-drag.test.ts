@@ -71,8 +71,10 @@ it('distinguishes body alpha, installed geometry and effective wing alpha and re
   expect(a.alpha / DEG).toBeCloseTo(1.3, 7);
   expect(sim.telemetry.alpha / DEG).toBeCloseTo(5.3, 7);
   expect(a.wings[0].alpha / DEG).toBeGreaterThan(5.3); // Sweep/wake/elastic angle, not the fuselage angle.
-  expect(a.reynoldsMin).toBeGreaterThan(900_000); expect(a.reynoldsMax).toBeGreaterThan(7_800_000);
-  expect(a.reynoldsMax).toBeLessThan(7_830_000);
+  // Coverage includes endpoint chords, not only the coarser strip mean chords.
+  expect(a.reynoldsMin).toBe(Math.min(...a.wings.map(wing=>wing.reynoldsMin)));
+  expect(a.reynoldsMax).toBe(Math.max(...a.wings.map(wing=>wing.reynoldsMax)));
+  expect(a.reynoldsMax).toBeGreaterThan(9_800_000);expect(a.reynoldsMax).toBeLessThan(9_820_000);
   const main = sim.surfaces.filter(surface => surface.kind === 'main').map(surface => surface.localFlow.length() * surface.chord / 1.46e-5);
   expect(Math.min(...main)).toBeGreaterThan(3_750_000);
   expect(sim.structure.fractureCount).toBe(0);

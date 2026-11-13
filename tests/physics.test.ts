@@ -686,7 +686,10 @@ describe('驾驶舱与尾翼几何的物理消费者', () => {
     b.structure.reset();
     const origin = wingOrigin(b.definition, 'horizontalTail');
     expect(origin.y).toBe(2); expect(b.cg.y).toBeGreaterThan(a.cg.y); expect(b.aircraft.inertia.x).toBeGreaterThan(a.aircraft.inertia.x);
-    for (const panel of b.surfaces.filter(surface => surface.kind === 'tail')) expect(panel.point.y).toBeCloseTo(origin.y, 10);
+    expect(b.definition.assembly.tailIncidence).toBe(attached.assembly.tailIncidence);
+    for (const panel of b.surfaces.filter(surface => surface.kind === 'tail')) {
+      expect(panel.point.y).toBeCloseTo(origin.y + (panel.point.x-origin.x)*Math.tan(b.definition.assembly.tailIncidence*DEG),10);
+    }
     const sectionIds = new Set(b.structure.sections.filter(section => section.wingKey === 'horizontalTail').map(section => section.id));
     const tailContacts = contacts(b).filter(point => sectionIds.has(Reflect.get(point, 'sectionId')));
     expect(tailContacts.length).toBeGreaterThan(0); expect(tailContacts.every(point => point.y > 1.8)).toBe(true);

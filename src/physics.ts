@@ -1,5 +1,5 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, BODY_GEOMETRY, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
+import { AIRFRAME_MASS, BODY_GEOMETRY, finPoint, wingAirfoil, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
 import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
@@ -7,6 +7,7 @@ import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, t
 import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
 import { mixTrim } from './trim';
 import { mixControlSurfaces, type MixingSurface } from './control-mixing';
+import { airfoilY, AIR_VISCOSITY, naca0012Section, type AirfoilId } from './airfoils';
 import { DRAG_TERMS, ellipsoidSurfaceArea, type DragTerm } from './drag';
 
 export const GRAVITY = 9.81;
@@ -54,7 +55,7 @@ const RUNWAY_BOXES = [[new Vector3(-LOW_RUNWAY.length, -LOW_RUNWAY.thickness, -L
 /** 整段助跑逐渐施加的滚转扰动上限（rad）。 */
 export const LAUNCH_ROLL_LIMIT = DEG;
 export const SURFACE_STEP = 0.8;
-const AIR_VISCOSITY = 1.46e-5;
+
 const SPAN_EFFICIENCY = 0.9;
 /** 尾梁等未解析机体阻力面积；驾驶舱壳体和座舱罩另按可见尺寸计算。 */
 const BODY_DRAG_AREA = 0.07;
@@ -103,6 +104,7 @@ export interface FlightControls extends Controls {
 }
 
 export interface AircraftProperties {
+  wingMass: Record<WingKey, number>;
   mass: number;
   cg: Vector3;
   inertia: Vector3;
@@ -124,11 +126,13 @@ export interface AircraftProperties {
   /** 自由空气、无地效：12 m/s、5°攻角、3°侧滑，零角速度、零操纵。 */
   aerodynamics: AerodynamicReference;
 }
-interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; ixy?: number; ixz?: number; iyz?: number; sectionId?: number; moving?: boolean; fuel?: boolean; wingSupport?: boolean }
-interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3 }
+interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; ixy?: number; ixz?: number; iyz?: number; sectionId?: number; moving?: boolean; fuel?: boolean; wingSupport?: boolean; wingKey?: WingKey }
+interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3; span?: number; u?: number; normal?: number }
 interface Polar { cl: number; cd: number; inducedCd: number; profileCd: number; separatedCd: number; cm: number }
 export interface WingAerodynamics {
   kind: AerodynamicSurface['kind'];
+  airfoil: AirfoilId;
+  reynoldsMin: number; reynoldsMax: number; speedMax: number;
   name: string;
   area: number;
   aspect: number;
@@ -169,6 +173,7 @@ export interface AerodynamicReference {
   freeMoment: Vector3;
 }
 export interface AerodynamicSurface extends MixingSurface {
+  airfoil: AirfoilId;
   name: string;
   bodyId: number;
   point: Vector3;
@@ -179,7 +184,7 @@ export interface AerodynamicSurface extends MixingSurface {
   area: number;
   aspect: number;
   span: number;
-  chord: number;
+  chord: number; chordMin: number; chordMax: number;
   spanStart: number;
   spanEnd: number;
   spanDirection: Vector3;
@@ -327,7 +332,7 @@ function massLayout(d: AircraftDefinition): MassPart[] {
   for (const section of structure.sections) {
     const e = section.inertia.elements;
     parts.push({ mass: section.mass, x: section.center.x, y: section.center.y, z: section.center.z,
-      ix: e[0], iy: e[4], iz: e[8], ixy: e[3], ixz: e[6], iyz: e[7], sectionId: section.id });
+      ix: e[0], iy: e[4], iz: e[8], ixy: e[3], ixz: e[6], iyz: e[7], sectionId: section.id, wingKey: section.wingKey });
   }
   const support = mainWingSupport(d);
   if (support.mass > 0) {
@@ -376,7 +381,7 @@ function properties(d: AircraftDefinition): AircraftProperties {
   const tailSlopeRatio = 1 / (1 + 6.45 / (Math.PI * SPAN_EFFICIENCY * tail.aspect)) * Math.cos(sweepAngle(d.horizontalTail)) / mainSlope;
   const effectiveness = 0.65 * tail.area / p.area * tailSlopeRatio;
   const neutral = (mainX + effectiveness * tailX) / (1 + effectiveness);
-  return { mass: 0, cg: new Vector3(), inertia: new Vector3(), inertiaTensor: new Matrix3(), inverseInertia: new Matrix3(), wingArea: p.area, span: p.span, aspect: p.aspect,
+  return { wingMass: { mainWing: 0, horizontalTail: 0, verticalTail: 0 }, mass: 0, cg: new Vector3(), inertia: new Vector3(), inertiaTensor: new Matrix3(), inverseInertia: new Matrix3(), wingArea: p.area, span: p.span, aspect: p.aspect,
     wingLoading: 0, stallSpeed: 0, glideRatio: 0, staticMargin: 0,
     mainQuarterChord,
     neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d), d) };
@@ -384,8 +389,10 @@ function properties(d: AircraftDefinition): AircraftProperties {
 
 function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, out: AircraftProperties, neutral: number, chord: number, updateInertia = true, lateral = 0, structure?: WingStructure) {
   let mass = 0, x = 0, y = 0, z = 0;
+  out.wingMass.mainWing = out.wingMass.horizontalTail = out.wingMass.verticalTail = 0;
   for (const p of parts) {
     if (p.sectionId !== undefined && structure && structure.sections[p.sectionId].bodyId !== 0) continue;
+    if (p.wingKey) out.wingMass[p.wingKey] += p.mass;
     const px = p.x + (p.moving ? weight * d.controls.travel : 0);
     mass += p.mass; x += p.mass * px; y += p.mass * p.y; z += p.mass * (p.z + (p.moving ? lateral * d.controls.lateralTravel : 0));
   }
@@ -435,8 +442,22 @@ export function fuelCgRange(d: AircraftDefinition): { full: Vector3; empty: Vect
  return { full: full.divideScalar(fullMass), empty: empty.divideScalar(emptyMass) };
 }
 
-function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reynolds = 500_000, cambered = true): Polar {
+const sectionSample = { cl: 0, cd: 0, alphaMax: 0 };
+function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reynolds = 500_000, cambered = true, airfoil: AirfoilId = 'dae11'): Polar {
   alpha = Math.atan2(Math.sin(alpha), Math.cos(alpha));
+  if (cambered && airfoil === 'naca0012') {
+    const sample = naca0012Section(alpha, reynolds, sectionSample);
+    const blend = clamp((Math.abs(alpha / DEG) - sample.alphaMax) / (35 - sample.alphaMax), 0, 1);
+    const separated = blend * blend * (3 - 2 * blend);
+    const finiteWing = 1 / (1 + groundEffect * 6.45 / (Math.PI * SPAN_EFFICIENCY * Math.max(aspect, 0.1)));
+    out.cl = (1 - separated) * sample.cl * clamp(reynolds / 200_000, 0.05, 1) ** 0.065 * finiteWing + separated * 1.05 * Math.sin(2 * alpha);
+    out.profileCd = (1 - separated) * sample.cd / clamp(reynolds / 200_000, 0.125, 1) ** 0.75;
+    out.inducedCd = groundEffect * out.cl ** 2 / (Math.PI * Math.max(aspect, 0.1) * SPAN_EFFICIENCY);
+    out.separatedCd = separated * (1.7 * Math.sin(alpha) ** 2 + 0.3 * (1 - Math.cos(alpha)) ** 2);
+    out.cd = out.profileCd + out.inducedCd + out.separatedCd;
+    out.cm = 0; // Symmetry approximation, not a measured moment table.
+    return out;
+  }
   const degrees = alpha / DEG, query = clamp(cambered ? degrees : Math.abs(degrees), -6, 17);
   let index = 0;
   while (index < SECTION_POLAR.length - 2 && query > SECTION_POLAR[index + 1][0]) index++;
@@ -470,8 +491,8 @@ function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reyn
 }
 
 /** 有限翼系数；Re默认500k。cambered=false为对称垂尾工程代理，不是DAE-11风洞结果。 */
-export function coefficients(alpha: number, aspect: number, reynolds = 500_000, cambered = true): Polar {
-  return polar(alpha, aspect, { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, separatedCd: 0, cm: 0 }, 1, reynolds, cambered);
+export function coefficients(alpha: number, aspect: number, reynolds = 500_000, cambered = true, airfoil: AirfoilId = 'dae11'): Polar {
+  return polar(alpha, aspect, { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, separatedCd: 0, cm: 0 }, 1, reynolds, cambered, airfoil);
 }
 
 /**
@@ -511,12 +532,13 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
         + (p.root + (p.tip - p.root) * center / halfSpan) / 4;
       for (let side = -1; side <= 1; side += 2) {
         if (vertical && side === -1) continue;
-        const point = vertical ? new Vector3(-quarter, direction * center, 0) : wingLocalPoint(w, incidence, side, -quarter, 0, center, new Vector3());
-        point.x += origin.x; point.y += origin.y;
+        const point = vertical ? finPoint(d, center, 0.25, 0, new Vector3()) : wingLocalPoint(w, incidence, side, -quarter, 0, center, new Vector3());
+        if (!vertical) { point.x += origin.x; point.y += origin.y; }
         surfaces.push({ bodyId: 0, name: `${vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '副翼'}${side < 0 ? '左' : '右'}`} ${start.toFixed(1)}–${end.toFixed(1)} m`,
-          point,
+          point, airfoil: vertical ? 'dae11' : wingAirfoil(d, key as 'mainWing' | 'horizontalTail'),
           normal: vertical ? new Vector3(0, 0, 1) : wingLocalPoint(w, incidence, side, 0, 1, 0, new Vector3()),
           area: width * (root + tip) / 2, aspect: p.aspect, span: p.span,
+          chordMin: Math.min(root, tip), chordMax: Math.max(root, tip),
           chord: 2 / 3 * (root * root + root * tip + tip * tip) / (root + tip), spanStart: start, spanEnd: end,
           spanDirection: vertical ? new Vector3(0, direction, 0) : wingLocalPoint(w, incidence, side, 0, 0, 1, new Vector3()),
           chordDirection: vertical ? new Vector3(1, 0, 0) : wingLocalPoint(w, incidence, side, 1, 0, 0, new Vector3()),
@@ -547,7 +569,7 @@ function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   const crossflow = velocity.dot(surface.crossflowDirection) - surface.inducedFlow.dot(surface.crossflowDirection);
   const chordSpeed = (velocity.dot(surface.chordDirection) - surface.inducedFlow.dot(surface.chordDirection)) * Math.cos(surface.sweep) + crossflow * Math.sin(surface.sweep);
   surface.alpha = Math.atan2(-normalSpeed, chordSpeed) + incidence + alphaOffset;
-  polar(surface.alpha, surface.aspect, coefficient, surface.groundEffect, speed * surface.chord / AIR_VISCOSITY, surface.kind !== 'vertical');
+  polar(surface.alpha, surface.aspect, coefficient, surface.groundEffect, speed * surface.chord / AIR_VISCOSITY, surface.kind !== 'vertical', surface.airfoil);
   // Wake changes incidence, not kinetic pressure or the force's power direction.
   const rawChord = velocity.dot(surface.chordDirection) * Math.cos(surface.sweep) + velocity.dot(surface.crossflowDirection) * Math.sin(surface.sweep);
   const pressureSpeedSq = rawChord ** 2 + velocity.dot(surface.normal) ** 2;
@@ -845,7 +867,7 @@ class AerodynamicSummary implements AerodynamicReference {
     });
     this.wings = (['main', 'tail', 'vertical'] as const).map((kind, index) => {
       const panels = surfaces.filter(surface => surface.kind === kind);
-      return { kind, name: ['主翼', '副翼', '垂直尾翼'][index],
+      return { kind, name: ['主翼', '副翼', '垂直尾翼'][index], airfoil: panels[0].airfoil, reynoldsMin: 0, reynoldsMax: 0, speedMax: 0,
         area: panels.reduce((sum, surface) => sum + surface.area, 0), aspect: panels[0].aspect, alpha: 0,
         groundEffect: 1, inducedDrag: 0,
         force: new Vector3(), lift: new Vector3(), drag: new Vector3(), torque: new Vector3() };
@@ -890,7 +912,7 @@ class AerodynamicSummary implements AerodynamicReference {
     for (const wing of this.wings) {
       wing.force.set(0, 0, 0); wing.lift.set(0, 0, 0); wing.drag.set(0, 0, 0);
       wing.torque.set(0, 0, 0); wing.alpha = 0; wing.groundEffect = 0; wing.inducedDrag = 0;
-      wing.area = 0;
+      wing.area = 0; wing.reynoldsMin = Infinity; wing.reynoldsMax = 0; wing.speedMax = 0;
       for (const surface of this.surfaces) if (surface.bodyId === 0 && surface.kind === wing.kind) {
         wing.area += surface.area; wing.aspect = surface.aspect;
       }
@@ -910,7 +932,8 @@ class AerodynamicSummary implements AerodynamicReference {
         this.dragTerms.water.addScaledVector(this.localDrag, surface.waterDrag / magnitude);
       }
       const reynolds = surface.localFlow.length() * surface.chord / AIR_VISCOSITY;
-      this.reynoldsMin = Math.min(this.reynoldsMin, reynolds); this.reynoldsMax = Math.max(this.reynoldsMax, reynolds);
+      wing.reynoldsMin = Math.min(wing.reynoldsMin, reynolds * surface.chordMin / surface.chord); wing.reynoldsMax = Math.max(wing.reynoldsMax, reynolds * surface.chordMax / surface.chord); wing.speedMax = Math.max(wing.speedMax, surface.localFlow.length());
+      this.reynoldsMin = Math.min(this.reynoldsMin, wing.reynoldsMin); this.reynoldsMax = Math.max(this.reynoldsMax, wing.reynoldsMax);
       wing.force.add(this.localForce); wing.drag.add(this.localDrag);
       wing.alpha += surface.alpha * surface.area / wing.area;
       wing.groundEffect += surface.groundEffect * surface.area / wing.area;
@@ -949,6 +972,7 @@ class AerodynamicSummary implements AerodynamicReference {
     this.drag.add(this.bodyWaterDrag); this.force.add(this.bodyWaterDrag); this.dragMoment.add(this.bodyWaterDragMoment);
     this.torque.add(this.bodyWaterDragMoment);
     this.dragTerms.water.add(this.bodyWaterDrag); this.dragTerms.induced.copy(this.inducedDrag);
+    for (const wing of this.wings) if (wing.reynoldsMin === Infinity) wing.reynoldsMin = 0;
     if (this.reynoldsMin === Infinity) this.reynoldsMin = 0;
     this.profileDrag.copy(this.drag).sub(this.inducedDrag);
     if (torque) { this.freeMoment.add(this.moment.copy(torque).sub(this.torque)); this.torque.copy(torque); }
@@ -1036,11 +1060,11 @@ function makeContacts(d: AircraftDefinition, structure?: WingStructure): Contact
           const thickness = 5 * 0.105 * chord * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u ** 2 + 0.2843 * u ** 3 - 0.1036 * u ** 4);
           const x = -leading - u * chord;
           for (const face of [-1, 1]) {
-            const y = (vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u)) + face * thickness;
-            const point: ContactPoint = vertical ? new Vector3(origin.x + x, origin.y + Math.sign(w.points[1].y) * span, y)
+            const y = vertical ? face * thickness : chord * airfoilY(wingAirfoil(d, key as 'mainWing' | 'horizontalTail'), u, face);
+            const point: ContactPoint = vertical ? finPoint(d, span, u, y, new Vector3())
               : wingLocalPoint(w, incidence, side, x, y, span, new Vector3());
             if (!vertical) { point.x += origin.x; point.y += origin.y; }
-            if (row.section) { point.sectionId = row.section.id; point.tip = row.tip; point.reference = point.clone(); }
+            if (row.section) { point.sectionId = row.section.id; point.tip = row.tip; point.reference = point.clone(); point.span = span; point.u = u; point.normal = y; }
             points.push(point);
           }
         }
@@ -1125,6 +1149,7 @@ export class FlightSimulation {
   };
   get testSpace(): Readonly<TestSpaceSettings> { return this.laboratoryState.testSpaceConfig; }
   get windTunnel(): Readonly<WindTunnelSettings> { return this.laboratoryState.windTunnel; }
+  get windTunnelTarget(): Readonly<WindTunnelSettings> { return this.laboratoryState.windTarget; }
   get windTunnelEnabled() { return this.laboratoryState.windEnabled; }
   readonly controlDeflections = { aileron: 0, elevator: 0, rudder: 0 };
   readonly pilotOffset = { x: 0, z: 0 };
@@ -1450,8 +1475,7 @@ export class FlightSimulation {
 
   setWindTunnel(settings: WindTunnelSettings) {
     if (this.challenge !== 'wind-tunnel') throw Error('风洞参数无效');
-    this.laboratoryState.windTarget = windTunnelSettings(settings);
-    if (this.definition.assembly.tailOnFin) this.laboratoryState.windTarget.tailIncidence = 0;
+    this.laboratoryState.windTarget = windTunnelSettings(settings, this.definition.birdman);
   }
 
   /** Reusable full-fuel steady-flight force probe. Angles are radians; controls normalized. */
@@ -1521,7 +1545,7 @@ export class FlightSimulation {
   private syncWindTunnelIncidence() {
     for (const key of ['mainWing', 'horizontalTail'] as const) {
       const field = key === 'mainWing' ? 'mainIncidence' : 'tailIncidence';
-      const value = key === 'horizontalTail' && this.definition.assembly.tailOnFin ? 0 : this.windTunnel[field];
+      const value = this.windTunnel[field];
       const delta = (value - this.definition.assembly[field]) * DEG;
       if (Math.abs(delta) < 1e-12) continue;
       const before = wingOrigin(this.definition, key);
@@ -1554,11 +1578,20 @@ export class FlightSimulation {
         }
       }
     }
+    if (this.definition.assembly.tailOnFin) {
+      this.structure.syncFinGeometry();
+      for (const point of this.contacts) {
+        const section = point.sectionId === undefined ? undefined : this.structure.sections[point.sectionId];
+        if (section?.wingKey === 'verticalTail' && section.bodyId === 0 && point.reference) {
+          finPoint(this.definition, point.span!, point.u!, point.normal!, point.reference);
+        }
+      }
+    }
     this.structure.updateGeometry(0);
     for (const part of this.parts) {
       if (part.sectionId !== undefined) {
         const section = this.structure.sections[part.sectionId], e = section.inertia.elements;
-        part.x = section.center.x; part.y = section.center.y; part.z = section.center.z;
+        part.mass = section.mass; part.x = section.center.x; part.y = section.center.y; part.z = section.center.z;
         part.ix = e[0]; part.iy = e[4]; part.iz = e[8]; part.ixy = e[3]; part.ixz = e[6]; part.iyz = e[7];
       } else if (part.wingSupport) {
         const support = mainWingSupport(this.definition);
@@ -1589,7 +1622,7 @@ export class FlightSimulation {
     this.position.y += windTunnelRoom(this.definition).centerY;
     this.velocity.set(0, 0, 0);
     this.laboratoryState.windVelocity.set(this.laboratoryState.windTunnel.speed, 0, 0);
-    for (const axis of CONTROL_AXES) this.applied[axis] = this.definition.birdman ? 0 : this.laboratoryState.windTunnel[axis];
+    for (const axis of CONTROL_AXES) this.applied[axis] = this.definition.birdman && axis !== 'rudder' ? 0 : this.laboratoryState.windTunnel[axis];
     this.updateControlDirections();
     mixControlSurfaces(this.surfaces, this.applied, this.effective.smartMixing === true);
     for (const surface of this.surfaces) if (surface.bodyId === 0) surface.controlCommand = surface.controlCandidate;
@@ -2608,7 +2641,7 @@ export class FlightSimulation {
       : (mainX + (tailArea > 0 ? effectiveness * tailX / tailArea : 0)) / (1 + effectiveness);
     aircraft.staticMargin = (aircraft.cg.x - aircraft.neutralPoint) / this.chord;
     for (const wing of this.aerodynamics.wings) {
-      wing.area = 0; wing.aspect = 0;
+      wing.area = 0; wing.reynoldsMin = Infinity; wing.reynoldsMax = 0; wing.speedMax = 0; wing.aspect = 0;
       for (const surface of this.surfaces) if (surface.bodyId === 0 && surface.kind === wing.kind) {
         wing.area += surface.area; wing.aspect = surface.aspect;
       }

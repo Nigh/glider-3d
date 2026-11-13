@@ -2,6 +2,22 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ '机翼质量 / 平均密度': ['Wing mass / bulk density', '翼の質量 / 平均密度'],
+ "翼型与数据范围": ["Airfoil and data range", "翼型とデータ範囲"],
+ "翼型": ["Airfoil", "翼型"],
+ "范围检查速度": ["Range check speed", "範囲確認速度"],
+ "模型范围": ["Model envelope", "モデル範囲"],
+ "未知翼型": ["Unknown airfoil", "不明な翼型"],
+ "垂尾不支持选择翼型": ["Fin airfoil selection is unavailable", "垂直尾翼の翼型は選択できません"],
+ "垂尾顶面随副翼安装角和翼型平滑变化。": ["The fin crown follows the auxiliary wing incidence and airfoil smoothly.", "垂直尾翼の上面は補助翼の取付角と翼型に滑らかに追従します。"],
+ "当前形状无效：超出翼型模型范围，请更换翼型或改变机翼形状。": ["Invalid geometry: outside the airfoil model envelope. Change the airfoil or wing geometry.", "現在の形状は無効です。翼型モデルの範囲外のため、翼型または翼の形状を変更してください。"],
+ "鸟人机允许此形状；数据外结果未标定。": ["Birdman aircraft allow this geometry; results outside the data range are uncalibrated.", "鳥人間機ではこの形状を許可しますが、データ範囲外の結果は未校正です。"],
+ "鸟人机固定 DAE-11，允许自由改形；数据外性能没有标定保证。": ["Birdman aircraft use DAE-11 with free geometry edits; performance outside the data range is uncalibrated.", "鳥人間機は DAE-11 固定で形状は自由に変更できます。範囲外の性能は未校正です。"],
+ "范围按检查速度与根梢弦计算；飞行中另按实际来流提示，不阻止试飞。二维极曲线不能标定任意展弦比或后掠。": ["The check uses this speed and root/tip chords; flight warnings use actual local flow and do not block testing. 2D polars do not validate arbitrary aspect ratios or sweep.", "確認速度と翼根・翼端弦から範囲を計算します。飛行中は実際の局所流で警告し、試験は妨げません。二次元ポーラは任意のアスペクト比や後退角を検証できません。"],
+ "Re=6M 为实测锚点；低 Re 为 XFOIL 预测，中间为未标定工程插值。": ["Re=6M is an experimental anchor; low Re uses XFOIL predictions. Intermediate values are an uncalibrated engineering interpolation.", "Re=6M は実測基準点で、低 Re は XFOIL 予測です。中間値は未校正の工学的補間です。"],
+ "DAE-11 使用 Re=200k–1M 的 XFOIL 预测，不是实测数据。": ["DAE-11 uses XFOIL predictions at Re=200k–1M, not experimental data.", "DAE-11 は Re=200k–1M の XFOIL 予測を使用しており、実測値ではありません。"],
+ "材料用量按平方根缩放梁尺寸；翼型厚度另缩放梁深度，翼型周长缩放蒙皮质量，改变刚度、承载能力及机翼平均密度。材料本身的密度与强度不变；不提供梁尺寸调整。": ["Material amount scales beam dimensions by its square root. Airfoil thickness scales beam depth and perimeter scales skin mass, changing stiffness, load capacity and wing bulk density. Material density and strength stay fixed; beam dimensions are not editable.", "材料量の平方根で梁寸法を拡縮します。翼型の厚さは梁の深さ、周長は外皮質量を変え、剛性・耐荷重・翼の平均密度に影響します。材料自体の密度と強度は一定で、梁寸法は編集できません。"],
+
  'W · 前往风洞': ['W · Enter wind tunnel', 'W・風洞へ'],
  '摩擦阻力（零升阻力）': ['Profile / parasite drag', '形状・有害抗力（非誘導）'],
  '诱导阻力': ['Induced drag', '誘導抗力'],

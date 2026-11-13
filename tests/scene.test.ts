@@ -1078,7 +1078,7 @@ describe('工坊场景与直接选取', () => {
     definition.mainWing.dihedral = 25; definition.assembly.mainIncidence = 12;
     const view = Object.assign(Object.create(SceneView.prototype), {
       definition, editorTarget: 'mainWing', wingSections: [[], [], []], wingNormalGeometry: [],
-      wingNeutral: [], wingHinges: [], wingMovable: [], wingAxes: [],
+      wingCoordinates: [], wingNeutral: [], wingHinges: [], wingMovable: [], wingAxes: [],
       hingeLines: [{ geometry: new BufferGeometry() }],
     });
     const origin = wingOrigin(definition, 'mainWing'), wing = definition.mainWing;
@@ -1102,7 +1102,7 @@ describe('工坊场景与直接选取', () => {
     const definition=clone(defaultAircraft);editWingPoint(definition,'verticalTail',1,0.3,-0.48);
     const view=Object.assign(Object.create(SceneView.prototype),{
       definition,editorTarget:'verticalTail',wingSections:[[],[],[]],wingNormalGeometry:[],
-      wingNeutral:[],wingHinges:[],wingMovable:[],wingAxes:[],
+      wingCoordinates:[],wingNeutral:[],wingHinges:[],wingMovable:[],wingAxes:[],
       hingeLines:Array.from({length:3},()=>({geometry:new BufferGeometry()})),
     });
     const origin=wingOrigin(definition,'verticalTail');
@@ -1115,7 +1115,7 @@ describe('工坊场景与直接选取', () => {
     expect(simulation.structure.sections.filter(section=>section.wingKey==='verticalTail').at(-1)!.referenceTip.y).toBe(-0.48);
     geometry.dispose();view.wingNormalGeometry[2].dispose();for(const hinge of view.hingeLines)hinge.geometry.dispose();
   });
-  it('副翼安装在较大范围内吸附至精确梢弦中心，拖远脱离，Ctrl跳过吸附',()=>{
+  it('副翼安装在较大范围内吸附垂尾并保留安装角，拖远脱离，Ctrl跳过吸附',()=>{
     const view=designSceneView(),base=clone(defaultAircraft);
     Object.assign(view,{
       definition:base,editDefinition:clone(base),editorTarget:'horizontalTail',
@@ -1128,7 +1128,9 @@ describe('工坊场景与直接选取', () => {
     expect(view.definition.assembly.tailOnFin).toBe(true);expect(view.editorSnap.kind).toBe('mount');
     expect(wingOrigin(view.definition,'horizontalTail').y).toBe(y);
     const mount=view.assemblyEditorPoint(1,new Vector3());
-    expect(mount.x).toBeCloseTo(origin.x-(p[1].x+p[2].x)/2,12);expect(mount.y).toBe(y);
+    const middle=(p[1].x+p[2].x)/2,angle=base.assembly.tailIncidence*DEG;
+    expect(view.definition.assembly.tailIncidence).toBe(base.assembly.tailIncidence);
+    expect(mount.x).toBeCloseTo(origin.x-middle*Math.cos(angle),12);expect(mount.y).toBeCloseTo(y-middle*Math.sin(angle),12);
     view.editDefinition=clone(view.definition);view.changeAssembly(1,0.6,0);
     expect(view.definition.assembly.tailOnFin).toBe(false);
     view.editDefinition=clone(base);view.editorSnap.disabled=true;view.changeAssembly(1,x,y);
@@ -1175,7 +1177,7 @@ it.each([0.3, 1])('live installation angle matches freshly built skin, hinges an
   const build = () => {
     const view = Object.assign(Object.create(SceneView.prototype), {
       definition: simulation.definition, simulation, fragments: [], renderBlend: 1,
-      wingSections: [[], [], []], wingNormalGeometry: [], wingNeutral: [], wingHinges: [],
+      wingSections: [[], [], []], wingNormalGeometry: [], wingCoordinates: [], wingNeutral: [], wingHinges: [],
       wingMovable: [], wingAxes: [], wingAngles: new Float64Array(3), wingMeshes: [],
       hingeLines: Array.from({ length: 3 }, () => ({ geometry: new BufferGeometry() })),
       deformationCenter: new Vector3(), controlRotation: new Quaternion(), deformationRotation: new Quaternion(),
@@ -1236,7 +1238,7 @@ it.each([false, true])('renders per-strip control directions for front/rear tail
     simulation.step({ weight: 0, elevator: 0.3, aileron: 0.3, rudder: 0.3 }, 0.05);
     const view = Object.assign(Object.create(SceneView.prototype), {
       definition: simulation.definition, simulation, fragments: [], renderBlend: 1,
-      wingSections: [[], [], []], wingNormalGeometry: [], wingNeutral: [], wingHinges: [],
+      wingSections: [[], [], []], wingNormalGeometry: [], wingCoordinates: [], wingNeutral: [], wingHinges: [],
       wingMovable: [], wingAxes: [], wingAngles: new Float64Array(3), wingMeshes: [],
       hingeLines: Array.from({ length: 3 }, () => ({ geometry: new BufferGeometry() })),
       deformationCenter: new Vector3(), controlRotation: new Quaternion(), deformationRotation: new Quaternion(),

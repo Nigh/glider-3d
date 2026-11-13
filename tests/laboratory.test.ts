@@ -352,13 +352,13 @@ describe('wind tunnel', () => {
     expect(sim.definition.assembly.mainIncidence).toBeCloseTo(18 - windTunnelRates.mainIncidence / 60, 8);
     expect(sim.definition.assembly.tailIncidence).toBeCloseTo(-12 + windTunnelRates.tailIncidence / 60, 8);
   });
-  it('keeps fin-mounted auxiliary wing incidence locked during live changes', () => {
+  it('allows fin-mounted auxiliary wing incidence during live changes', () => {
     const definition = powered(); definition.assembly.tailOnFin = true;
     const sim = new FlightSimulation(definition, 'wind-tunnel', 0);
     sim.setWindTunnel({ ...sim.windTunnel, speed: 10, mainIncidence: 4, tailIncidence: 12 });
     for (let i = 0; i < 30; i++) sim.step(neutral);
     expect(sim.windTunnel.mainIncidence).toBe(4);
-    expect(sim.windTunnel.tailIncidence).toBe(0);
-    expect(sim.definition.assembly.tailIncidence).toBe(0);
+    expect(sim.windTunnel.tailIncidence).toBe(12);
+    expect(sim.definition.assembly.tailIncidence).toBe(12);
   });
 });

@@ -1,5 +1,7 @@
 # PR #56：飞行与风洞一致性及阻力核查
 
+本报告数值记录物理版本 v21（`fa669ce`）。后续 v22 新增可选翼型、实际截面与 T 尾顶面，来源、数据范围及几何/质量规则见 [airfoil-model.md](airfoil-model.md)；下方历史数值不作为 v22 的重新测量。
+
 对应 [review 5875614273](https://github.com/Nigh/glider-3d/pull/56#pullrequestreview-5875614273)。原始测试机保存为 [review56-twin.json](../tests/fixtures/review56-twin.json)，来源为 review 附件，未调整其安装角、材料或发动机参数。
 
 ## 角度与力矩差异

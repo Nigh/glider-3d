@@ -3,7 +3,8 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BODY_GEOMETRY, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { BODY_GEOMETRY, finPoint, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { airfoilY, airfoilCamber } from './airfoils';
 import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
@@ -107,6 +108,8 @@ export class SceneView {
   private readonly strutGeometry = new THREE.CylinderGeometry(1, 1, 1, 6);
   private readonly wingMeshes: THREE.Mesh[] = [];
   private readonly wingParameters = new Float64Array(36).fill(NaN);
+  private readonly wingShapeKeys: string[] = [];
+  private readonly wingCoordinates: Float32Array[] = [];
   private readonly wingNeutral: Float32Array[] = [];
   private readonly wingHinges: Float32Array[] = [];
   private readonly wingMovable: Uint8Array[] = [];
@@ -1126,7 +1129,7 @@ export class SceneView {
     const wing = this.definition[key], point = wing.points[index], origin = wingOrigin(this.definition, key);
     const vertical = key === 'verticalTail';
     const incidence = (key === 'mainWing' ? this.definition.assembly.mainIncidence : key === 'horizontalTail' ? this.definition.assembly.tailIncidence : 0) * DEG;
-    if (vertical) out.set(origin.x - point.x, origin.y + point.y, 0);
+    if (vertical) finPoint(this.definition, Math.abs(point.y), index < 2 ? 0 : 1, 0, out);
     else {
       wingLocalPoint(wing, incidence, side, -point.x, 0, point.y, out);
       out.x += origin.x; out.y += origin.y;
@@ -1606,7 +1609,9 @@ export class SceneView {
       const key: WingKey = i === 0 ? 'mainWing' : i === 1 ? 'horizontalTail' : 'verticalTail';
       const wing = d[key], origin = wingOrigin(d, key);
       const incidence = i === 0 ? d.assembly.mainIncidence : i === 1 ? d.assembly.tailIncidence : 0;
-      const changed = this.wingChanged(i, wing, origin.x, origin.y, incidence);
+      const shapeKey = JSON.stringify([wingAirfoil(d, key), i === 2 && d.assembly.tailOnFin ? [d.assembly.tailIncidence, wingAirfoil(d, 'horizontalTail'), d.horizontalTail.dihedral, d.horizontalTail.points] : false]);
+      const changed = this.wingChanged(i, wing, origin.x, origin.y, incidence) || this.wingShapeKeys[i] !== shapeKey;
+      this.wingShapeKeys[i] = shapeKey;
       if (!changed && this.surfaceParameters[i] === wing.controlSurface) continue;
       this.surfaceParameters[i] = wing.controlSurface;
       const geometry = this.wingGeometry(wing, origin.x, origin.y, incidence, i);
@@ -2248,12 +2253,12 @@ export class SceneView {
 
   /** 结构边界独立顶点；段内 0.2 m 显示细分，断口使用独立封口顶点。 */
   private wingGeometry(wing: Wing, rootX: number, height: number, incidence: number, index: number): THREE.BufferGeometry {
-    const vertices: number[] = [], indices: number[] = [], hinges: number[] = [], movable: number[] = [];
+    const vertices: number[] = [], indices: number[] = [], hinges: number[] = [], movable: number[] = [], coordinates: number[] = [];
     const sections = this.wingSections[index];
     sections.length = 0;
     const vertical = index === 2, fraction = wing.controlSurface, hingeFraction = 1 - fraction;
     const profileCount = 32, chordSteps = 16;
-    const angle = incidence * DEG;
+    const angle = incidence * DEG, foil = wingAirfoil(this.definition, index === 0 ? 'mainWing' : 'horizontalTail');
     const point = new THREE.Vector3(), hinge = new THREE.Vector3();
     const halfSpan = Math.abs(wing.points[1].y), spanSign = vertical ? Math.sign(wing.points[1].y) : 1;
     const rootChord = wing.points[3].x - wing.points[0].x, tipChord = wing.points[2].x - wing.points[1].x;
@@ -2285,8 +2290,9 @@ export class SceneView {
           const leading = THREE.MathUtils.lerp(wing.points[0].x, wing.points[1].x, t);
           const trailing = THREE.MathUtils.lerp(wing.points[3].x, wing.points[2].x, t), chord = trailing - leading;
           const hingeX = -leading - hingeFraction * chord;
-          const hingeY = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * hingeFraction);
-          if (vertical) hinge.set(rootX + (fraction === 1 ? -wing.points[0].x - rootChord * 0.25 : hingeX), height + spanSign * span, 0);
+          const hingeY = vertical ? 0 : chord * airfoilCamber(foil, hingeFraction);
+          const hingeU = fraction === 1 ? (wing.points[0].x + rootChord * 0.25 - leading) / chord : hingeFraction;
+          if (vertical) finPoint(this.definition, span, hingeU, 0, hinge);
           else {
             wingLocalPoint(wing, angle, side, hingeX, hingeY, span, hinge);
             hinge.x += rootX; hinge.y += height;
@@ -2294,7 +2300,7 @@ export class SceneView {
           if (row === 0 || row === rows) {
             const reference = row === 0 ? section.referenceRoot : section.referenceTip;
             const quarter = -leading - chord * 0.25;
-            if (vertical) reference.set(rootX + quarter, height + spanSign * span, 0);
+            if (vertical) finPoint(this.definition, span, 0.25, 0, reference);
             else {
               wingLocalPoint(wing, angle, side, quarter, 0, span, reference);
               reference.x += rootX; reference.y += height;
@@ -2307,9 +2313,12 @@ export class SceneView {
                 : hingeFraction + fraction * (1 - Math.cos((j - 12) / 4 * Math.PI)) / 2
               : (1 - Math.cos(j / chordSteps * Math.PI)) / 2;
             const thickness = 5 * 0.105 * chord * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
-            const camber = vertical ? 0 : 0.018 * chord * Math.sin(Math.PI * u);
-            const x = -leading - u * chord, y = camber + (upper ? thickness : -thickness);
-            if (vertical) vertices.push(rootX + x, height + spanSign * span, y);
+            const x = -leading - u * chord, y = vertical ? (upper ? thickness : -thickness) : chord * airfoilY(foil, u, upper ? 1 : -1);
+            coordinates.push(span, u, y, hingeU);
+            if (vertical) {
+              finPoint(this.definition, span, u, y, point);
+              vertices.push(point.x, point.y, point.z);
+            }
             else {
               wingLocalPoint(wing, angle, side, x, y, span, point);
               vertices.push(rootX + point.x, height + point.y, point.z);
@@ -2335,6 +2344,7 @@ export class SceneView {
             vertices.push(vertices[offset], vertices[offset + 1], vertices[offset + 2]);
             hinges.push(hinges[offset], hinges[offset + 1], hinges[offset + 2]);
             movable.push(movable[source + k]);
+            coordinates.push(...coordinates.slice((source + k) * 4, (source + k) * 4 + 4));
           }
           const capIndices = cap === 0 ? section.rootIndices : section.tipIndices;
           for (let k = 1; k < profileCount - 1; k++) {
@@ -2357,6 +2367,7 @@ export class SceneView {
     normalGeometry.setIndex(indices);
     this.wingNormalGeometry[index] = normalGeometry;
     this.wingNeutral[index] = new Float32Array(vertices);
+    this.wingCoordinates[index] = new Float32Array(coordinates);
     this.wingHinges[index] = new Float32Array(hinges);
     this.wingMovable[index] = new Uint8Array(movable);
     this.wingAxes[index] = axes;
@@ -2530,9 +2541,18 @@ export class SceneView {
             this.deformPoint(section, this.deformationCenter, t);
             previousT = t;
           }
-          this.deformationPoint.fromArray(neutral, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
+          if (index === 2 && this.definition.assembly.tailOnFin && physical) {
+            const coords = this.wingCoordinates[index], offset = vertex * 4;
+            finPoint(this.definition, coords[offset], coords[offset + 1], coords[offset + 2], this.deformationPoint, physical.crownIncidence);
+            this.deformationReference.lerpVectors(section.referenceRoot, section.referenceTip, t);
+            this.deformationPoint.sub(this.deformationReference);
+          } else this.deformationPoint.fromArray(neutral, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
           if (this.wingMovable[index][vertex]) {
-            this.deformationHinge.fromArray(hinges, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
+            if (index === 2 && this.definition.assembly.tailOnFin && physical) {
+              const coords = this.wingCoordinates[index], offset = vertex * 4;
+              finPoint(this.definition, coords[offset], coords[offset + 3], 0, this.deformationHinge, physical.crownIncidence);
+              this.deformationHinge.sub(this.deformationReference);
+            } else this.deformationHinge.fromArray(hinges, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
             this.deformationPoint.sub(this.deformationHinge).applyQuaternion(this.controlRotation).add(this.deformationHinge);
           }
           this.deformationPoint.applyQuaternion(this.deformationRotation).add(this.deformationCenter);

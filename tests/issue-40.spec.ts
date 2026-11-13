@@ -195,7 +195,7 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  expect(errors).toEqual([]);
 });
 
-test('wind tunnel keeps axis labels for pilot displacement and locks fin-mounted incidence', async ({ page }) => {
+test('wind tunnel keeps axis labels for pilot displacement and allows fin-mounted incidence', async ({ page }) => {
  await page.getByRole('button', { name: /^风洞/ }).click();
  await page.getByRole('button', { name: '重置设计', exact: true }).click();
  const before = await page.evaluate(() => window.glider.aircraft);
@@ -217,6 +217,7 @@ test('wind tunnel keeps axis labels for pilot displacement and locks fin-mounted
  await page.getByRole('tab', { name: '副翼', exact: true }).click();
  await page.getByRole('switch', { name: '副翼安装至垂尾顶端', exact: true }).click();
  await page.getByRole('button', { name: /前往风洞/ }).click();
- await expect(page.getByLabel('副翼安装角数值', { exact: true })).toHaveCount(0);
- await expect(page.getByText('副翼安装在垂尾顶端，安装角锁定为 0°。', { exact: true })).toBeVisible();
+ await page.getByLabel('副翼安装角数值', { exact: true }).fill('12');
+ await expect(page.getByLabel('副翼安装角实际值', { exact: true })).toHaveText('12.0');
+ await expect(page.getByText('垂尾顶面随副翼安装角和翼型平滑变化。', { exact: true })).toBeVisible();
 });

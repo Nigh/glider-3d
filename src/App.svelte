@@ -15,6 +15,8 @@
  import { listAircraft, loadAircraft, saveAircraft, deleteAircraft, renameAircraft, duplicateAircraft, exportAircraft, importAircraft, isAircraftCompatible, readBest, writeBest, History, type SavedAircraft } from './storage';
  import ReplayTimeline from './ReplayTimeline.svelte';
  import { seekReplay, cacheFlight, cacheRecording, cacheReplay } from './playback';
+ import AirfoilSettings from './AirfoilSettings.svelte';
+ import { airfoilCoverage, airfoilCatalog } from './airfoils';
  import WingEditor from './WingEditor.svelte'; import Parameter from './Parameter.svelte';
  import { GameAudio } from './audio';
  import AudioSettings from './AudioSettings.svelte';
@@ -204,7 +206,7 @@
    const selectedChallenge=imported?.challenge??(replay?lastChallenge:mode??challenge),definition=forChallenge(imported?.definition??(replay?lastDefinition:aircraft),selectedChallenge);
    const next=new FlightSimulation(definition,selectedChallenge,undefined,testSettings);
    if(replay&&(imported?.recording??recording))next.loadReplay(imported?.recording??recording!);
-   if(selectedChallenge==='wind-tunnel'){windSettings={...windSettings,mainIncidence:definition.assembly.mainIncidence,tailIncidence:definition.assembly.tailIncidence};next.setWindTunnel(windSettings);}
+   if(selectedChallenge==='wind-tunnel'){windSettings={...windSettings,mainIncidence:definition.assembly.mainIncidence,tailIncidence:definition.assembly.tailIncidence};next.setWindTunnel(windSettings);windSettings={...next.windTunnelTarget};}
    simulation=next;if(!replay&&!isLaboratory(selectedChallenge))cacheFlight(next);
    lastDefinition=clone(definition);lastChallenge=selectedChallenge;
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
@@ -216,7 +218,7 @@
   }catch(e){notify((e as Error).message);}
  }
  function configureTest(value:TestSpaceSettings){if(flightReady||!simulation)return;try{simulation.configureTestSpace(value);testSettings={...value};scene.captureFlightState();refreshHud();}catch(e){notify((e as Error).message);}}
- function configureWind(value:WindTunnelSettings){try{simulation?.setWindTunnel(value);windSettings={...value};}catch(e){notify((e as Error).message);}}
+ function configureWind(value:WindTunnelSettings){try{simulation?.setWindTunnel(value);windSettings={...(simulation?.windTunnelTarget??value)};}catch(e){notify((e as Error).message);}}
  function toggleWind(){if(!simulation)return;simulation.setWindTunnelEnabled(!simulation.windTunnelEnabled);refreshHud();}
  function restoreWindAircraft(){if(!simulation)return;simulation.restoreWindTunnelAircraft();scene.captureFlightState();refreshHud();}
  function stopTest(){if(!simulation||!flightReady)return;simulation.stopTest();finish();}
@@ -414,7 +416,7 @@ window.addEventListener('pointermove',mouse);
 {#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
 <DragReadout aerodynamics={hud.aerodynamics} windTunnel={lastChallenge==='wind-tunnel'}/>
 {#each [["侧向力",hud.aerodynamics.force.z,"N"],["机身攻角",hud.aerodynamics.alpha*180/Math.PI,"°"],["主翼几何攻角",hud.alpha,"°"],["主翼有效攻角",hud.aerodynamics.wings[0].alpha*180/Math.PI,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""] ,["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
-{#if lastChallenge==='wind-tunnel'}<div class="reynolds-range"><dt>{t('局部雷诺数范围')}</dt><dd data-reynolds-range>{hud.aerodynamics.reynoldsMin.toExponential(2)}–{hud.aerodynamics.reynoldsMax.toExponential(2)}</dd></div>{/if}</dl>{#if lastChallenge==='wind-tunnel'}<p>{t('风洞为无动力测试；仰角不含翼面安装角。')}</p>{#if hud.aerodynamics.reynoldsMax>1000000}<p data-polar-limit>{t('翼型极曲线仅覆盖Re≤1M；超出部分沿用上限，结果未标定。')}</p>{/if}{/if}
+{#if lastChallenge==='wind-tunnel'}<div class="reynolds-range"><dt>{t('局部雷诺数范围')}</dt><dd data-reynolds-range>{hud.aerodynamics.reynoldsMin.toExponential(2)}–{hud.aerodynamics.reynoldsMax.toExponential(2)}</dd></div>{/if}</dl>{#if lastChallenge==='wind-tunnel'}<p>{t('风洞为无动力测试；仰角不含翼面安装角。')}</p>{/if}{#each hud.aerodynamics.wings.filter((wing:any)=>wing.kind!=='vertical') as wing}<p data-airfoil-live>{t(wing.name)} · {airfoilCatalog[wing.airfoil as keyof typeof airfoilCatalog].name} · Re {wing.reynoldsMin.toExponential(2)}–{wing.reynoldsMax.toExponential(2)}</p>{#if !airfoilCoverage(wing.airfoil,wing.reynoldsMin,wing.reynoldsMax,wing.speedMax)}<p data-polar-limit role="status">{t(wing.name)} · {t(lastDefinition.birdman?'鸟人机允许此形状；数据外结果未标定。':'当前形状无效：超出翼型模型范围，请更换翼型或改变机翼形状。')}</p>{/if}{#if wing.airfoil==='naca0012'}<p>{t('Re=6M 为实测锚点；低 Re 为 XFOIL 预测，中间为未标定工程插值。')}</p>{/if}{/each}
 </aside>{/if}
 
 {/snippet}
@@ -500,6 +502,7 @@ window.addEventListener('pointermove',mouse);
  {:else}
  {@const position=assemblyPositions.find(position=>position.key===wingKey)!}
  {#if tab==='副翼'}<button class="toggle-switch" role="switch" aria-checked={aircraft.assembly.tailOnFin===true} onclick={()=>{change(d=>d.assembly.tailOnFin=!d.assembly.tailOnFin);commit();}}>{t("副翼安装至垂尾顶端")}</button><p class="help">{aircraft.assembly.tailOnFin?t("已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。"):t("可开启开关直接安装，或将副翼安装点拖近垂尾顶端吸附。")}</p>{/if}
+ {#if wingKey!=='verticalTail'}<AirfoilSettings definition={aircraft} wingKey={wingKey} mass={stats.wingMass[wingKey]} onselect={id=>{change(d=>d[wingKey].airfoil=id);commit();}}/>{/if}
  {#key wingKey}<WingEditor value={aircraft[wingKey]} vertical={tab==='垂直尾翼'} onchange={(w:Wing)=>change(d=>d[wingKey]=w)} onpointchange={(i,x,y)=>change(d=>editWingPoint(d,wingKey,i,x,y))} oncommit={commit}/>{/key}
  <div class="assembly-positions">
  <label><span>{t(position.label)}</span><input aria-label={t("{p0}精确值",{p0:t(position.label)})} type="number" min={position.min} max={position.max} step="0.01" value={Number(position.value.toFixed(2))} disabled={wingKey==='horizontalTail'&&aircraft.assembly.tailOnFin===true} onchange={e=>setPosition(position.key,e.currentTarget)}/><small>m</small></label>
@@ -508,7 +511,7 @@ window.addEventListener('pointermove',mouse);
  <Parameter label={t("主翼安装高度")} value={aircraft.assembly.mainWingHeight} min={-0.5} max={1} step={0.01} unit="m" onchange={n=>change(d=>d.assembly.mainWingHeight=n)} oncommit={commit} hint={t("0 m 直接安装机身；正值在上、负值在下。离开机身自动生成根弦宽支撑，面积越大越重；拖动时 Ctrl 可绕过吸附。")}/>
  <Parameter label={t("主翼安装角")} value={aircraft.assembly.mainIncidence} min={-10} max={18} unit="°" onchange={n=>change(d=>d.assembly.mainIncidence=n)} oncommit={commit} hint={t("提高安装角会增加有效攻角；过大可能失速。")}/>
  {/if}
- {#if tab==='副翼'&&!aircraft.assembly.tailOnFin}
+ {#if tab==='副翼'}
  <Parameter label={t("副翼安装角")} value={aircraft.assembly.tailIncidence} min={-12} max={12} unit="°" onchange={n=>change(d=>d.assembly.tailIncidence=n)} oncommit={commit} hint={t("调节尾翼安装角以配平，观察离台后攻角与俯仰变化。")}/>
  {/if}
  {#if tab==='主翼'}<Parameter label={t("主翼上反角")} value={aircraft.mainWing.dihedral} min={-25} max={25} unit="°" onchange={n=>change(d=>d.mainWing.dihedral=n)} oncommit={commit} hint={t("增加侧滑时的滚转恢复效应，不会强制飞机自动水平。")}/>{/if}

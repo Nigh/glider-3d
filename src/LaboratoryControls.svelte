@@ -11,7 +11,7 @@
  let editingWind = $state<keyof WindTunnelSettings | null>(null), windDraft = $state('');
  type WindControl = { key: keyof WindTunnelSettings; name: string; note?: string; min: number; max: number; step: number; unit: string; scale: number };
  const windControls = $derived<WindControl[]>([
-  { key: 'speed', name: '气流速度', min: 1, max: 200, step: 0.1, unit: 'm/s', scale: 1 },
+  { key: 'speed', name: '气流速度', min: 1, max: definition.birdman ? 50 : 200, step: 0.1, unit: 'm/s', scale: 1 },
   { key: 'roll', name: '滚转角度', min: -180, max: 180, step: 0.1, unit: '°', scale: 1 },
   { key: 'pitch', name: '俯仰角度', min: -45, max: 45, step: 0.1, unit: '°', scale: 1 },
   ...(definition.birdman ? [
@@ -23,7 +23,7 @@
   ]),
   { key: 'rudder', name: '方向舵控制比例', min: -100, max: 100, step: 0.1, unit: '%', scale: 100 },
   { key: 'mainIncidence', name: '主翼安装角', min: -10, max: 18, step: 0.1, unit: '°', scale: 1 },
-  ...(!definition.assembly.tailOnFin ? [{ key: 'tailIncidence' as const, name: '副翼安装角', min: -12, max: 12, step: 0.1, unit: '°', scale: 1 }] : []),
+  { key: 'tailIncidence', name: '副翼安装角', min: -12, max: 12, step: 0.1, unit: '°', scale: 1 },
  ]);
  const precision = (control: WindControl) => control.step === 0.01 ? 2 : 1;
  function testValue(key: 'height' | 'speed', input: HTMLInputElement) {
@@ -64,7 +64,7 @@
   {/each}
   {#if definition.birdman}<p>{t('驾驶员位移正值为向右、向前，负值为向左、向后。')}</p>{/if}
   <p>{t('安装角按限速实时变化；返回工坊保留当前实际角度。')}</p>
-  {#if definition.assembly.tailOnFin}<p>{t('副翼安装在垂尾顶端，安装角锁定为 0°。')}</p>{/if}
+  {#if definition.assembly.tailOnFin}<p>{t('垂尾顶面随副翼安装角和翼型平滑变化。')}</p>{/if}
   <p>{t('开启或关闭风洞以平滑调整气流；还原飞机状态可修复结构损伤。')}</p>
   <div class="lab-cameras" aria-label={t('观察视角')}>{#each ['侧视', '俯视', '正视', '自由'] as camera}<button class:active={cameraView === camera} aria-pressed={cameraView === camera} onclick={() => onCamera(camera)}>{t(camera)}</button>{/each}</div>
  {/if}

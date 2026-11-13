@@ -31,7 +31,7 @@
    <div><dt>{t("等效压缩 / 剪切强度")}</dt><dd>{material.compressiveStrength/1e6} / {material.shearStrength/1e6} MPa</dd></div>
   </dl>
   <p class="help">{t(material.note)}</p>
-  <p class="help">{t("材料用量按比例改变承力梁面积，截面各长度按用量平方根缩放；增加用量会增加梁质量、刚度与断裂极限。选择材料不重置用量；蒙皮沿用固定面密度，不提供梁尺寸调整。")}</p>
+  <p class="help">{t("材料用量按平方根缩放梁尺寸；翼型厚度另缩放梁深度，翼型周长缩放蒙皮质量，改变刚度、承载能力及机翼平均密度。材料本身的密度与强度不变；不提供梁尺寸调整。")}</p>
   <p class="help">{t("采用分段等效梁与线弹性近似；超过极限沿气动分段断裂。不是复合材料铺层分析，也不模拟真实颤振。")}</p>
  </section>
 </div>

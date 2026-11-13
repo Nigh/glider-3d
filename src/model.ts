@@ -1,4 +1,5 @@
 import { t } from './i18n';
+import { airfoilCatalog, airfoilY, type AirfoilId } from './airfoils';
 import { engineCatalog, type EngineType } from './engines';
 import { defaultStructures, materialCatalog, type BeamStructure, type MaterialId } from './materials';
 import birdmanGlider from './aircraft/鸟人间滑翔基础型.json';
@@ -9,7 +10,7 @@ import singleJet from './aircraft/基础单发型.json';
 export type Point = { x: number; y: number };
 // Body coordinates: +X forward, +Y up, +Z right. Distances metres, angles degrees.
 // Planform points: root leading, tip leading, tip trailing, root trailing; x aft, y outboard.
-export interface Wing { points: [Point, Point, Point, Point]; rootReference?: number; dihedral: number; controlSurface: number; controlAxes?: { roll: boolean; pitch: boolean; yaw: boolean }; controlResponse?: number; controlReversed?: boolean; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
+export interface Wing { points: [Point, Point, Point, Point]; airfoil?: AirfoilId; rootReference?: number; dihedral: number; controlSurface: number; controlAxes?: { roll: boolean; pitch: boolean; yaw: boolean }; controlResponse?: number; controlReversed?: boolean; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
 export interface AircraftDefinition {
  name: string;
  birdman: boolean;
@@ -186,7 +187,6 @@ export function normalizeAircraftGeometry(d: AircraftDefinition): void {
   if (key === 'horizontalTail' && d.assembly.tailOnFin) {
    d.horizontalTail.points[0].x = d.verticalTail.points[1].x;
    d.horizontalTail.points[3].x = d.verticalTail.points[2].x;
-   d.assembly.tailIncidence = 0;
    d.assembly.horizontalTail = wingOrigin(d, 'verticalTail').x - (d.verticalTail.points[1].x + d.verticalTail.points[2].x) / 2;
    continue;
   }
@@ -223,6 +223,38 @@ export function editWingPoint(d: AircraftDefinition, key: WingKey, index: number
   p[index].x = clamp(p[index].x, Math.ceil((origin.x - ends.nose) / c * 100 - 1e-8) / 100, Math.floor((origin.x - ends.tail) / c * 100 + 1e-8) / 100);
  }
  normalizeAircraftGeometry(d);
+}
+export function wingAirfoil(d: AircraftDefinition, key: WingKey): AirfoilId { return d.birdman ? 'dae11' : d[key].airfoil ?? 'dae11'; }
+/** Only the last fin strip forms the crown. Its cap follows the mounted tail's
+ * upper section, including incidence/camber; root and planform edits stay put.
+ * Shared by render skin, contacts, aerodynamic points and beam references. */
+export function finPoint<T extends { x: number; y: number; z: number }>(d: AircraftDefinition, span: number, u: number, normal: number, out: T, incidence = d.assembly.tailIncidence): T {
+ const w = d.verticalTail, half = Math.abs(w.points[1].y), t = span / half;
+ const originX = d.assembly.verticalTail + (w.rootReference ?? (w.points[0].x + w.points[3].x) / 2);
+ const lead = w.points[0].x + (w.points[1].x - w.points[0].x) * t;
+ const rootChord = w.points[3].x - w.points[0].x, tipChord = w.points[2].x - w.points[1].x;
+ out.x = originX - lead - u * (rootChord + (tipChord - rootChord) * t);
+ out.y = Math.sign(w.points[1].y) * span; out.z = normal;
+ if (d.assembly.tailOnFin && span > Math.max(0, half - 0.8)) {
+  const crown = clamp((span - Math.max(0, half - 0.8)) / Math.min(0.8, half), 0, 1), angle = incidence * DEG;
+  const tail = d.horizontalTail, tailHalf = Math.abs(tail.points[1].y), dihedral = tail.dihedral * DEG;
+  const cd = Math.cos(dihedral), sd = Math.sin(dihedral);
+  const tailRoot = tail.points[3].x - tail.points[0].x, tailTip = tail.points[2].x - tail.points[1].x;
+  const profile = airfoilY(wingAirfoil(d, 'horizontalTail'), u, 1), y0 = profile * tailRoot;
+  const ySlope = profile * (tailTip - tailRoot) / tailHalf;
+  // Intersect the upper-section envelope with this fin thickness coordinate.
+  // At negative dihedral the envelope bridges the two upper root edges.
+  // Degenerate folded upper envelopes use a bounded end-section bridge.
+  const tailSpan = clamp((Math.abs(normal) + y0 * sd) / Math.max(1e-6, cd - ySlope * sd), -tailHalf, tailHalf);
+  const x = -tail.points[0].x - (tail.points[1].x - tail.points[0].x) * tailSpan / tailHalf
+   - u * (tailRoot + (tailTip - tailRoot) * tailSpan / tailHalf);
+  const y = (y0 + ySlope * tailSpan) * cd + tailSpan * sd;
+  const baseX = -w.points[1].x - u * tipChord;
+  const weight = crown * crown * (3 - 2 * crown);
+  out.x += weight * (x * Math.cos(angle) - y * Math.sin(angle) - baseX);
+  out.y += weight * (x * Math.sin(angle) + y * Math.cos(angle));
+ }
+ return out;
 }
 export function mainWingSupport(d: AircraftDefinition) {
  const w = d.mainWing, angle = d.assembly.mainIncidence * DEG, origin = wingOrigin(d, 'mainWing');
@@ -316,6 +348,9 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  if(w.controlReversed===undefined)w.controlReversed=false;
  if(typeof w.controlReversed!=='boolean')throw Error('舵面反向开关必须是布尔值');
  if(w.rootReference!==undefined)finite(w.rootReference,-3,6);
+ if(w.airfoil!==undefined&&(typeof w.airfoil!=='string'||!Object.hasOwn(airfoilCatalog,w.airfoil)))throw Error('未知翼型');
+ if(key==='verticalTail'&&w.airfoil!==undefined)throw Error('垂尾不支持选择翼型');
+ if(d.birdman&&key!=='verticalTail'&&w.airfoil!==undefined)w.airfoil='dae11';
  if(w.materialId===undefined)w.materialId='carbon-epoxy';
  if(typeof w.materialId!=='string'||!Object.hasOwn(materialCatalog,w.materialId))throw Error('未知翼面材料');
  if(w.materialAmount===undefined)w.materialAmount=1;
@@ -326,7 +361,7 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  if(2*w.structure.wallThickness>=Math.min(w.structure.width,w.structure.height))throw Error('梁管壁厚的两倍必须小于宽度和高度');
  w.structure={width:w.structure.width,height:w.structure.height,wallThickness:w.structure.wallThickness};
  // Design snapshots contain geometry and material only; runtime deformation never persists.
- d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),dihedral:w.dihedral,controlSurface:w.controlSurface,controlAxes:w.controlAxes,controlResponse:w.controlResponse,controlReversed:w.controlReversed,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
+ d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.airfoil===undefined?{}:{airfoil:w.airfoil}),...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),dihedral:w.dihedral,controlSurface:w.controlSurface,controlAxes:w.controlAxes,controlResponse:w.controlResponse,controlReversed:w.controlReversed,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
  if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和副翼不能安装控制面');
  const p=w.points;if(p[0].y!==0||p[3].y!==0||Math.abs(p[1].y-p[2].y)>0.001||Math.abs(p[1].y)<0.25||p[3].x-p[0].x<0.15||p[2].x-p[1].x<0.15)throw Error('翼面不得自交，根弦与梢弦至少 0.15 m');
  }

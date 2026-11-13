@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 椭球湿表面积修正改变受力，完整阻力分项改变关键帧状态图。
-export const PHYSICS_VERSION = 'resolved-drag-budget-v21';
+// 可选翼型、真实截面与T尾顶面改变受力/接触/结构质量及关键帧状态图。
+export const PHYSICS_VERSION = 'selectable-airfoils-v22';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

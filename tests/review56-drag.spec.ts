@@ -30,7 +30,10 @@ test('review测试机风洞按真实模型列出阻力，区分迎角并显示�
  for (const [key, value] of Object.entries(sample.terms)) await expect(page.locator(`[data-drag-term="${key}"] dd`)).toHaveText((value as number).toFixed(2) + ' N');
  const values = await rows.locator('dd').allTextContents();
  expect(values.slice(1).reduce((sum, value) => sum + parseFloat(value), 0)).toBeCloseTo(parseFloat(values[0]), 1);
- await expect(page.locator('[data-polar-limit]')).toContainText('Re≤1M');
+ await expect(page.locator('[data-polar-limit]')).toHaveCount(2);
+ for(const warning of await page.locator('[data-polar-limit]').all())await expect(warning).toContainText('当前形状无效');
+ await expect(page.locator('[data-airfoil-live]')).toHaveCount(2);
+ for(const readout of await page.locator('[data-airfoil-live]').all())await expect(readout).toContainText('DAE-11');
  const body = page.locator('.aero-live div').filter({ has: page.getByText('机身攻角', { exact: true }) });
  const geometric = page.locator('.aero-live div').filter({ has: page.getByText('主翼几何攻角', { exact: true }) });
  await expect(body.locator('dd')).toHaveText('1.30 °'); await expect(geometric.locator('dd')).toHaveText('5.30 °');

@@ -250,7 +250,7 @@ describe('参数化几何与信任边界',()=>{
    expect(tail).toEqual({x:fin.x,y});
    expect(d.horizontalTail.points[0].x).toBe(d.verticalTail.points[1].x);
    expect(d.horizontalTail.points[3].x).toBe(d.verticalTail.points[2].x);
-   expect(d.assembly.tailIncidence).toBe(0);
+   expect(d.assembly.tailIncidence).toBe(defaultAircraft.assembly.tailIncidence);
   }
   const other=d.verticalTail.points[2].x;
   editWingPoint(d,'horizontalTail',0,0.51,0);
