@@ -5,6 +5,7 @@ import type { Page } from '@playwright/test';
 async function enterFlight(page: Page, challenge = '高山速降') {
  await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
  await page.goto('/');
+ await page.getByRole('combobox',{name:'画质',exact:true}).selectOption('Low');
  await page.getByRole('button',{name:challenge,exact:false}).click();
  await page.getByRole('button',{name:'重置设计',exact:true}).click();
  await page.getByRole('button',{name:'试飞',exact:true}).click();
@@ -55,10 +56,15 @@ test('T与Y切换飞行辅助，重飞复位，鸟人禁用自动配平',async({
  await expect(auto).toHaveAttribute('aria-checked','false');
 });
 
-test('满油门待开始可调，1增2减且Shift和Ctrl不再控制油门',async({page})=>{
+test('满油门待开始可调，竖直向上增加，辅助按钮按T/Y/U排列',async({page},info)=>{
  await enterFlight(page,'低空飞行');
  const throttle=page.getByRole('slider',{name:'油门',exact:true});
  await expect(throttle).toBeEnabled();await expect(throttle).toHaveValue('1');
+ await expect(page.locator('.flight-assists kbd')).toHaveText(['T','Y','U']);
+ const box=await throttle.boundingBox();expect(box!.height).toBeGreaterThan(box!.width*2);
+ await throttle.click({position:{x:box!.width/2,y:box!.height-1}});await expect(throttle).toHaveValue('0');
+ await throttle.click({position:{x:box!.width/2,y:1}});await expect(throttle).toHaveValue('1');
+ await page.screenshot({path:info.outputPath('vertical-throttle.png')});
  await throttle.fill('0.5');
  await page.keyboard.down('2');
  try{await expect.poll(async()=>Number(await throttle.inputValue())).toBeLessThan(0.4);}finally{await page.keyboard.up('2');}
@@ -74,6 +80,22 @@ test('满油门待开始可调，1增2减且Shift和Ctrl不再控制油门',asyn
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await page.getByRole('button',{name:'暂停',exact:true}).click();
  await expect(throttle).toHaveValue(selected);
+});
+
+test('低高度及测试空间的油门仍保持竖直，布局可操作',async({page})=>{
+ await enterFlight(page,'低空飞行');
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'返回主菜单',exact:true}).click();
+ await page.locator('.welcome').getByRole('button',{name:'测试空间',exact:false}).click();
+ await page.getByRole('button',{name:'试飞',exact:true}).click();
+ const throttle=page.getByRole('slider',{name:'油门',exact:true});
+ for(const size of [{width:1280,height:720},{width:900,height:500},{width:600,height:900}]){
+  await page.setViewportSize(size);
+  const box=await throttle.boundingBox();
+  expect(box!.height).toBeGreaterThan(box!.width*2);
+  await throttle.click({position:{x:box!.width/2,y:1}});await expect(throttle).toHaveValue('1');
+  await throttle.click({position:{x:box!.width/2,y:box!.height-1}});await expect(throttle).toHaveValue('0');
+ }
 });
 
 test('R仅暂停时重飞，准备和飞行中保留当前试飞',async({page})=>{

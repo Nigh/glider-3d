@@ -16,7 +16,6 @@
  import ReplayTimeline from './ReplayTimeline.svelte';
  import { seekReplay, cacheFlight, cacheRecording, cacheReplay } from './playback';
  import AirfoilSettings from './AirfoilSettings.svelte';
- import { airfoilCoverage, airfoilCatalog } from './airfoils';
  import WingEditor from './WingEditor.svelte'; import Parameter from './Parameter.svelte';
  import { GameAudio } from './audio';
  import AudioSettings from './AudioSettings.svelte';
@@ -415,8 +414,8 @@ window.addEventListener('pointermove',mouse);
 {#if aero&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
 {#each [["下沉率",hud.sink,"m/s"],["航迹滑翔比",hud.glide,""] ,["升力",hud.aerodynamics.lift.y,"N"],["推力",hud.thrust,"N"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
 <DragReadout aerodynamics={hud.aerodynamics} windTunnel={lastChallenge==='wind-tunnel'}/>
-{#each [["侧向力",hud.aerodynamics.force.z,"N"],["机身攻角",hud.aerodynamics.alpha*180/Math.PI,"°"],["主翼几何攻角",hud.alpha,"°"],["主翼有效攻角",hud.aerodynamics.wings[0].alpha*180/Math.PI,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""] ,["速度×升阻比",hud.speed*hud.liftDragRatio,"m/s"]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
-{#if lastChallenge==='wind-tunnel'}<div class="reynolds-range"><dt>{t('局部雷诺数范围')}</dt><dd data-reynolds-range>{hud.aerodynamics.reynoldsMin.toExponential(2)}–{hud.aerodynamics.reynoldsMax.toExponential(2)}</dd></div>{/if}</dl>{#if lastChallenge==='wind-tunnel'}<p>{t('风洞为无动力测试；仰角不含翼面安装角。')}</p>{/if}{#each hud.aerodynamics.wings.filter((wing:any)=>wing.kind!=='vertical') as wing}<p data-airfoil-live>{t(wing.name)} · {airfoilCatalog[wing.airfoil as keyof typeof airfoilCatalog].name} · Re {wing.reynoldsMin.toExponential(2)}–{wing.reynoldsMax.toExponential(2)}</p>{#if !airfoilCoverage(wing.airfoil,wing.reynoldsMin,wing.reynoldsMax,wing.speedMax)}<p data-polar-limit role="status">{t(wing.name)} · {t(lastDefinition.birdman?'鸟人机允许此形状；数据外结果未标定。':'当前形状无效：超出翼型模型范围，请更换翼型或改变机翼形状。')}</p>{/if}{#if wing.airfoil==='naca0012'}<p>{t('Re=6M 为实测锚点；低 Re 为 XFOIL 预测，中间为未标定工程插值。')}</p>{/if}{/each}
+{#each [["侧向力",hud.aerodynamics.force.z,"N"],["机身攻角",hud.aerodynamics.alpha*180/Math.PI,"°"],["主翼几何攻角",hud.alpha,"°"],["主翼有效攻角",hud.aerodynamics.wings[0].alpha*180/Math.PI,"°"],["侧滑角",hud.aerodynamics.beta*180/Math.PI,"°"],["俯仰角",hud.pitch,"°"],["滚转角",hud.roll,"°"],["升阻比",hud.liftDragRatio,""]] as item}<div><dt>{t(String(item[0]))}</dt><dd>{Number(item[1]).toFixed(2)} {item[2]}</dd></div>{/each}
+</dl>
 </aside>{/if}
 
 {/snippet}
@@ -502,7 +501,7 @@ window.addEventListener('pointermove',mouse);
  {:else}
  {@const position=assemblyPositions.find(position=>position.key===wingKey)!}
  {#if tab==='副翼'}<button class="toggle-switch" role="switch" aria-checked={aircraft.assembly.tailOnFin===true} onclick={()=>{change(d=>d.assembly.tailOnFin=!d.assembly.tailOnFin);commit();}}>{t("副翼安装至垂尾顶端")}</button><p class="help">{aircraft.assembly.tailOnFin?t("已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。"):t("可开启开关直接安装，或将副翼安装点拖近垂尾顶端吸附。")}</p>{/if}
- {#if wingKey!=='verticalTail'}<AirfoilSettings definition={aircraft} wingKey={wingKey} mass={stats.wingMass[wingKey]} onselect={id=>{change(d=>d[wingKey].airfoil=id);commit();}}/>{/if}
+ {#if wingKey!=='verticalTail'}<AirfoilSettings definition={aircraft} wingKey={wingKey} onselect={id=>{change(d=>d[wingKey].airfoil=id);commit();}}/>{/if}
  {#key wingKey}<WingEditor value={aircraft[wingKey]} vertical={tab==='垂直尾翼'} onchange={(w:Wing)=>change(d=>d[wingKey]=w)} onpointchange={(i,x,y)=>change(d=>editWingPoint(d,wingKey,i,x,y))} oncommit={commit}/>{/key}
  <div class="assembly-positions">
  <label><span>{t(position.label)}</span><input aria-label={t("{p0}精确值",{p0:t(position.label)})} type="number" min={position.min} max={position.max} step="0.01" value={Number(position.value.toFixed(2))} disabled={wingKey==='horizontalTail'&&aircraft.assembly.tailOnFin===true} onchange={e=>setPosition(position.key,e.currentTarget)}/><small>m</small></label>
@@ -605,7 +604,7 @@ window.addEventListener('pointermove',mouse);
  </div>
  {@render trimControls()}
  </div>
- <div class="flight-assists"><button class="toggle-switch" role="switch" aria-label={t("自动升降舵配平（T）")} aria-checked={isReplay?hud.autoTrim??false:autoTrim} disabled={lastDefinition.birdman||isReplay} onclick={toggleAutoTrim}><span>{t("自动升降舵配平")}</span><kbd>T</kbd></button><button class="toggle-switch" role="switch" aria-label={t("智能混控（U）")} aria-checked={isReplay?hud.smartMixing??false:smartMixing} disabled={isReplay} onclick={toggleSmartMixing}><span>{t("智能混控")}</span><kbd>U</kbd></button><button class="toggle-switch" role="switch" aria-label={t("自适应杆量（Y）")} aria-checked={isReplay?hud.adaptiveControls??false:adaptiveControls} disabled={isReplay} onclick={toggleAdaptiveControls}><span>{t("自适应杆量")}</span><kbd>Y</kbd></button></div>
+ <div class="flight-assists"><button class="toggle-switch" role="switch" aria-label={t("自动升降舵配平（T）")} aria-checked={isReplay?hud.autoTrim??false:autoTrim} disabled={lastDefinition.birdman||isReplay} onclick={toggleAutoTrim}><span>{t("自动升降舵配平")}</span><kbd>T</kbd></button><button class="toggle-switch" role="switch" aria-label={t("自适应杆量（Y）")} aria-checked={isReplay?hud.adaptiveControls??false:adaptiveControls} disabled={isReplay} onclick={toggleAdaptiveControls}><span>{t("自适应杆量")}</span><kbd>Y</kbd></button><button class="toggle-switch" role="switch" aria-label={t("智能混控（U）")} aria-checked={isReplay?hud.smartMixing??false:smartMixing} disabled={isReplay} onclick={toggleSmartMixing}><span>{t("智能混控")}</span><kbd>U</kbd></button></div>
  </section>
  {#if flightReady}<p class="flight-keyboard-hints">{t("W / S 俯仰 · A / D 滚转 · Q / E 偏航 · X 鼠标操纵 · C 镜头 · Space 开始/暂停")}</p>{/if}
  {/if}

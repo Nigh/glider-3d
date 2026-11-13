@@ -3,18 +3,16 @@ import { test, expect } from '@playwright/test';
 test.beforeEach(async ({page})=>{
  await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
  await page.goto('/');
+ await page.getByRole('combobox',{name:'画质',exact:true}).selectOption('Low');
 });
 
-test('翼型独立选择、范围提示、T尾安装角和鸟人风速上限通过真实控件生效', async ({page},info)=>{
+test('翼型独立选择、简洁设置、T尾安装角和鸟人风速上限通过真实控件生效', async ({page},info)=>{
  await page.locator('.welcome').getByRole('button',{name:'风洞',exact:false}).click();
  await page.getByRole('combobox',{name:'飞机类型',exact:true}).selectOption('normal');
  const selector=page.getByRole('combobox',{name:'翼型',exact:true});
- const beforeMass=await page.locator('[data-wing-mass]').textContent(),beforeDensity=await page.locator('[data-wing-density]').textContent();
  await selector.selectOption('naca0012');
- await expect(page.locator('[data-wing-mass]')).not.toHaveText(beforeMass!);await expect(page.locator('[data-wing-density]')).not.toHaveText(beforeDensity!);
+ await expect(page.locator('.airfoil-settings input,.airfoil-settings p,.airfoil-settings output')).toHaveCount(0);
  expect((await page.evaluate(()=>window.glider.aircraft)).mainWing.airfoil).toBe('naca0012');
- await page.getByRole('spinbutton',{name:'范围检查速度',exact:true}).fill('1');
- await expect(page.locator('[data-airfoil-invalid]')).toContainText('当前形状无效');
  await page.getByRole('tab',{name:'副翼',exact:true}).click();
  await expect(selector).toHaveValue('dae11'); await selector.selectOption('naca0012');
  await page.getByRole('switch',{name:'副翼安装至垂尾顶端',exact:true}).click();

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
-import { BODY_GEOMETRY, DEG, validateAircraft } from '../src/model';
+import { BODY_GEOMETRY, DEG, validateAircraft, presets, clone } from '../src/model';
 import { coefficients, FlightSimulation } from '../src/physics';
 import { DRAG_TERMS, dragResistance, ellipsoidSurfaceArea } from '../src/drag';
 
@@ -99,8 +99,27 @@ it('separates airfoil profile, separated flow and water loads without stale wet 
   expect(separated.dragTerms.wingSeparated.length()).toBeGreaterThan(100);
 });
 
-it('makes the uncalibrated high-Re boundary explicit rather than extrapolating a decreasing Cd', () => {
+it('extends high-Re profile drag continuously with a positive pressure-drag floor', () => {
   for (const alpha of [-6,0,5,12]) for (const re of [2_000_000, 5_000_000, 8_000_000]) {
-    expect(coefficients(alpha * DEG, 2, re)).toEqual(coefficients(alpha * DEG, 2, 1_000_000));
+    const anchor=coefficients(alpha*DEG,2,1_000_000), extended=coefficients(alpha*DEG,2,re);
+    expect(extended.cl).toBe(anchor.cl);expect(extended.cm).toBe(anchor.cm);
+    expect(extended.profileCd).toBeLessThan(anchor.profileCd);
+    expect(extended.profileCd).toBeGreaterThan(anchor.profileCd*.4);
+    expect(Math.abs(coefficients(alpha*DEG,2,1_000_001).cd-anchor.cd)).toBeLessThan(1e-7);
   }
+});
+
+it('evaluates finite forces for every system aircraft across the requested speed ranges', () => {
+ for(const preset of presets)for(const foil of (preset.birdman?['dae11']:['dae11','naca0012']) as ('dae11'|'naca0012')[]){
+  const d=clone(preset);d.mainWing.airfoil=d.horizontalTail.airfoil=foil;
+  const sim=new FlightSimulation(d,'test-space',0);
+  sim.launching=false;sim.position.set(100,1000,0);sim.quaternion.identity();sim.omega.set(0,0,0);
+  for(const speed of [0,.01,1,5,10,20,30,...(d.birdman?[]:[50,75,100])]){
+   const a=closed(sim,new Vector3(speed,0,0));
+   expect(a.lift.toArray().every(Number.isFinite)).toBe(true);
+   expect(a.torque.toArray().every(Number.isFinite)).toBe(true);
+   expect(dragResistance(a.drag,a.dragAxis)).toBeGreaterThanOrEqual(0);
+   if(speed===0){expect(a.lift.length()).toBe(0);expect(a.drag.length()).toBe(0);}
+  }
+ }
 });

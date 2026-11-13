@@ -13,7 +13,7 @@ export interface SavedAircraft {
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
 // 可选翼型、真实截面与T尾顶面改变受力/接触/结构质量及关键帧状态图。
-export const PHYSICS_VERSION = 'selectable-airfoils-v22';
+export const PHYSICS_VERSION = 'extended-airfoils-v23';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

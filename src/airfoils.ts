@@ -2,11 +2,14 @@ import data from './airfoil-data.json';
 
 export type AirfoilId = 'dae11' | 'naca0012';
 export const airfoilCatalog = {
- dae11: { name: 'DAE-11', reMin: 200_000, reMax: 1_000_000, machMax: 0.2 },
- naca0012: { name: 'NACA 0012', reMin: 200_000, reMax: 6_000_000, machMax: 0.2 },
+ dae11: { name: 'DAE-11' },
+ naca0012: { name: 'NACA 0012' },
 } as const;
 export const AIR_VISCOSITY = 1.46e-5;
 const limit = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+/** High-Re engineering extension: retain 40% pressure drag, scale the friction
+ * share with turbulent Re^-1/5. Lift/stall stay at the last source anchor. */
+export const highReDragScale = (reynolds: number, anchor: number) => reynolds <= anchor ? 1 : 0.4 + 0.6 * (reynolds / anchor) ** -0.2;
 const nose = data.dae11.findIndex(row => row[0] === 0);
 const upper = data.dae11.slice(0, nose + 1).reverse(), lower = data.dae11.slice(nose);
 function ordinate(rows: number[][], x: number) {
@@ -56,13 +59,9 @@ export function naca0012Section(alpha: number, reynolds: number, out: SectionSam
  const t = limit((reynolds - low.re) / (high.re - low.re), 0, 1);
  sample(low.rows, degrees, sampleLow); sample(high.rows, degrees, sampleHigh);
  out.cl = Math.sign(alpha) * (sampleLow.cl + (sampleHigh.cl - sampleLow.cl) * t);
- out.cd = sampleLow.cd + (sampleHigh.cd - sampleLow.cd) * t;
+ out.cd = (sampleLow.cd + (sampleHigh.cd - sampleLow.cd) * t) * highReDragScale(reynolds, tables[2].re);
  // Blend to the separated-flow proxy only beyond both tables' last rows.
  // Shorter tables are endpoint-held in that uncalibrated alpha interval.
  out.alphaMax = tables[2].rows.at(-1)![0];
  return out;
-}
-export function airfoilCoverage(id: AirfoilId, reMin: number, reMax: number, speed: number) {
- const spec = airfoilCatalog[id];
- return reMin >= spec.reMin && reMax <= spec.reMax && speed <= spec.machMax * 340;
 }

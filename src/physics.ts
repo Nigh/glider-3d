@@ -7,7 +7,7 @@ import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, t
 import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
 import { mixTrim } from './trim';
 import { mixControlSurfaces, type MixingSurface } from './control-mixing';
-import { airfoilY, AIR_VISCOSITY, naca0012Section, type AirfoilId } from './airfoils';
+import { airfoilY, AIR_VISCOSITY, highReDragScale, naca0012Section, type AirfoilId } from './airfoils';
 import { DRAG_TERMS, ellipsoidSurfaceArea, type DragTerm } from './drag';
 
 export const GRAVITY = 9.81;
@@ -475,7 +475,7 @@ function polar(alpha: number, aspect: number, out: Polar, groundEffect = 1, reyn
   const cd200k = a[5] + t * (b[5] - a[5]);
   const profileCd = reynolds < 500_000
     ? cd200k + clamp((reynolds - 200_000) / 300_000, 0, 1) * (cdLow - cd200k)
-    : cdLow + re * (cdHigh - cdLow);
+    : (cdLow + re * (cdHigh - cdLow)) * highReDragScale(reynolds, 1_000_000);
   sectionCl *= lowRe ** 0.065;
   const finiteWing = 1 / (1 + groundEffect * 6.45 / (Math.PI * SPAN_EFFICIENCY * Math.max(aspect, 0.1)));
   const outside = cambered && degrees < -6 ? (-degrees - 6) / 29 : (Math.abs(degrees) - 17) / 18;

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3 } from 'three';
-import { airfoilY, airfoilShapes, airfoilCoverage, AIR_VISCOSITY, naca0012Section } from '../src/airfoils';
-import { clone, defaultAircraft, presets, validateAircraft, normalizeAircraftGeometry, finPoint, wingOrigin, wingLocalPoint, wingAirfoil, DEG } from '../src/model';
+import { airfoilY, airfoilShapes, AIR_VISCOSITY, naca0012Section } from '../src/airfoils';
+import { clone, defaultAircraft, presets, planform, validateAircraft, normalizeAircraftGeometry, finPoint, wingOrigin, wingLocalPoint, wingAirfoil, DEG } from '../src/model';
 import { FlightSimulation, coefficients } from '../src/physics';
 import { defaultWindTunnel, windTunnelSettings } from '../src/laboratory';
 import { exportAircraft, importAircraft } from '../src/storage';
@@ -22,7 +22,9 @@ describe('traceable selectable airfoils', () => {
   expect(section(-10.12, 6e6).cl).toBeCloseTo(-1.0707, 12);
   expect(section(0, 6e6).cl).toBe(0); // constructed symmetry anchor
   expect(section(4, 3.5e6).cl).toBeCloseTo((section(4, 1e6).cl + section(4, 6e6).cl)/2, 12);
-  expect(section(4, 20e6)).toEqual(section(4, 6e6)); // no fictitious high-Re improvement
+  expect(section(4, 20e6).cl).toBe(section(4, 6e6).cl);
+  expect(section(4, 20e6).cd).toBeLessThan(section(4, 6e6).cd);
+  expect(section(4, 20e6).cd).toBeGreaterThan(section(4, 6e6).cd * .4);
  });
  it('keeps Re boundaries and reverse/post-stall flow finite and continuous', () => {
   for (const alpha of [-180,-90,-35,-20,0,18.8,35,90,180]) {
@@ -74,17 +76,26 @@ describe('traceable selectable airfoils', () => {
   expect(replay.position.toArray()).toEqual(sim.position.toArray());expect(replay.quaternion.toArray()).toEqual(sim.quaternion.toArray());
   expect(replay.mass).toBe(sim.mass);
  });
- it('checks both narrow/wide chords and the low-speed applicability envelope', () => {
-  expect(airfoilCoverage('naca0012',200000,6e6,60)).toBe(true);
-  expect(airfoilCoverage('dae11',200000,6e6,60)).toBe(false);
-  expect(airfoilCoverage('naca0012',199999,6e6,60)).toBe(false);
-  expect(airfoilCoverage('naca0012',200000,6e6+1,60)).toBe(false);
-  expect(airfoilCoverage('naca0012',200000,6e6,69)).toBe(false);
+ it('uses actual local Reynolds numbers even for a narrow tip below source data', () => {
   const d=normal(); d.mainWing.airfoil='naca0012'; d.mainWing.points[2].x=d.mainWing.points[1].x+.15;
   const sim=new FlightSimulation(d,'wind-tunnel',0); sim.setWindTunnel({...defaultWindTunnel,speed:20}); sim.setWindTunnelEnabled(true);
   for(let i=0;i<45;i++)sim.step(neutral);
   const wing=sim.telemetry.aerodynamics.wings[0];
   expect(wing.reynoldsMin).toBeCloseTo(20*.15/AIR_VISCOSITY,3); expect(wing.airfoil).toBe('naca0012');
+ });
+ it('covers all system wing chords from rest to Birdman 30m/s and ordinary 100m/s', () => {
+  for(const d of presets)for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
+   const w=d[key], aspect=planform(w,key!=='verticalTail').aspect;
+   for(const foil of (d.birdman?['dae11']:['dae11','naca0012']) as ('dae11'|'naca0012')[]){
+    for(let speed=0;speed<=(d.birdman?30:100);speed++)for(const chord of [w.points[3].x-w.points[0].x,w.points[2].x-w.points[1].x]){
+     for(const alpha of [-180,-35,-6,0,5,17,35,90,180]){
+      const p=coefficients(alpha*DEG,aspect,speed*chord/AIR_VISCOSITY,key!=='verticalTail',foil);
+      expect(Object.values(p).every(Number.isFinite),`${d.name}/${key}/${foil}/${speed}/${alpha}`).toBe(true);
+      expect(p.cd).toBeGreaterThanOrEqual(0);
+     }
+    }
+   }
+  }
  });
 });
 

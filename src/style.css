@@ -148,12 +148,12 @@ html:not([lang=zh]) .flight-hud small{white-space:normal}.name-row{flex-wrap:now
 .flying .flight-sidebar{bottom:422px;overflow:auto;width:300px}
 .flying .flight-sidebar .flight-tools{position:fixed;top:88px;left:auto;right:24px;width:auto;justify-content:flex-end}
 .flying .flight-sidebar .engine-hud{position:fixed;left:28px;right:auto;top:auto;bottom:45px;transform:none;width:165px;text-align:center}
-.engine-hud .throttle-track{display:block;clear:both}
-.engine-hud .throttle-track input[type=range]{appearance:none;writing-mode:horizontal-tb;direction:ltr;width:100%;height:32px;min-height:32px;margin:8px 0;background:transparent}
-.throttle-track input::-webkit-slider-runnable-track{height:8px;border-radius:4px;background:linear-gradient(to right,var(--accent) 0 var(--rpm),var(--line) var(--rpm) 100%)}
-.throttle-track input::-moz-range-track{height:8px;border-radius:4px;background:linear-gradient(to right,var(--accent) 0 var(--rpm),var(--line) var(--rpm) 100%)}
-.throttle-track input::-webkit-slider-thumb{appearance:none;width:8px;height:24px;margin-top:-8px;border:2px solid var(--panel);border-radius:2px;background:var(--ink);box-shadow:0 0 0 1px var(--ink)}
-.throttle-track input::-moz-range-thumb{width:6px;height:22px;border:2px solid var(--panel);border-radius:2px;background:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.engine-hud .throttle-track{display:flex;justify-content:center;clear:both}
+.engine-hud .throttle-track input[type=range]{appearance:none;writing-mode:vertical-lr;direction:rtl;width:32px;height:140px;min-height:90px;margin:8px 0;background:transparent;cursor:ns-resize}
+.throttle-track input::-webkit-slider-runnable-track{width:8px;height:100%;border-radius:4px;background:linear-gradient(to top,var(--accent) 0 var(--rpm),var(--line) var(--rpm) 100%)}
+.throttle-track input::-moz-range-track{width:8px;height:100%;border-radius:4px;background:linear-gradient(to top,var(--accent) 0 var(--rpm),var(--line) var(--rpm) 100%)}
+.throttle-track input::-webkit-slider-thumb{appearance:none;width:24px;height:8px;margin-left:-8px;border:2px solid var(--panel);border-radius:2px;background:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.throttle-track input::-moz-range-thumb{width:22px;height:6px;border:2px solid var(--panel);border-radius:2px;background:var(--ink);box-shadow:0 0 0 1px var(--ink)}
 .auto-trim{color:var(--potential)}
 .auto-trim .trim-track input:disabled{appearance:none;accent-color:var(--potential);opacity:1;cursor:not-allowed}
 .auto-trim input::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--potential)}
@@ -231,7 +231,7 @@ html:not([lang=zh]) .flight-hud small{white-space:normal}.name-row{flex-wrap:now
 @media(max-height:540px){.welcome{left:5%;top:76px;bottom:12px}.welcome h1{font-size:28px}.welcome p{font-size:12px;margin-bottom:10px}.welcome .mode-buttons button,.welcome .lab-mode-buttons button,.welcome>.replay-import{min-height:44px;font-size:13px;margin-right:0}}
 .platform-options summary{cursor:pointer;font-size:11px;color:var(--muted);margin-bottom:12px}.app.wind-tunnel .flight-sidebar{width:300px;bottom:16px}.app.wind-tunnel .flight-sidebar .flight-right{top:100px;right:24px;width:280px;max-height:calc(100dvh - 120px)}
 .app.wind-tunnel .flight-right .advanced-hud{position:static;width:100%;max-width:none;max-height:none;min-height:0;margin:10px 0 0;padding:12px;overflow:visible}.app.wind-tunnel .flight-right .aero-live{width:100%}
-@media(max-width:700px){.app.wind-tunnel .flight-sidebar{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:43dvh}.app.wind-tunnel .flight-sidebar .flight-right{top:105px;right:8px;width:170px;max-height:33dvh}.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-sidebar{top:auto;bottom:130px;left:8px;right:8px;width:auto;max-height:36dvh;pointer-events:auto}.laboratory-flight:not(.wind-tunnel) .flight-sidebar .engine-hud{position:static;width:100%;text-align:left}.laboratory-flight:not(.wind-tunnel) .engine-hud input[type=range]{width:100%;height:28px;writing-mode:horizontal-tb;direction:ltr}.laboratory-flight:not(.wind-tunnel).powered-flight .flight-sidebar{bottom:345px}.laboratory-flight:not(.wind-tunnel).awaiting-flight .flight-sidebar{bottom:130px}}
+@media(max-width:700px){.app.wind-tunnel .flight-sidebar{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:43dvh}.app.wind-tunnel .flight-sidebar .flight-right{top:105px;right:8px;width:170px;max-height:33dvh}.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-sidebar{top:auto;bottom:130px;left:8px;right:8px;width:auto;max-height:36dvh;pointer-events:auto}.laboratory-flight:not(.wind-tunnel) .flight-sidebar .engine-hud{position:static;width:100%;text-align:left}.laboratory-flight:not(.wind-tunnel) .engine-hud input[type=range]{width:32px;height:90px}.laboratory-flight:not(.wind-tunnel).powered-flight .flight-sidebar{bottom:345px}.laboratory-flight:not(.wind-tunnel).awaiting-flight .flight-sidebar{bottom:130px}}
 @media(max-height:500px) and (min-width:701px){.app.wind-tunnel .flight-sidebar{top:72px;left:10px;bottom:8px;width:245px}.app.wind-tunnel .flight-sidebar .flight-right{top:72px;right:10px;width:200px;max-height:calc(100dvh - 80px)}.laboratory-flight.awaiting-flight:not(.wind-tunnel) .flight-sidebar{top:72px;bottom:16px;width:260px}.laboratory-flight.awaiting-flight:not(.wind-tunnel) .launch-action{left:auto;right:24px;transform:none;width:280px}}
 
 .laboratory-flight.awaiting-flight .stick-panel{display:block}
@@ -249,4 +249,4 @@ html:not([lang=zh]) .flight-hud small{white-space:normal}.name-row{flex-wrap:now
 .wind-load-row{display:grid;grid-template-columns:24px minmax(44px,1fr) minmax(90px,max-content);align-items:center;gap:6px;min-height:28px;font-size:13px}
 .wind-load-row>span{font-weight:600}.wind-load-row sub{font-size:10px}.wind-load-row svg{width:100%;height:24px;overflow:visible}.wind-load-row output{text-align:right;white-space:nowrap}.wind-load-row output small{font-size:10px;color:var(--muted)}
 .wind-load-axis{fill:none;stroke:var(--muted);stroke-width:.8;opacity:.65}.wind-load-row svg text{font-size:9px;fill:var(--muted);text-anchor:middle}.wind-load-vector{fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.wind-load-zero{fill:var(--ink)}
-.aero-live dt{min-width:0;overflow-wrap:anywhere}.aero-live dd{flex-shrink:0;white-space:nowrap}.aero-live .reynolds-range{flex-direction:column;gap:2px}
+.aero-live dt{min-width:0;overflow-wrap:anywhere}.aero-live dd{flex-shrink:0;white-space:nowrap}

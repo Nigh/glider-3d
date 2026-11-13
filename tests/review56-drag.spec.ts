@@ -12,7 +12,7 @@ async function load(page: Page) {
  await expect.poll(() => page.evaluate(() => window.glider.aircraft.name)).toBe('基础双发型Test');
 }
 
-test('review测试机风洞按真实模型列出阻力，区分迎角并显示超出极曲线的Re，三语完整可读', async ({ page }, info) => {
+test('review测试机风洞按真实模型列出阻力，区分迎角且面板止于升阻比，三语完整可读', async ({ page }, info) => {
  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
  await load(page); await page.keyboard.press('w');
  await page.getByRole('spinbutton', { name: '气流速度数值', exact: true }).fill('31');
@@ -30,14 +30,12 @@ test('review测试机风洞按真实模型列出阻力，区分迎角并显示�
  for (const [key, value] of Object.entries(sample.terms)) await expect(page.locator(`[data-drag-term="${key}"] dd`)).toHaveText((value as number).toFixed(2) + ' N');
  const values = await rows.locator('dd').allTextContents();
  expect(values.slice(1).reduce((sum, value) => sum + parseFloat(value), 0)).toBeCloseTo(parseFloat(values[0]), 1);
- await expect(page.locator('[data-polar-limit]')).toHaveCount(2);
- for(const warning of await page.locator('[data-polar-limit]').all())await expect(warning).toContainText('当前形状无效');
- await expect(page.locator('[data-airfoil-live]')).toHaveCount(2);
- for(const readout of await page.locator('[data-airfoil-live]').all())await expect(readout).toContainText('DAE-11');
+ await expect(page.locator('[data-polar-limit],[data-airfoil-live],[data-reynolds-range]')).toHaveCount(0);
+ await expect(page.locator('.aero-live dt').last()).toHaveText('升阻比');
+ await expect(page.locator('.aero-live p')).toHaveCount(0);
  const body = page.locator('.aero-live div').filter({ has: page.getByText('机身攻角', { exact: true }) });
  const geometric = page.locator('.aero-live div').filter({ has: page.getByText('主翼几何攻角', { exact: true }) });
  await expect(body.locator('dd')).toHaveText('1.30 °'); await expect(geometric.locator('dd')).toHaveText('5.30 °');
- await expect(page.locator('.aero-live')).toContainText('无动力测试');
  await page.getByRole('dialog', { name: '输入设置', exact: true }).getByRole('button', { name: '保存', exact: true }).first().click();
  for (const [locale, label] of [['zh','座舱与罩体表面摩擦'],['en','Cockpit / canopy skin friction'],['ja','コックピット・風防の表面摩擦']]) {
   await page.locator('.language-label select').selectOption(locale);
