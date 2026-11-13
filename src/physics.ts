@@ -8,7 +8,8 @@ import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWin
 import { mixTrim } from './trim';
 import { mixControlSurfaces, type MixingSurface } from './control-mixing';
 import { airfoilY, AIR_VISCOSITY, highReDragScale, naca0012Section, type AirfoilId } from './airfoils';
-import { DRAG_TERMS, ellipsoidSurfaceArea, type DragTerm } from './drag';
+import { DRAG_TERMS, type DragTerm } from './drag';
+import { AirframeExposure } from './exposure';
 
 export const GRAVITY = 9.81;
 /** Production clock; diagnostic step(dt) calls share this overload interval. */
@@ -182,6 +183,8 @@ export interface AerodynamicSurface extends MixingSurface {
   /** World axes after force evaluation; body axes during strip calculation. */
   moment: Vector3;
   area: number;
+  /** Fraction of the two section faces outside the cockpit and fuselage. */
+  exposedFraction: number;
   aspect: number;
   span: number;
   chord: number; chordMin: number; chordMax: number;
@@ -537,7 +540,7 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
         surfaces.push({ bodyId: 0, name: `${vertical ? '垂直尾翼' : `${key === 'mainWing' ? '主翼' : '副翼'}${side < 0 ? '左' : '右'}`} ${start.toFixed(1)}–${end.toFixed(1)} m`,
           point, airfoil: vertical ? 'dae11' : wingAirfoil(d, key as 'mainWing' | 'horizontalTail'),
           normal: vertical ? new Vector3(0, 0, 1) : wingLocalPoint(w, incidence, side, 0, 1, 0, new Vector3()),
-          area: width * (root + tip) / 2, aspect: p.aspect, span: p.span,
+          area: width * (root + tip) / 2, exposedFraction: 1, aspect: p.aspect, span: p.span,
           chordMin: Math.min(root, tip), chordMax: Math.max(root, tip),
           chord: 2 / 3 * (root * root + root * tip + tip * tip) / (root + tip), spanStart: start, spanEnd: end,
           spanDirection: vertical ? new Vector3(0, direction, 0) : wingLocalPoint(w, incidence, side, 0, 0, 1, new Vector3()),
@@ -561,7 +564,7 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
 /** 与飞行积分共用单翼计算；力、阻力输出先保留在机体坐标中。 */
 function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   velocity: Vector3, coefficient: Polar, liftDirection: Vector3, alphaOffset = 0) {
-  const speed = velocity.length();
+  const speed = velocity.length(), area = surface.area * surface.exposedFraction;
   const normalSpeed = velocity.dot(surface.normal) - surface.inducedFlow.dot(surface.normal);
   const incidence = deflection * surface.controlEffectiveness;
   // 后掠法向条带近似；弹性法向/作用点由结构模型更新，非真实非定常升力线或颤振求解。
@@ -578,8 +581,8 @@ function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   const inducedCd = Math.max(0, coefficient.inducedCd + crossInduced);
   coefficient.cd += inducedCd - coefficient.inducedCd;
   coefficient.inducedCd = inducedCd;
-  const lift = 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * coefficient.cl;
-  surface.inducedDrag = 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * coefficient.inducedCd;
+  const lift = 0.5 * AIR_DENSITY * pressureSpeedSq * area * coefficient.cl;
+  surface.inducedDrag = 0.5 * AIR_DENSITY * pressureSpeedSq * area * coefficient.inducedCd;
   // v × (n × c) 在纯法向来流仍有有限连续方向；投影 n 再归一化会在90°附近产生跳变。
   // 按全来流速度缩放，纯展向来流连续归零；叉积保证升力始终与局部来流正交。
   liftDirection.crossVectors(surface.normal, surface.chordDirection);
@@ -590,12 +593,12 @@ function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   // attached and reverse-flow Cd at virtually identical velocity.
   const spanwiseCd = 0.012 / clamp(speed * surface.chord / AIR_VISCOSITY / 500_000, 0.05, 1) ** 0.75;
   const dragPressure = coefficient.cd * pressureSpeedSq + spanwiseCd * Math.max(0, speed * speed - pressureSpeedSq);
-  const scale = 0.5 * AIR_DENSITY * surface.area;
+  const scale = 0.5 * AIR_DENSITY * area;
   surface.profileDrag = scale * coefficient.profileCd * pressureSpeedSq;
   surface.separatedDrag = scale * coefficient.separatedCd * pressureSpeedSq;
   surface.spanwiseDrag = scale * spanwiseCd * Math.max(0, speed * speed - pressureSpeedSq);
   surface.waterDrag = 0;
-  surface.drag.copy(velocity).multiplyScalar(speed > 1e-9 ? -0.5 * AIR_DENSITY * surface.area * dragPressure / speed : 0);
+  surface.drag.copy(velocity).multiplyScalar(speed > 1e-9 ? -0.5 * AIR_DENSITY * area * dragPressure / speed : 0);
   surface.force.copy(liftDirection).multiplyScalar(lift).add(surface.drag);
   applySectionMoment(surface, coefficient.cm, pressureSpeedSq);
   const liftSq = liftDirection.lengthSq();
@@ -624,7 +627,7 @@ function applySectionMoment(surface: AerodynamicSurface, cm: number, pressureSpe
   surface.moment.addScaledVector(momentAxis.crossVectors(surface.chordDirection, momentAftForce), 3 * chord / 4);
   momentAxis.crossVectors(surface.chordDirection, surface.normal);
   const unit = surface.moment.dot(momentAxis);
-  const strength = Math.abs(unit) > 1e-8 * chord ? 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * chord * cm * retained ** 2 / unit : 0;
+  const strength = Math.abs(unit) > 1e-8 * chord ? 0.5 * AIR_DENSITY * pressureSpeedSq * surface.area * surface.exposedFraction * chord * cm * retained ** 2 / unit : 0;
   surface.moment.multiplyScalar(strength);
   surface.force.addScaledVector(momentForeForce, strength).addScaledVector(momentAftForce, -strength);
 }
@@ -676,7 +679,7 @@ function linearizeSurface(surface: AerodynamicSurface, center: number, cg: Vecto
   const rawChord = surface.localFlow.dot(surface.chordDirection) * cosine + surface.localFlow.dot(surface.crossflowDirection) * sine;
   const pressureSpeedSq = rawChord ** 2 + surface.localFlow.dot(surface.normal) ** 2;
   const lossDerivative = coefficient.inducedCd > 0 && speed > 1e-9
-    ? -0.5 * AIR_DENSITY * surface.area * pressureSpeedSq * coefficient.cl * surface.airFraction / speed : 0;
+    ? -0.5 * AIR_DENSITY * surface.area * surface.exposedFraction * pressureSpeedSq * coefficient.cl * surface.airFraction / speed : 0;
   controlMomentArm.subVectors(surface.point, cg).cross(surface.localFlow).multiplyScalar(lossDerivative);
   for (let axis = 0; axis < 3; axis++) data[offset + 7 + axis] = controlMomentArm.getComponent(axis);
 }
@@ -817,7 +820,9 @@ function coupledControlMoments(surfaces: AerodynamicSurface[]) {
   }
 }
 
-/** 汇总复用已有翼面，不为每个时间步分配向量或数组。 */
+const frameExposures = new WeakMap<AerodynamicSurface[], AirframeExposure>();
+
+/** 汇总复用已有翼面与派生的外露面积缓存。 */
 class AerodynamicSummary implements AerodynamicReference {
   speed = 0; alpha = 0; beta = 0;
   readonly force = new Vector3();
@@ -841,7 +846,7 @@ class AerodynamicSummary implements AerodynamicReference {
   liftCenter: Vector3 | null = null;
   dragCenter: Vector3 | null = null;
   readonly wings: WingAerodynamics[];
-  readonly bodies: { point: Vector3; projection: Vector3; skinArea: number }[];
+  readonly bodies: { point: Vector3; index: number }[];
   readonly engines: { point: Vector3; area: number; nacelleArea: number; supportArea: number }[];
   readonly bodyTorque = new Vector3();
   bodyPower = 0;
@@ -855,16 +860,13 @@ class AerodynamicSummary implements AerodynamicReference {
   private readonly localDrag = new Vector3();
   private readonly moment = new Vector3();
 
-  constructor(readonly surfaces: AerodynamicSurface[], d: AircraftDefinition) {
+  constructor(readonly surfaces: AerodynamicSurface[], private readonly definition: AircraftDefinition) {
+    const d = definition;
     this.engines = engineMounts(d).map(mount => ({ point: new Vector3(mount.x, mount.y, mount.z), area: engineDragArea(d, mount),
       nacelleArea: Math.PI * engineCatalog[d.engine.type].radius ** 2 * 0.22, supportArea: mount.supportLength * mount.supportWidth * 0.02 }));
-    this.bodies = (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).map((shape, index) => {
-      // 椭球投影面积 + 湿表面摩擦代理；罩体只取露出壳体的上半部，不重复计算下半部。
-      const exposed = index === 0 ? 1 : 0.5, pressure = 0.18 * Math.PI * exposed;
-      return { point: new Vector3(d.cockpit.position + shape.x, shape.y, 0),
-        projection: new Vector3(shape.yRadius * shape.zRadius, shape.xRadius * shape.zRadius, shape.xRadius * shape.yRadius).multiplyScalar(pressure),
-        skinArea: 0.004 * ellipsoidSurfaceArea(shape) * exposed };
-    });
+    frameExposures.set(surfaces, new AirframeExposure(d, surfaces));
+    this.bodies = (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).map((shape, index) =>
+      ({ point: new Vector3(d.cockpit.position + shape.x, shape.y, 0), index }));
     this.wings = (['main', 'tail', 'vertical'] as const).map((kind, index) => {
       const panels = surfaces.filter(surface => surface.kind === kind);
       return { kind, name: ['主翼', '副翼', '垂直尾翼'][index], airfoil: panels[0].airfoil, reynoldsMin: 0, reynoldsMax: 0, speedMax: 0,
@@ -873,8 +875,16 @@ class AerodynamicSummary implements AerodynamicReference {
         force: new Vector3(), lift: new Vector3(), drag: new Vector3(), torque: new Vector3() };
     });
   }
+  private exposure() {
+    let model = frameExposures.get(this.surfaces);
+    if (!model) { model = new AirframeExposure(this.definition, this.surfaces); frameExposures.set(this.surfaces, model); }
+    return model;
+  }
+  updateExposure() { this.exposure().update(); }
   updateBody(cg: Vector3, velocity: Vector3, omega?: Vector3) {
-    this.bodyDrag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * BODY_DRAG_AREA);
+    const exposure = this.exposure();
+    exposure.update();
+    this.bodyDrag.copy(velocity).multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * BODY_DRAG_AREA * exposure.fuselageFraction(velocity));
     this.bodyTorque.set(0, 0, 0);
     this.bodyPower = this.bodyDrag.dot(velocity);
     this.bodyPressureDrag.set(0, 0, 0); this.bodySkinDrag.set(0, 0, 0);
@@ -882,8 +892,8 @@ class AerodynamicSummary implements AerodynamicReference {
       this.arm.copy(body.point).sub(cg);
       if (omega) this.localVelocity.crossVectors(omega, this.arm).add(velocity);
       else this.localVelocity.copy(velocity);
-      const v = this.localVelocity, p = body.projection;
-      const pressureSpeed = Math.hypot(p.x * v.x, p.y * v.y, p.z * v.z), skinSpeed = body.skinArea * v.length();
+      const v = this.localVelocity;
+      const pressureSpeed = 0.18 * exposure.pressureSpeed(body.index, v), skinSpeed = 0.004 * exposure.skinArea(body.index) * v.length();
       this.bodyPressureDrag.addScaledVector(v, -0.5 * AIR_DENSITY * pressureSpeed);
       this.bodySkinDrag.addScaledVector(v, -0.5 * AIR_DENSITY * skinSpeed);
       const areaSpeed = pressureSpeed + skinSpeed;
@@ -2143,6 +2153,7 @@ export class FlightSimulation {
   }
 
   private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3, controls?: Controls, surfaceScale = 1, linearize = false) {
+    this.aerodynamics.updateExposure();
     if (controls) mixControlSurfaces(this.surfaces, controls, this.effective.smartMixing === true);
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
@@ -2707,6 +2718,7 @@ export class FlightSimulation {
     for (const section of this.structure.sectionsForBody(fragment.id)) {
       const surface = section.surface as AerodynamicSurface;
       surface.airFraction = 1; // Fragments retain their existing stop-on-water rule.
+      surface.exposedFraction = 1;
       this.arm.copy(surface.point).sub(fragment.cg);
       this.cross.copy(this.arm).applyQuaternion(orientation).add(position);
       surface.clearance = this.seaLevelReference ? Infinity : this.cross.y - challengeCollisionHeight(this.challenge, this.cross.x, this.cross.z);

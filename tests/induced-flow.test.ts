@@ -31,6 +31,8 @@ function tailAlpha(s: FlightSimulation) {
 describe('载荷与几何尾迹', () => {
   it('后置翼感受更强下洗，抬高前翼或减小其载荷会改变尾翼有效迎角', () => {
     const base = definition(), ahead = clone(base), raised = clone(base), loaded = clone(base);
+    // 隔离尾迹高度效应：比较的主翼均在座舱之上，避免同时改变翼根遮蔽。
+    base.assembly.mainWingHeight = ahead.assembly.mainWingHeight = loaded.assembly.mainWingHeight = 0.8;
     ahead.assembly.horizontalTail = 1.5;
     raised.assembly.mainWingHeight = 1;
     loaded.assembly.mainIncidence = 8;

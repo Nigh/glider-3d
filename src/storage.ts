@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 可选翼型、真实截面与T尾顶面改变受力/接触/结构质量及关键帧状态图。
-export const PHYSICS_VERSION = 'extended-airfoils-v23';
+// 外露表面裁剪改变气动力与回放轨迹，旧物理版本成绩/回放不再混用。
+export const PHYSICS_VERSION = 'exposed-airframe-v24';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

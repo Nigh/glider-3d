@@ -2,21 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
-import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight } from '../src/physics';
-import { ellipsoidSurfaceArea } from '../src/drag';
+import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, type AerodynamicSurface } from '../src/physics';
+import { AirframeExposure } from '../src/exposure';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
 function definition(change?: (d: AircraftDefinition) => void) { const d = clone(defaultAircraft); change?.(d); return d; }
-function cockpitDrag(d: AircraftDefinition, cg: Vector3, velocity: Vector3, omega = new Vector3()) {
-  const force = velocity.clone().multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * 0.07), torque = new Vector3();
+function cockpitDrag(d: AircraftDefinition, surfaces: AerodynamicSurface[], cg: Vector3, velocity: Vector3, omega = new Vector3()) {
+  const exposure = new AirframeExposure(d, surfaces);
+  const force = velocity.clone().multiplyScalar(-0.5 * AIR_DENSITY * velocity.length() * 0.07 * exposure.fuselageFraction(velocity)), torque = new Vector3();
   for (const [index, shape] of (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).entries()) {
     const arm = new Vector3(d.cockpit.position + shape.x, shape.y, 0).sub(cg);
-    const v = new Vector3().crossVectors(omega, arm).add(velocity), speed = v.length(), exposed = index === 0 ? 1 : 0.5;
-    const projected = speed > 0 ? Math.PI * shape.xRadius * shape.yRadius * shape.zRadius
-      * Math.hypot(v.x / shape.xRadius, v.y / shape.yRadius, v.z / shape.zRadius) / speed : 0;
-    const area = exposed * (0.18 * projected + 0.004 * ellipsoidSurfaceArea(shape));
-    const drag = v.multiplyScalar(-0.5 * AIR_DENSITY * speed * area);
+    const v = new Vector3().crossVectors(omega, arm).add(velocity);
+    const areaSpeed = 0.18 * exposure.pressureSpeed(index, v) + 0.004 * exposure.skinArea(index) * v.length();
+    const drag = v.multiplyScalar(-0.5 * AIR_DENSITY * areaSpeed);
     force.add(drag); torque.add(new Vector3().crossVectors(arm, drag));
   }
   return { force, torque };
@@ -150,7 +149,7 @@ describe('展向条带与完整翼面', () => {
       s.velocity.set(12 * Math.cos(a.alpha) * Math.cos(a.beta), -12 * Math.sin(a.alpha) * Math.cos(a.beta), 12 * Math.sin(a.beta));
     });
     const velocity = new Vector3(12 * Math.cos(a.alpha) * Math.cos(a.beta), -12 * Math.sin(a.alpha) * Math.cos(a.beta), 12 * Math.sin(a.beta));
-    const body = cockpitDrag(defaultAircraft, p.cg, velocity), sum = a.bodyDrag.clone(), torque = body.torque.clone();
+    const body = cockpitDrag(defaultAircraft, Reflect.get(a, 'surfaces'), p.cg, velocity), sum = a.bodyDrag.clone(), torque = body.torque.clone();
     expect(a.bodyDrag.distanceTo(body.force)).toBeLessThan(1e-10);
     for (let i = 0; i < a.wings.length; i++) {
       expect(s.telemetry.aerodynamics.wings[i].force.distanceTo(a.wings[i].force)).toBeLessThan(0.02);
@@ -577,7 +576,7 @@ describe('驾驶舱与尾翼几何的物理消费者', () => {
     const d = definition(d => { d.birdman = false; });
     const s = new FlightSimulation(d, 'test-space', 0), velocity = new Vector3(), omega = new Vector3(0, 0, 0.7);
     s.position.set(40, 280, 0); evaluate(s, velocity, omega);
-    const body = cockpitDrag(s.definition, s.cg, velocity, omega), force = new Vector3(), torque = new Vector3();
+    const body = cockpitDrag(s.definition, s.surfaces, s.cg, velocity, omega), force = new Vector3(), torque = new Vector3();
     let power = 0;
     for (const surface of s.surfaces) {
       const arm = surface.point.clone().sub(s.cg);
