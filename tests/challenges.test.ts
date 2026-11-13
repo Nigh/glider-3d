@@ -451,23 +451,30 @@ describe('低空地形、滑跑与计分', () => {
       d.fuelTank = { x: 0.35, capacity: 4 };
       for (const target of [LOW_ALTITUDE_RAIL.retentionAcceleration / 2, LOW_ALTITUDE_RAIL.retentionAcceleration * 1.5]) {
         d.cockpit.position = 0;
-        let low = 0, high = 50;
-        for (let iteration = 0; iteration < 18; iteration++) {
-          const speed = (low + high) / 2;
-          const sample = new FlightSimulation(d, 'low-altitude', 0);
-          sample.velocity.x = speed; sample.step(neutral, 1e-6);
-          if (sample.telemetry.force.y / sample.mass - GRAVITY < target) low = speed; else high = speed;
-          if (iteration % 8 === 0) await yieldTurn(0);
-        }
-        // 在本次门槛对应的空速配平，避免雷诺数变化留下俯仰力矩。
-        const speed = (low + high) / 2;
-        let aft = -1, forward = 2;
-        for (let iteration = 0; iteration < 18; iteration++) {
-          d.cockpit.position = (aft + forward) / 2;
-          const trim = new FlightSimulation(d, 'low-altitude', 0);
-          trim.velocity.x = speed; trim.step(neutral, 1e-6);
-          if (trim.telemetry.torque.z > 0) aft = d.cockpit.position; else forward = d.cockpit.position;
-          if (iteration % 8 === 0) await yieldTurn(0);
+        let speed = 0;
+        // 移动座舱会改变翼根外露面积，空速与重心须联合收敛。
+        for (let pass = 0; pass < 4; pass++) {
+          let low = 0, high = 50;
+          for (let iteration = 0; iteration < 18; iteration++) {
+            speed = (low + high) / 2;
+            const sample = new FlightSimulation(d, 'low-altitude', 0);
+            sample.velocity.x = speed; sample.step(neutral, 1e-6);
+            if (sample.telemetry.force.y / sample.mass - GRAVITY < target) low = speed; else high = speed;
+            if (iteration % 8 === 0) await yieldTurn(0);
+          }
+          speed = (low + high) / 2;
+          let aft = -1, forward = 2;
+          for (let iteration = 0; iteration < 18; iteration++) {
+            d.cockpit.position = (aft + forward) / 2;
+            const trim = new FlightSimulation(d, 'low-altitude', 0);
+            trim.velocity.x = speed; trim.step(neutral, 1e-6);
+            if (trim.telemetry.torque.z > 0) aft = d.cockpit.position; else forward = d.cockpit.position;
+            if (iteration % 8 === 0) await yieldTurn(0);
+          }
+          const converged = new FlightSimulation(d, 'low-altitude', 0);
+          converged.velocity.x = speed; converged.step(neutral, 1e-6);
+          if (Math.abs(converged.telemetry.force.y / converged.mass - GRAVITY - target) < 0.0002
+            && Math.abs(converged.telemetry.torque.z) < 0.05) break;
         }
         const sample = new FlightSimulation(d, 'low-altitude', 0);
         sample.velocity.x = speed; sample.step(neutral, 1e-6);
@@ -477,7 +484,7 @@ describe('低空地形、滑跑与计分', () => {
         if (sample.launching) expect(sample.velocity.y).toBe(0); else expect(sample.velocity.y).toBeGreaterThan(0);
       }
     }
-  }, 30_000);
+  }, 90_000);
 
   it('净升力足够但低头力矩会压低机头时保持附轨，不在滑跑中掉向跑道', () => {
     const s = new FlightSimulation(validateAircraft(jetCruise50m), 'low-altitude', 0);
@@ -789,7 +796,8 @@ describe('低展弦比三角翼高速受力与动力质量', () => {
     expect(s.telemetry.thrust).toBeGreaterThan(0);
     const totalMass = s.telemetry.mass + s.fragments.reduce((sum, fragment) => sum + fragment.mass, 0);
     expect(totalMass).toBeCloseTo(properties.mass - (d.fuelTank.capacity - s.telemetry.fuelRemaining) * 0.8, 8);
-    expect(s.telemetry.drag.length()).toBeGreaterThan(s.telemetry.aerodynamics.drag.length());
+    // The complete live summary now includes engine/support envelope drag.
+    expect(s.telemetry.drag.length()).toBeCloseTo(s.telemetry.aerodynamics.drag.length(), 8);
   });
 });
 

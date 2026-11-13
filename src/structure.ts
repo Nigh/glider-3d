@@ -1,12 +1,13 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, planform, wingLocalPoint, wingOrigin, type AircraftDefinition, type WingKey } from './model';
+import { AIRFRAME_MASS, finPoint, wingAirfoil, planform, wingLocalPoint, wingOrigin, type AircraftDefinition, type WingKey } from './model';
+import { airfoilDepthScale, airfoilSkinScale } from './airfoils';
 import { beamSection, materialCatalog } from './materials';
 
 /** Small-rotation model limit, not a material failure angle. */
 export const MAX_ELASTIC_ROTATION = 0.25;
 
 export interface StructuralSurface {
-  point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3;
+  point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3; moment: Vector3;
   chordDirection: Vector3; crossflowDirection: Vector3;
   kind: 'main' | 'tail' | 'vertical'; side: number; spanStart: number; spanEnd: number;
   area: number; chord: number; incidence: number; bodyId: number;
@@ -19,6 +20,7 @@ export interface StructureSection {
   /** 实际安装局部舵角rad，已包含场景侧别方向；断片冻结。 */
   controlDeflection: number;
   root: StructureNode; tip: StructureNode; referenceRoot: Vector3; referenceTip: Vector3;
+  crownIncidence: number; skinMass: number; sparLinearMass: number; sectionHeight: number;
   mass: number; center: Vector3; inertia: Matrix3; stress: number; stressRatio: number; yieldRatio: number;
   /** Consecutive overload, with one peak contribution per accepted 60 Hz tick. */
   fractureDamage: number; fractureDamageBase: number; fractureDamagePeak: number; fractureDamageTick: number;
@@ -48,7 +50,7 @@ export interface WingFragment extends StructuralBody {
 
 export function summarizeWingStructure(sections: readonly Pick<StructureSection, 'wingKey' | 'stressRatio' | 'yieldRatio' | 'bodyId'>[], wings = [
   { key: 'mainWing', name: '主翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
-  { key: 'horizontalTail', name: '水平尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+  { key: 'horizontalTail', name: '副翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
   { key: 'verticalTail', name: '垂直尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
 ]) {
  for (const wing of wings) wing.stress = wing.yieldRatio = wing.attached = wing.detached = 0;
@@ -109,12 +111,12 @@ export class WingStructure {
     this.sections = surfaces.map((surface, id) => {
       const wingKey: WingKey = surface.kind === 'main' ? 'mainWing' : surface.kind === 'tail' ? 'horizontalTail' : 'verticalTail';
       const wing = definition[wingKey], vertical = wingKey === 'verticalTail', p = planform(wing, !vertical);
-      const material = materialCatalog[wing.materialId], section = beamSection(wing.structure, wing.materialAmount);
+      const material = materialCatalog[wing.materialId], section = beamSection(wing.structure, wing.materialAmount, vertical ? 1 : airfoilDepthScale(wingAirfoil(definition, wingKey)));
       const origin = wingOrigin(definition, wingKey), incidence = surface.incidence;
       const reference = (span: number) => {
         const fraction = span / Math.abs(wing.points[1].y);
         const quarter = wing.points[0].x + (wing.points[1].x - wing.points[0].x) * fraction + (p.root + (p.tip - p.root) * fraction) / 4;
-        if (vertical) return new Vector3(origin.x - quarter, origin.y + Math.sign(wing.points[1].y) * span, 0);
+        if (vertical) return finPoint(definition, span, 0.25, 0, new Vector3());
         const point = wingLocalPoint(wing, incidence, surface.side, -quarter, 0, span, new Vector3());
         point.x += origin.x; point.y += origin.y;
         return point;
@@ -125,7 +127,7 @@ export class WingStructure {
       chordAxis.addScaledVector(beamAxis, -chordAxis.dot(beamAxis)).normalize();
       const normalAxis = new Vector3().crossVectors(beamAxis, chordAxis).normalize();
       const length = referenceRoot.distanceTo(referenceTip);
-      const skinMass = surface.area * (wingKey === 'mainWing' ? AIRFRAME_MASS.mainArea : AIRFRAME_MASS.tailArea);
+      const skinMass = surface.area * (wingKey === 'mainWing' ? AIRFRAME_MASS.mainArea : AIRFRAME_MASS.tailArea) * (vertical ? 1 : airfoilSkinScale(wingAirfoil(definition, wingKey)));
       const sparMass = material.density * section.area * length, mass = skinMass + sparMass;
       const center = surface.point.clone().addScaledVector(chordAxis, -surface.chord / 4);
       // 均匀条带质量代理；梁/蒙皮质量真实分段，惯量固定在参考几何，见 update 的准静态说明。
@@ -138,11 +140,11 @@ export class WingStructure {
       setInertia(inertia, trace - c[0], trace - c[4], trace - c[8], -c[3], -c[6], -c[7]);
       const innerWidth = section.width - section.wallThickness;
       const innerHeight = section.height - section.wallThickness;
-      // 等效闭口梁截面独立于翼型外壳；恒高梁不保证能装进所有薄翼尖，非可制造性校验。
+      // 翼型厚度缩放等效梁深度，蒙皮按外形周长缩放；仍非可制造性校验。
       return { id, wingKey, side: surface.side, spanStart: surface.spanStart, spanEnd: surface.spanEnd, bodyId: 0, parentId: null, depth: 0,
         root: { span: surface.spanStart, position: referenceRoot.clone(), quaternion: new Quaternion() },
         tip: { span: surface.spanEnd, position: referenceTip.clone(), quaternion: new Quaternion() },
-        referenceRoot, referenceTip, mass, center, inertia, stress: 0, stressRatio: 0, yieldRatio: 0,
+        referenceRoot, referenceTip, crownIncidence: definition.assembly.tailIncidence, skinMass, sparLinearMass: material.density * section.area, sectionHeight: section.height, mass, center, inertia, stress: 0, stressRatio: 0, yieldRatio: 0,
         fractureDamage: 0, fractureDamageBase: 0, fractureDamagePeak: 0, fractureDamageTick: 0,
         moment: new Vector3(), load: new Vector3(), surface, controlDeflection: 0,
         baseRoot: referenceRoot.clone(), baseTip: referenceTip.clone(), baseRootRotation: new Quaternion(), baseTipRotation: new Quaternion(),
@@ -175,6 +177,36 @@ export class WingStructure {
     this.geometryScale = new Float64Array(this.sections.length);
     this.frozenBudget = new Float64Array(this.sections.length);
     this.elasticBudget = new Float64Array(this.sections.length);
+  }
+
+  syncFinGeometry() {
+    const d = this.definition, scratch = this.arm;
+    for (const s of this.sections) {
+      if (s.wingKey !== 'verticalTail' || s.bodyId !== 0) continue;
+      finPoint(d, s.spanStart, 0.25, 0, scratch);
+      this.displacement.copy(scratch).sub(s.referenceRoot);
+      s.referenceRoot.copy(scratch); s.baseRoot.add(this.displacement); s.root.position.add(this.displacement);
+      finPoint(d, s.spanEnd, 0.25, 0, scratch);
+      this.displacement.copy(scratch).sub(s.referenceTip);
+      s.referenceTip.copy(scratch); s.baseTip.add(this.displacement); s.tip.position.add(this.displacement);
+      const w = d.verticalTail, p = planform(w, false), half = Math.abs(w.points[1].y);
+      const a = p.root + (p.tip - p.root) * s.spanStart / half, b = p.root + (p.tip - p.root) * s.spanEnd / half;
+      const span = s.spanStart + (s.spanEnd - s.spanStart) * (a + 2 * b) / (3 * (a + b));
+      finPoint(d, span, 0.25, 0, s.referencePoint);
+      s.beamAxis.subVectors(s.referenceTip, s.referenceRoot).normalize();
+      s.chordAxis.copy(s.referenceChord).addScaledVector(s.beamAxis, -s.referenceChord.dot(s.beamAxis)).normalize();
+      s.normalAxis.crossVectors(s.beamAxis, s.chordAxis).normalize();
+      const length = s.referenceRoot.distanceTo(s.referenceTip);
+      s.mass = s.skinMass + s.sparLinearMass * length;
+      s.center.copy(s.referencePoint).addScaledVector(s.chordAxis, -s.surface.chord / 4);
+      s.inertia.set(0, 0, 0, 0, 0, 0, 0, 0, 0);
+      const axes = [s.chordAxis, s.normalAxis, s.beamAxis];
+      const variances = [s.surface.chord ** 2 / 12, s.sectionHeight ** 2 / 12, length ** 2 / 12];
+      for (let k = 0; k < 3; k++) for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+        s.inertia.elements[col * 3 + row] += s.mass * variances[k] * ((row === col ? 1 : 0) - axes[k].getComponent(row) * axes[k].getComponent(col));
+      }
+      s.crownIncidence = d.assembly.tailIncidence;
+    }
   }
 
   sectionsForBody(id: number): readonly StructureSection[] { return this.owned[id] ?? []; }
@@ -229,6 +261,7 @@ export class WingStructure {
       load.moment.sub(this.force.add(this.moment.crossVectors(body.omega, this.cross)));
       this.force.copy(s.surface.force).applyQuaternion(this.inverse);
       load.force.add(this.force); load.moment.add(this.moment.crossVectors(s.surface.point, this.force));
+      load.moment.add(this.moment.copy(s.surface.moment).applyQuaternion(this.inverse));
       if (contacts) { load.force.add(contacts[s.id].force); load.moment.add(contacts[s.id].moment); }
       if (commit) s.load.copy(load.force);
     }

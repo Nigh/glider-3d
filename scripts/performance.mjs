@@ -37,7 +37,7 @@ const results = {
     renderMs: 'CPU time around renderer.render submission, NOT GPU execution duration',
     gpuTimeMs: null,
     memory: 'Application metrics.memory estimates GPU resources in MiB; performance.memory is optional JS heap in bytes, not total process or GPU memory',
-    deviceValidation: 'Local desktop or attached CDP browser only. Viewport dimensions do not establish real-phone hardware validation.',
+    deviceValidation: 'Desktop browsers only. Local runs use a 1440 × 1000 viewport; attached CDP browsers do not establish mobile support.',
   },
   scenarios: [],
   pageErrors,

@@ -20,10 +20,11 @@ it('settles under sustained full rudder at a fixed high-load flight condition', 
   const tail: number[] = [];
   // Hold the flight condition to isolate the actuator/elastic-geometry feedback loop.
   // Structural deformation is retained between steps and all real forces are evaluated.
-  for (let step = 0; step < 300; step++) {
+  // Allow six seconds for the new exposed-area load equilibrium; keep the last-second tolerance.
+  for (let step = 0; step < 360; step++) {
     sim.position.set(100, 5000, 0); sim.quaternion.identity(); sim.velocity.set(35, 0, 0); sim.omega.set(0, 0, 0);
     sim.step({ weight: 0, rudder: 1, elevator: 0, aileron: 0, adaptiveControls: true });
-    if (step >= 240) tail.push(sim.telemetry.controlInputs.rudder);
+    if (step >= 300) tail.push(sim.telemetry.controlInputs.rudder);
   }
   expect(sim.structure.fractureCount).toBe(0);
   expect(Math.min(...tail)).toBeGreaterThan(0.05);

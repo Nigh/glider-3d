@@ -2,23 +2,72 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "翼型": ["Airfoil", "翼型"],
+ "未知翼型": ["Unknown airfoil", "不明な翼型"],
+ "垂尾不支持选择翼型": ["Fin airfoil selection is unavailable", "垂直尾翼の翼型は選択できません"],
+ "垂尾顶面随副翼安装角和翼型平滑变化。": ["The fin crown follows the auxiliary wing incidence and airfoil smoothly.", "垂直尾翼の上面は補助翼の取付角と翼型に滑らかに追従します。"],
+ "材料用量按平方根缩放梁尺寸；翼型厚度另缩放梁深度，翼型周长缩放蒙皮质量，改变刚度、承载能力及机翼平均密度。材料本身的密度与强度不变；不提供梁尺寸调整。": ["Material amount scales beam dimensions by its square root. Airfoil thickness scales beam depth and perimeter scales skin mass, changing stiffness, load capacity and wing bulk density. Material density and strength stay fixed; beam dimensions are not editable.", "材料量の平方根で梁寸法を拡縮します。翼型の厚さは梁の深さ、周長は外皮質量を変え、剛性・耐荷重・翼の平均密度に影響します。材料自体の密度と強度は一定で、梁寸法は編集できません。"],
+
+ 'W · 前往风洞': ['W · Enter wind tunnel', 'W・風洞へ'],
+ '摩擦阻力（零升阻力）': ['Profile / parasite drag', '形状・有害抗力（非誘導）'],
+ '诱导阻力': ['Induced drag', '誘導抗力'],
+ '非诱导阻力': ['Non-induced drag', '非誘導抗力'],
+ '推力': ['Thrust', '推力'],
+ '俯仰角': ['Pitch', 'ピッチ角'],
+ '滚转角': ['Roll', 'ロール角'],
+ '升阻比': ['Lift/drag ratio', '揚抗比'],
+ '翼型型阻（摩擦与压差）': ['Airfoil profile drag (skin / pressure)', '翼型抗力（摩擦・圧力）'],
+ '翼面分离阻力': ['Separated-flow drag', '剥離流の抗力'],
+ '展向来流阻力': ['Spanwise-flow drag', '翼幅方向流れの抗力'],
+ '座舱与罩体压差阻力': ['Cockpit / canopy pressure drag', 'コックピット・風防の圧力抗力'],
+ '座舱与罩体表面摩擦': ['Cockpit / canopy skin friction', 'コックピット・風防の表面摩擦'],
+ '未解析机体阻力': ['Unresolved airframe drag', '未解像機体の抗力'],
+ '发动机外阻': ['Engine nacelle drag', 'エンジン外形抗力'],
+ '发动机支架阻力': ['Engine support drag', 'エンジン支持部抗力'],
+ '水阻': ['Water drag', '水の抗力'],
+ '机身攻角': ['Body angle of attack', '機体迎角'],
+ '主翼几何攻角': ['Main wing geometric angle of attack', '主翼の幾何迎角'],
+ '主翼有效攻角': ['Main wing effective angle of attack', '主翼の有効迎角'],
+ '局部雷诺数范围': ['Local Reynolds number range', '局所レイノルズ数の範囲'],
+ '风洞为无动力测试；仰角不含翼面安装角。': ['The wind tunnel is unpowered; pitch excludes wing incidence.', '風洞は無動力試験です。仰角には翼の取付角を含みません。'],
+ '翼型极曲线仅覆盖Re≤1M；超出部分沿用上限，结果未标定。': ['Airfoil polars cover Re≤1M; higher Re uses the upper boundary and is uncalibrated.', '翼型極曲線はRe≤1Mの範囲です。超過分は上限値を使い、未較正です。'],
+ '阻力沿未扰动来流方向分解，各项相加等于总阻力；无来流时使用机头轴。': ['Drag is projected along undisturbed flow so the terms add to the total; at zero flow the nose axis is used.', '抗力は未擾乱流方向に投影し、各項の和を総抗力とします。無風時は機首軸を使います。'],
+ '非诱导分项包含翼型摩擦与压差阻力、机身及发动机外阻；不是单独的表面摩擦。': ['The non-induced component includes airfoil skin/pressure drag and body/engine drag, not skin friction alone.', '非誘導成分は翼型の摩擦・圧力抗力と胴体・エンジンの外部抗力を含み、表面摩擦のみではありません。'],
  ...laboratoryMessages,
  ...inputMessages,
+ "当前受力与力矩": ["Current forces and moments", "現在の力とモーメント"],
+ "净外力 · 机体": ["Net force · Body axes", "合外力 · 機体軸"],
+ "重心力矩 · 机体": ["CG moment · Body axes", "重心モーメント · 機体軸"],
+ "+X 机头 · +Y 机背 · +Z 右翼": ["+X Nose · +Y Dorsal · +Z Right wing", "+X 機首 · +Y 機体上方 · +Z 右翼"],
+ "+Mx 右翼下 · +My 左偏 · +Mz 抬头": ["+Mx Right wing down · +My Yaw left · +Mz Nose up", "+Mx 右翼下げ · +My 機首左 · +Mz 機首上げ"],
+ "含重力，不含支架反力；表示解除固定时主体的平移趋势。": ["Includes gravity, excludes fixture reactions; shows the attached body's translation tendency if released. Positive values follow the labeled axes; negative values oppose them.", "重力を含み、支持具の反力を除きます。固定を解除した際の機体本体の並進傾向です。正値は表示軸の方向、負値は逆方向です。"],
+ "机体轴关于当前重心的外力矩，不含支架反力矩；箭头遵循右手定则，数值为绝对值。": ["External moment about the current CG in body axes, excluding fixture reactions; arrows follow the right-hand rule and values show magnitudes.", "現在の重心まわりの外力モーメントを機体軸で表示し、支持具の反力モーメントを除きます。矢印は右ねじの法則に従い、数値は絶対値です。"],
+ "右翼下": ["Right wing down", "右翼下げ"],
+ "右翼上": ["Right wing up", "右翼上げ"],
+ "左偏": ["Yaw left", "機首左"],
+ "右偏": ["Yaw right", "機首右"],
+ "零力矩": ["Zero moment", "モーメントなし"],
+ "滚转力矩": ["Roll moment", "ロールモーメント"],
+ "正在计算巡航参考…": ["Calculating cruise reference…", "巡航参考値を計算中…"],
+ "巡航参考计算失败": ["Cruise calculation failed", "巡航参考値の計算に失敗"],
+ "返回工坊": ["Back to workshop", "工房に戻る"],
+ "自由飞行 · 可调平台": ["Free flight · Launch setup", "自由飛行 · 発射台設定"],
+ "来流与姿态 · 气动和结构": ["Aero & structure", "空力 · 構造テスト"],
  "鸟人间滑翔基础型": ["Basic Birdman glider", "鳥人間基本滑空型"],
  "高性能滑翔型": ["High-performance glider", "高性能滑空型"],
  "基础双发型": ["Basic twin-engine aircraft", "基本双発型"],
  "基础单发型": ["Basic single-engine aircraft", "基本単発型"],
  "巡航油门 {throttle}% · 巡航速度 {speed} m/s": ["Cruise throttle {throttle}% · Cruise speed {speed} m/s", "巡航スロットル {throttle}% · 巡航速度 {speed} m/s"],
  "{span} m 翼展": ["{span} m wingspan", "翼幅 {span} m"],
- "平尾安装至垂尾顶端": ["Mount horizontal tail on fin tip", "水平尾翼を垂直尾翼の先端に取り付ける"],
+ "副翼安装至垂尾顶端": ["Mount auxiliary wing on fin tip", "補助翼を垂直尾翼の先端に取り付ける"],
  "已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。": ["Mounted on the fin tip. The root follows the fin tip chord; turn off to return to the fuselage.", "垂直尾翼の先端に取り付け済みです。翼根は先端弦に連動します。オフにすると胴体に戻ります。"],
- "可开启开关直接安装，或将平尾安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the horizontal-tail mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、水平尾翼の取り付け点を垂直尾翼の先端付近へドラッグして吸着させます。"],
+ "可开启开关直接安装，或将副翼安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the auxiliary-wing mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、補助翼の取り付け点を垂直尾翼の先端付近へドラッグして吸着させます。"],
  "驾驶舱后段长度": ["Cockpit rear length", "操縦席の後部長"],
  "前段与玻璃座舱罩固定；后段长度改变驾驶舱质量和最大油箱容量。": ["The front and glass canopy stay fixed. Rear length changes cockpit mass and maximum fuel capacity.", "前部とガラスキャノピーは固定です。後部の長さで操縦席の質量と燃料タンクの最大容量が変わります。"],
  "实色表示实际转速，滑块表示设定转速。": ["Solid fill shows actual RPM; the thumb shows target RPM.", "塗りつぶしは実回転数、つまみは設定回転数を示します。"],
  "机身必须支撑完整驾驶舱": ["The fuselage must support the entire cockpit", "胴体は操縦席全体を支える必要があります"],
  "尾翼翼根无法安装到当前机身": ["The tail root does not fit the current fuselage", "現在の胴体には尾翼の付け根を取り付けられません"],
- "平尾垂尾安装开关必须是布尔值": ["The fin-mounted tail setting must be a boolean", "垂直尾翼への取り付け設定は真偽値で指定してください"],
+ "副翼垂尾安装开关必须是布尔值": ["The fin-mounted tail setting must be a boolean", "垂直尾翼への取り付け設定は真偽値で指定してください"],
  "机头须至少为 0.1 m，机尾须不高于 -0.1 m": ["The nose must be at least 0.1 m and the tail no farther forward than -0.1 m", "機首は0.1 m以上、機尾は-0.1 m以下にしてください"],
  "机身必须支撑尾翼安装点": ["The fuselage must support the tail mounting points", "胴体は尾翼の取り付け点を支える必要があります"],
  "飞机类型": ["Aircraft type", "機体の種類"],
@@ -45,7 +94,7 @@ export const messages: Record<string, readonly [string, string]> = {
  "G值为重心处比力大小，包含发射与接触载荷；静止承重为1G，自由落体为0G。": ["G load is the magnitude of proper acceleration at the CG, including launch and contact loads; supported rest is 1 G and free fall is 0 G.","G荷重は重心での比力の大きさです。発射・接触荷重を含み、静止支持時は1 G、自由落下時は0 Gです。"],
  "仅拖动圆形手柄调整顶点或同时移动根弦、梢弦两端；翼面和线段不响应拖动。手柄过近时自动外移，虚线连接真实位置。按住 Ctrl 自由微调。数字输入可精确调整顶点。": ["Drag only circular handles to adjust vertices or both ends of the root/tip chord; wings and lines do not respond to dragging. Nearby handles move outward with dotted leaders to their true positions. Hold Ctrl for fine adjustment, or use numeric inputs.","頂点や根元・翼端の両端は円形ハンドルのみで調整します。翼面や線はドラッグに反応しません。近いハンドルは外へ移動し、点線で実位置を示します。Ctrlで微調整、数値入力で精密に編集できます。"],
  "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增加面积降低翼载荷，但增加重量与阻力。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. More area lowers wing loading but adds weight and drag.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。面積を増やすと翼面荷重は下がりますが、重量と抗力が増えます。"],
- "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增大尾翼或后移安装位置，通常提高俯仰稳定性。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. A larger tail or a rearward mount usually improves pitch stability.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。尾翼の拡大や後方への移動は通常ピッチ安定性を高めます。"],
+ "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增大副翼或后移安装位置，通常提高俯仰稳定性。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. A larger auxiliary wing or a rearward mount usually improves pitch stability.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。補助翼の拡大や後方への移動は通常ピッチ安定性を高めます。"],
  "侧视拖动顶点或根弦、梢弦的圆形手柄。按住 Ctrl 取消吸附。垂直尾翼提供偏航恢复力矩，太小容易偏离航向。": ["In side view, drag the circular vertex or chord handles. Hold Ctrl to disable snapping. The vertical tail restores heading; too little area allows drift.","側面で頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。垂直尾翼は偏航を戻す力を生み、小さすぎると進路が乱れます。"],
  "导入回放": ["Import replay", "リプレイをインポート"],
  "导出回放": ["Export replay", "リプレイをエクスポート"],
@@ -294,44 +343,44 @@ export const messages: Record<string, readonly [string, string]> = {
   "性能"
  ],
  "不同飞机，": [
-  "Different aircraft,",
-  "機体を変えて、"
+  "Design.",
+  "設計して、"
  ],
  "不同挑战。": [
-  "different challenges.",
-  "挑戦を変える。"
+  "Take flight.",
+  "飛び立とう。"
  ],
  "选择挑战，进入对应飞机工坊。": [
-  "Choose a challenge and open its aircraft workshop.",
-  "挑戦を選んで、機体工房を開きます。"
+  "Pick a challenge. Build your aircraft.",
+  "挑戦を選んで、機体をつくろう。"
  ],
  "湖面比距离，山谷竞速，低空贴地闯关。": [
-  "Glide over the lake, race down a valley, or score at low altitude.",
-  "湖上で距離を競い、山谷で速さを競い、低空で得点を狙います。"
+  "Lake glides, valley races, low-level runs.",
+  "湖で飛距離、渓谷で速さ、低空でスコア。"
  ],
  "鸟人间挑战": [
-  "Birdman challenge",
-  "鳥人間チャレンジ"
+  "Birdman",
+  "鳥人間"
  ],
  "无动力 · 湖面距离": [
-  "Unpowered · distance over water",
-  "無動力 · 湖上の飛距離"
+  "Unpowered · Distance",
+  "無動力 · 飛距離"
  ],
  "高山速降": [
-  "Alpine downhill",
-  "山岳ダウンヒル"
+  "Downhill",
+  "山岳レース"
  ],
  "山顶弹射 · 山谷竞速": [
-  "Summit catapult · valley time trial",
-  "山頂射出 · 渓谷タイムアタック"
+  "Catapult · Valley race",
+  "山頂射出 · 渓谷レース"
  ],
  "低空飞行": [
-  "Low-altitude flight",
+  "Low flight",
   "低空飛行"
  ],
  "跑道起飞 · 河谷计分": [
-  "Runway takeoff · river-valley scoring",
-  "滑走路離陸 · 河谷で得点"
+  "Runway · River score",
+  "滑走路 · 河谷スコア"
  ],
  "W / S 俯仰 · A / D 滚转 · Q / E 偏航 · 1 / 2 油门": [
   "W / S pitch · A / D roll · Q / E yaw · 1 / 2 throttle",
@@ -377,9 +426,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Main wing",
   "主翼"
  ],
- "水平尾翼": [
-  "Horizontal tail",
-  "水平尾翼"
+ "副翼": [
+  "Auxiliary wing",
+  "補助翼"
  ],
  "垂直尾翼": [
   "Vertical tail",
@@ -405,7 +454,7 @@ export const messages: Record<string, readonly [string, string]> = {
   "Birdman: only the vertical tail has a control surface; pitch and roll use pilot weight shift.",
   "鳥人間では垂直尾翼のみが舵面を持ち、ピッチとロールは操縦者の重心移動で操作します。"
  ],
- "主翼副翼与平尾升降舵控制姿态；驾驶员由流线座舱包覆。": [
+ "主翼的滚转舵面与副翼的升降舵控制姿态；驾驶员由流线座舱包覆。": [
   "Ailerons and elevator control attitude; the pilot sits inside a streamlined cockpit.",
   "副翼と昇降舵で姿勢を操作し、操縦者は流線型のコックピットに収まります。"
  ],
@@ -981,10 +1030,6 @@ export const messages: Record<string, readonly [string, string]> = {
   "Elevator",
   "昇降舵"
  ],
- "副翼": [
-  "Aileron",
-  "副翼"
- ],
  "挑战完成": [
   "Challenge complete",
   "挑戦クリア"
@@ -1205,9 +1250,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Main-wing longitudinal position",
   "主翼の前後位置"
  ],
- "水平尾翼位置": [
-  "Horizontal-tail position",
-  "水平尾翼位置"
+ "副翼位置": [
+  "Auxiliary-wing position",
+  "補助翼位置"
  ],
  "垂直尾翼位置": [
   "Vertical-tail position",
@@ -1433,9 +1478,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Twice the spar wall thickness must be less than its width and height",
   "桁の肉厚の2倍は幅と高さより小さくしてください"
  ],
- "鸟人间设计只允许垂尾操纵，主翼和平尾不能安装控制面": [
-  "Birdman allows only rudder control; main wing and horizontal tail cannot have control surfaces",
-  "鳥人間では垂直尾翼のみ操舵でき、主翼と水平尾翼に舵面は付けられません"
+ "鸟人间设计只允许垂尾操纵，主翼和副翼不能安装控制面": [
+  "Birdman allows only rudder control; main wing and auxiliary wing cannot have control surfaces",
+  "鳥人間では垂直尾翼のみ操舵でき、主翼と補助翼に舵面は付けられません"
  ],
  "翼面不得自交，根弦与梢弦至少 0.15 m": [
   "Surfaces must not self-intersect; root and tip chords must be at least 0.15 m",
@@ -1445,9 +1490,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "The fuselage must support the cockpit, with the nose at least 0.95 m ahead",
   "胴体はコックピットを支持し、機首はその0.95 m以上前に配置してください"
  ],
- "机身必须支撑水平尾翼与垂直尾翼安装点": [
+ "机身必须支撑副翼与垂直尾翼安装点": [
   "The fuselage must support both tail mounts",
-  "胴体は水平・垂直尾翼の取付点を支持する必要があります"
+  "胴体は補助翼と垂直尾翼の取付点を支持する必要があります"
  ],
  "机身必须支撑发动机安装点": [
   "The fuselage must support the engine mount",
@@ -1617,9 +1662,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Main-wing mount",
   "主翼取付"
  ],
- "平尾安装": [
-  "Horizontal-tail mount",
-  "水平尾翼取付"
+ "副翼安装": [
+  "Auxiliary-wing mount",
+  "補助翼取付"
  ],
  "垂尾安装": [
   "Vertical-tail mount",
@@ -1805,9 +1850,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "More incidence increases effective angle of attack; too much can cause a stall.",
   "取付角を増やすと有効迎角が増え、過大だと失速する場合があります。"
  ],
- "水平尾翼安装角": [
-  "Horizontal-tail incidence",
-  "水平尾翼取付角"
+ "副翼安装角": [
+  "Auxiliary-wing incidence",
+  "補助翼取付角"
  ],
  "调节尾翼安装角以配平，观察离台后攻角与俯仰变化。": [
   "Adjust tail incidence for trim; watch angle of attack and pitch after release.",

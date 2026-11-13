@@ -73,6 +73,70 @@ test('风洞保留两类飞机并允许切换类型、撤销和重做', async ({
  await expect(page.getByRole('tab', { name: '动力', exact: true })).toHaveCount(0);
 });
 
+test('机库替代工坊，禁止场景编辑与撤销，返回及流程切换恢复工坊', async ({ page }) => {
+ await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
+ await page.goto('/');
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ const name = page.getByRole('textbox', { name: '飞机名称', exact: true });
+ await name.fill('机库期间保留设计'); await name.press('Tab');
+ const definition = await current(page);
+ const library = page.getByRole('region', { name: '本地机库', exact: true });
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ await expect(library).toBeVisible();
+ await expect(name).toHaveCount(0);
+ await expect(page.getByRole('tablist', { name: '部件编辑' })).toHaveCount(0);
+ await expect(page.getByRole('button', { name: '重置设计', exact: true })).toHaveCount(0);
+ await expect.poll(() => page.evaluate(() => window.glider.scene.editing)).toBeNull();
+ await page.locator('.scene canvas').click({ position: { x: 80, y: 80 }, force: true });
+ await page.keyboard.press('Control+z');
+ await page.keyboard.press('Control+Shift+z');
+ expect(await current(page)).toEqual(definition);
+ await expect(library).toBeVisible();
+ await library.getByRole('button', { name: '返回工坊', exact: true }).click();
+ await expect(name).toHaveValue(definition.name);
+ await expect.poll(() => page.evaluate(() => window.glider.scene.editing)).not.toBeNull();
+ await page.getByRole('button', { name: '撤销', exact: true }).click();
+ expect((await current(page)).name).not.toBe(definition.name);
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ await page.keyboard.press('Escape');
+ await expect(name).toBeVisible();
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ await page.getByRole('button', { name: '返回主菜单', exact: true }).click();
+ await page.getByRole('button', { name: '高山速降' }).click();
+ await expect(name).toBeVisible();
+ await expect(library).toHaveCount(0);
+ await page.getByRole('button', { name: '机库', exact: true }).click();
+ await page.getByRole('button', { name: '试飞', exact: true }).click();
+ await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('flight');
+ await page.keyboard.press('Escape');
+ await expect(name).toBeVisible();
+ await expect(library).toHaveCount(0);
+});
+
+for (const locale of ['en', 'ja']) {
+ const viewport = { width: 1280, height: 800 };
+  test(`${locale}菜单在${viewport.width}×${viewport.height}内完整显示且入口可用`, async ({ page }) => {
+   await page.setViewportSize(viewport);
+   await page.addInitScript(locale => localStorage.setItem('aero-formula.language', locale), locale);
+   await page.goto('/');
+   const welcome = page.locator('.welcome');
+   const buttons = welcome.getByRole('button');
+   await expect(buttons).toHaveCount(5);
+   expect(await welcome.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+   for (const button of await buttons.all()) {
+    await button.scrollIntoViewIfNeeded();
+    const bounds = await button.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+    expect(bounds!.y).toBeGreaterThanOrEqual(64);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+   }
+   await buttons.last().click();
+   await expect.poll(() => page.evaluate(() => window.glider.state)).toBe('design');
+  });
+}
+
 for (const challenge of ['鸟人间挑战', '高山速降', '低空飞行']) {
  test(`${challenge}导入兼容飞机原样入库并加载，关闭机库且可撤销`, async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));

@@ -1,7 +1,9 @@
 # 设备验证边界
 
+当前仅支持桌面浏览器，移动端不在测试及性能承诺范围。以下保留2026-10-30历史检查，不代表当前移动支持。
+
 2026-10-30 在当前工作站运行 `command -v adb && adb devices`：存在 `/usr/bin/adb`，启动ADB服务后输出 `List of devices attached`，设备列表为空。
 
-该次检查没有发现可连接的Android真实手机。iOS验证需要macOS Safari与真实设备，该Linux工作站未进行此项验证。Playwright的390×844及844×390触摸视口用于布局与浏览器输入验证，不代表真实手机硬件性能。
+该次检查没有发现可连接的Android真实手机。iOS验证需要macOS Safari与真实设备，该Linux工作站未进行此项验证。旧版Playwright的390×844及844×390触摸视口曾用于布局与浏览器输入验证，不代表真实手机硬件性能；这些移动项目现已移除。
 
-真实手机60FPS尚未验收。连接设备后的自动采样与远程调试步骤见 [mobile-performance.md](mobile-performance.md)。当前实测环境及原始帧间隔见 `performance-results.json`；CPU渲染提交耗时不等于GPU执行时间。
+历史真实手机60FPS目标未验收，当前不再作为支持承诺。历史远程调试步骤见 [mobile-performance.md](mobile-performance.md)。当次实测环境及原始帧间隔见 `performance-results.json`；CPU渲染提交耗时不等于GPU执行时间。
