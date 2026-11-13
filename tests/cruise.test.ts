@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { setTimeout as yieldTurn } from 'node:timers/promises';
 import { presets } from '../src/model';
 import { FlightSimulation, GRAVITY } from '../src/physics';
 import { analyzeCruiseReference, solveCruiseReference } from '../src/cruise';
 
 describe('海平面满油稳态最佳航程参考', () => {
+  // Synchronous solves can collectively exceed Vitest's worker RPC timeout.
+  afterEach(() => yieldTurn(0));
   it.each(presets.filter(d => d.engine.count > 0))('$name通过受力、配平和独立短自由积分', d => {
     const result = analyzeCruiseReference(d), reference = result.reference;
     expect(result.reason).toBe('solved'); expect(reference).not.toBeNull();
