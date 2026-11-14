@@ -6,7 +6,7 @@
     "center": 0
   },
   "cockpit": {
-    "position": 1.95
+    "position": 1.73
   },
   "mainWing": {
     "points": [
@@ -30,7 +30,11 @@
     "rootReference": 0.425,
     "dihedral": 5.9,
     "controlSurface": 0.15000000000000002,
-    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "carbon-epoxy",
@@ -63,7 +67,11 @@
     "rootReference": 0.325,
     "dihedral": 0,
     "controlSurface": 0.4,
-    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "carbon-epoxy",
@@ -96,7 +104,11 @@
     "rootReference": 0.35,
     "dihedral": 0,
     "controlSurface": 0.45,
-    "controlAxes": { "roll": false, "pitch": false, "yaw": true },
+    "controlAxes": {
+      "roll": false,
+      "pitch": false,
+      "yaw": true
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "carbon-epoxy",
@@ -126,8 +138,8 @@
   "engine": {
     "type": "jet-01",
     "count": 1,
-    "x": 0.0500000000000001,
-    "y": 0.29
+    "x": -0.019999999999999907,
+    "y": -0.32
   },
   "fuelTank": {
     "x": 0.73,

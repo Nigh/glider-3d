@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clickRangeEdge } from './pointer-controls';
 import { readFile } from 'node:fs/promises';
 
 test.beforeEach(async ({ page }) => {
@@ -45,8 +46,8 @@ test('imports a complete recording, exports it losslessly and rejects incompatib
   expect(await page.evaluate(() => (window as any).glider.aircraft)).toEqual(originalDesign);
   await page.getByLabel('导入回放', { exact: true }).setInputFiles({ name: 'flight.json', mimeType: 'application/json', buffer: Buffer.from(source.text) });
   await page.getByRole('button', { name: '开始试飞', exact: true }).click();
-  // Exercise keyboard seeking as well as import/export without waiting for wall-clock playback.
-  await page.getByRole('slider', { name: '回放进度', exact: true }).press('End');
+  // Exercise pointer seeking as well as import/export without wall-clock playback.
+  await clickRangeEdge(page.getByRole('slider', { name: '回放进度', exact: true }), 'max');
   await expect(page.getByRole('region', { name: '回放时间轴', exact: true })).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
   await page.getByRole('button', { name: '继续飞行', exact: true }).click();
   await expect(page.getByRole('region', { name: '飞行结算', exact: true })).toBeVisible({ timeout: 120_000 });

@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
  import type * as AudioModule from '../src/audio';
+import type * as PhysicsModule from '../src/physics';
+import type * as ModelModule from '../src/model';
  declare global {
   interface Window { audioProbes: { context: AudioContext; meter: AnalyserNode }[] }
  }
@@ -170,13 +172,13 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
    setTimeout(resolve, ms);
    return promise;
   };
-  const capture = async (duration: number) => {
+  const capture = async (duration: number, release = true) => {
    const start = Math.round(context.currentTime * context.sampleRate);
    const samples = new Float32Array(Math.ceil(duration * context.sampleRate));
    const end = start + samples.length;
    const { promise, resolve } = Promise.withResolvers<void>();
    pending = { end, resolve };
-   audio.release();
+   if (release) audio.release();
    await promise;
    let copied = 0;
    for (const block of blocks) {
@@ -210,7 +212,10 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
   };
   try {
    await recordingReady.promise;
+   audio.update({ ...state, launching: true }); audio.launch();
    await wait(350);
+   const runup = await capture(0.15, false);
+   audio.update(state);
    const full = await capture(0.6);
    const repeated = await capture(0.16);
    await reset(0.25);
@@ -246,6 +251,7 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
    return {
     full: {
      peak: peak(full),
+     runup: peak(runup),
      low: rms(bands.getChannelData(0), 0, onsetEnd),
      high: rms(bands.getChannelData(1), 0, onsetEnd),
      tail: rms(full, Math.round(context.sampleRate * 0.12), Math.round(context.sampleRate * 0.24)),
@@ -261,6 +267,7 @@ test('分离音有低频冲击、机械高频与衰减余振，每次飞行只�
   }
  });
  expect(result.full.peak).toBeGreaterThan(0.02);
+ expect(result.full.peak).toBeGreaterThan(result.full.runup * 3);
  // Both bands must exceed -46 dBFS RMS, not merely contain nonzero spectral bins.
  expect(result.full.low).toBeGreaterThan(0.005);
  expect(result.full.high).toBeGreaterThan(0.005);
@@ -428,6 +435,8 @@ test('GameAudio拒绝低空与跑道模式的蒸汽及弹射分离音，其他�
     { challenge: 'low-altitude' as const, launchKind: 'runway' as const },
     { challenge: 'low-altitude' as const, launchKind: 'catapult' as const },
     { challenge: 'downhill' as const, launchKind: 'runway' as const },
+    { challenge: 'test-space' as const, launchKind: 'runway' as const },
+    { challenge: 'wind-tunnel' as const, launchKind: 'catapult' as const },
    ]) {
     audio.update({ ...state, ...mode, ready: false });
     audio.update({ ...state, ...mode }); audio.launch();
@@ -436,7 +445,7 @@ test('GameAudio拒绝低空与跑道模式的蒸汽及弹射分离音，其他�
     rejected.push({ steam, sources: sources.length });
    }
    const accepted: { steam: number; sources: number; repeated: number }[] = [];
-   for (const challenge of ['birdman', 'downhill'] as const) {
+   for (const challenge of ['birdman', 'downhill', 'test-space'] as const) {
     const catapult = { ...state, challenge, launchKind: 'catapult' as const };
     audio.update({ ...catapult, ready: false }); audio.update(catapult); audio.launch();
     const steam = await measureSteam();
@@ -458,4 +467,56 @@ test('GameAudio拒绝低空与跑道模式的蒸汽及弹射分离音，其他�
   expect(accepted.sources).toBeGreaterThan(0);
   expect(accepted.repeated).toBe(0);
  }
+});
+
+test('弹射分离音跟随真实模拟，暂停不补播，重飞和回放跳转不重复旧事件', async ({ page }) => {
+ await page.goto('/');
+ await page.getByRole('button', { name: '鸟人间挑战' }).click();
+ const result = await page.evaluate(async () => {
+  const audioPath = '/src/audio.ts', physicsPath = '/src/physics.ts', modelPath = '/src/model.ts';
+  // Browser evaluation must load Vite modules here; Node static imports cannot cross this boundary.
+  const { GameAudio } = await import(audioPath) as typeof AudioModule;
+  const { FlightSimulation } = await import(physicsPath) as typeof PhysicsModule;
+  const { defaultAircraft } = await import(modelPath) as typeof ModelModule;
+  const audio = new GameAudio();
+  const simulation = new FlightSimulation(defaultAircraft, 'birdman', 0);
+  const state = { screen: 'flight' as const, ready: true, paused: false, hidden: false, speed: 0, launching: true,
+   challenge: 'birdman' as const, launchKind: 'catapult' as const, timingStarted: false, challengeProgress: 0, simulation };
+  audio.setPreferences({ muted: false, music: 0, effects: 1 });
+  audio.update(state); audio.unlock();
+  const { context } = window.audioProbes.at(-1)!;
+  await context.resume();
+  let count = 0;
+  const createBuffer = context.createBufferSource.bind(context);
+  context.createBufferSource = () => { count++; return createBuffer(); };
+  const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+  const separate = () => {
+   while (simulation.launching && !simulation.ended) simulation.step(neutral);
+   audio.update({ ...state, launching: simulation.launching });
+   audio.release();
+  };
+  try {
+   separate();
+   const first = count;
+   audio.release(); audio.update({ ...state, launching: false, paused: true }); audio.release();
+   audio.update({ ...state, launching: false }); await context.resume(); audio.release();
+   const repeated = count - first;
+   // Replacement simulation already detached represents a seek beyond separation.
+   const seek = new FlightSimulation(defaultAircraft, 'birdman', 0);
+   while (seek.launching && !seek.ended) seek.step(neutral);
+   audio.update({ ...state, simulation: seek, launching: false }); audio.release();
+   const skipped = count - first;
+   // Same simulation rewinds to frame zero, then crosses separation again.
+   simulation.reset();
+   audio.update(state);
+   separate();
+   const rewound = count - first;
+   simulation.reset(); audio.update({ ...state, paused: true });
+   while (simulation.launching && !simulation.ended) simulation.step(neutral);
+   audio.update({ ...state, launching: false, paused: true }); audio.release();
+   audio.update({ ...state, launching: false }); await context.resume(); audio.release();
+   return { first, repeated, skipped, rewound, paused: count - first - rewound };
+  } finally { audio.dispose(); }
+ });
+ expect(result).toEqual({ first: 1, repeated: 0, skipped: 0, rewound: 1, paused: 0 });
 });

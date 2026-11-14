@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clickRangeEdge } from './pointer-controls';
 
 test.beforeEach(async({page})=>{
  await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
@@ -81,7 +82,8 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  const later=await page.evaluate(()=>(window as any).glider.scene.aircraft);
  await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();
  const inputs=await page.evaluate(()=>(window as any).glider.flightControls.inputs);
- await expect(page.locator('.replay-inputs .stick-position')).toHaveAttribute('data-pitch',String(inputs.elevator));
+ const pitch=await page.evaluate(()=>{const g=(window as any).glider;return g.flightControls.inputs.elevator*Math.cos(g.telemetry.roll)});
+ expect(Number(await page.locator('.replay-inputs .stick-position').getAttribute('data-pitch'))).toBeCloseTo(pitch,10);
  await expect(page.locator('.replay-inputs .stick-position')).toHaveAttribute('data-roll',String(inputs.aileron));
  await expect(page.getByRole('region',{name:'实时杆量',exact:true})).toContainText(inputs.rudder.toFixed(2));
  const sink=await page.evaluate(()=>(window as any).glider.telemetry.sink);
@@ -97,7 +99,7 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  await page.getByRole('button',{name:'继续飞行',exact:true}).click();
  await page.mouse.move(0,0);
  await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeHidden();
- if(info.project.name==='desktop-chromium'){await timeline.hover();await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();await page.mouse.move(0,0);}
+ await timeline.hover();await expect(page.getByRole('img',{name:'翼面负载曲线',exact:true})).toBeVisible();await page.mouse.move(0,0);
 
  await page.getByRole('slider',{name:'回放进度',exact:true}).evaluate((el:HTMLInputElement,duration)=>{for(const f of [0.5,0.2,0.25]){el.value=String(duration*f);el.dispatchEvent(new Event('input',{bubbles:true}));}},fixture.duration);
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
@@ -112,7 +114,7 @@ test('replay renders its own aircraft, seeks both ways and shows G only for powe
  await expect(page.getByRole('img',{name:/飞行数据曲线/}).locator('.chart-g-line')).toHaveCount(1);
  await page.screenshot({path:info.outputPath('replay-g-load.png')});
  await seek(0);
- await page.getByRole('slider',{name:'回放进度',exact:true}).press('Home');
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'min');
  await expect(page.getByRole('region',{name:'飞行结算',exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>(window as any).glider.scene.aircraft)).not.toEqual(later);
  expect(errors).toEqual([]);

@@ -1,0 +1,148 @@
+{
+  "name": "基础双发型Test",
+  "birdman": false,
+  "fuselage": {
+    "length": 6.5,
+    "center": 0
+  },
+  "cockpit": {
+    "position": 0.6299999999999999
+  },
+  "mainWing": {
+    "points": [
+      {
+        "x": -2.06,
+        "y": 0
+      },
+      {
+        "x": 0.83,
+        "y": 1.56
+      },
+      {
+        "x": 1.41,
+        "y": 1.56
+      },
+      {
+        "x": 2.56,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.425,
+    "dihedral": 2,
+    "controlSurface": 0.15000000000000002,
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
+    "controlResponse": 1,
+    "controlReversed": false,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.06,
+      "height": 0.14,
+      "wallThickness": 0.0025
+    }
+  },
+  "horizontalTail": {
+    "points": [
+      {
+        "x": -0.2,
+        "y": 0
+      },
+      {
+        "x": 0.1,
+        "y": 1.5
+      },
+      {
+        "x": 0.5,
+        "y": 1.5
+      },
+      {
+        "x": 0.65,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.325,
+    "dihedral": 0,
+    "controlSurface": 0.4,
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
+    "controlResponse": 1,
+    "controlReversed": false,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.03,
+      "height": 0.065,
+      "wallThickness": 0.0015
+    }
+  },
+  "verticalTail": {
+    "points": [
+      {
+        "x": -0.12,
+        "y": 0
+      },
+      {
+        "x": 0.15,
+        "y": 1.2
+      },
+      {
+        "x": 0.5,
+        "y": 1.2
+      },
+      {
+        "x": 0.7,
+        "y": 0
+      }
+    ],
+    "rootReference": 0.35,
+    "dihedral": 0,
+    "controlSurface": 0.45,
+    "controlAxes": {
+      "roll": false,
+      "pitch": false,
+      "yaw": true
+    },
+    "controlResponse": 1,
+    "controlReversed": false,
+    "materialId": "carbon-epoxy",
+    "materialAmount": 1,
+    "structure": {
+      "width": 0.03,
+      "height": 0.065,
+      "wallThickness": 0.0015
+    }
+  },
+  "assembly": {
+    "mainWing": 1.02,
+    "mainWingHeight": 0,
+    "horizontalTail": -2.92,
+    "verticalTail": -2.9,
+    "mainIncidence": 4,
+    "tailIncidence": -3,
+    "tailOnFin": false
+  },
+  "pilot": {
+    "mass": 60
+  },
+  "controls": {
+    "travel": 0.3,
+    "lateralTravel": 0.1
+  },
+  "engine": {
+    "type": "jet-01",
+    "count": 2,
+    "x": -0.3899999999999999,
+    "y": -0.2
+  },
+  "fuelTank": {
+    "x": 0.35,
+    "capacity": 12
+  }
+}

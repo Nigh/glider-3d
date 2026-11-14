@@ -1,4 +1,5 @@
 import type { ChallengeLaunch, ChallengeMode } from './challenges';
+import type { FlightSimulation } from './physics';
 
 type AudioPreferences = { muted: boolean; music: number; effects: number };
 type AudioState = {
@@ -13,6 +14,7 @@ type AudioState = {
   timingStarted: boolean;
   challengeProgress: number;
   engineRpm?: number;
+  simulation?: FlightSimulation;
 };
 type Voice = { source: AudioScheduledSourceNode; gain: GainNode; flight: boolean };
 
@@ -56,6 +58,8 @@ export class GameAudio {
   private disposed = false;
   private launchPlayed = false;
   private releasePlayed = false;
+  private lastSimulation: FlightSimulation | undefined;
+  private lastSimulationTime = 0;
   private lastSpeed = -1;
   private lastUi = -Infinity;
   private reported = new Set<string>();
@@ -92,6 +96,15 @@ export class GameAudio {
     const timingPoint = wasFlight && isFlight && state.challenge !== 'birdman'
       && ((!this.state.timingStarted && state.timingStarted)
         || state.timingStarted && state.challengeProgress > this.state.challengeProgress);
+    const simulation = state.simulation;
+    if (simulation && (simulation !== this.lastSimulation || simulation.elapsedTime < this.lastSimulationTime - 1e-9)) {
+      this.clearFlight();
+      this.launchPlayed = false;
+      // A seek can land beyond separation. Never replay its past one-shot on resume.
+      this.releasePlayed = !simulation.launching;
+    }
+    this.lastSimulation = simulation;
+    this.lastSimulationTime = simulation?.elapsedTime ?? 0;
     this.state = state;
     if (!isFlight) {
       this.launchPlayed = false;
@@ -119,6 +132,10 @@ export class GameAudio {
       this.smooth(this.engineNoise!.frequency, 350 + rpm * 2400, 0.12);
       this.smooth(this.engineNoiseGain!.gain, rpm * rpm * 0.2, 0.12);
     }
+    if (simulation && this.catapultFlight() && state.launching && !this.steamActive && this.canPlay()) {
+      this.steamActive = true;
+      this.smooth(this.steamGain!.gain, 0.16, 0.075);
+    }
     if (!this.catapultFlight() || !state.launching) this.silenceSteam();
   }
 
@@ -133,11 +150,13 @@ export class GameAudio {
 
   release(): void {
     this.silenceSteam();
-    if (this.releasePlayed || !this.catapultFlight() || this.state.launching) return;
+    if (this.releasePlayed || !this.catapultFlight() || this.state.launching
+      || this.state.simulation?.ended || this.state.simulation?.replayFinished) return;
     this.releasePlayed = true;
     if (!this.canPlay()) return;
-    // Original synthesis: latch snap, heavy coupling impact, inharmonic metal ring and steam vent.
-    this.noiseBurst(0.13, 0.19, true);
+    // Original synthesis: high-pressure vent, latch snap, coupling impact and metal ring.
+    // Same separation event as the scene's endpoint cloud; much louder than the 0.16 run-up hiss.
+    this.noiseBurst(0.42, 0.72, true);
     this.tone(2100, 900, 0.035, 0.14, true, 'sawtooth');
     this.tone(165, 52, 0.19, 0.32, true);
     this.tone(920, 900, 0.34, 0.095, true);
@@ -305,7 +324,8 @@ export class GameAudio {
   }
 
   private catapultFlight(): boolean {
-    return this.inFlight() && this.state.challenge !== 'low-altitude' && this.state.launchKind === 'catapult';
+    return this.inFlight() && (this.state.challenge === 'birdman' || this.state.challenge === 'downhill'
+      || this.state.challenge === 'test-space') && this.state.launchKind === 'catapult';
   }
 
   private timingPoint(): void {

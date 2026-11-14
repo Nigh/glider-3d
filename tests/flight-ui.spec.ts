@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { clickRangeEdge } from './pointer-controls';
 import type { Page } from '@playwright/test';
 
 async function enterFlight(page: Page, challenge = '高山速降') {
  await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
  await page.goto('/');
+ await page.getByRole('combobox',{name:'画质',exact:true}).selectOption('Low');
  await page.getByRole('button',{name:challenge,exact:false}).click();
  await page.getByRole('button',{name:'重置设计',exact:true}).click();
  await page.getByRole('button',{name:'试飞',exact:true}).click();
@@ -54,10 +56,15 @@ test('T与Y切换飞行辅助，重飞复位，鸟人禁用自动配平',async({
  await expect(auto).toHaveAttribute('aria-checked','false');
 });
 
-test('满油门待开始可调，1增2减且Shift和Ctrl不再控制油门',async({page})=>{
+test('满油门待开始可调，竖直向上增加，辅助按钮按T/Y/U排列',async({page},info)=>{
  await enterFlight(page,'低空飞行');
  const throttle=page.getByRole('slider',{name:'油门',exact:true});
  await expect(throttle).toBeEnabled();await expect(throttle).toHaveValue('1');
+ await expect(page.locator('.flight-assists kbd')).toHaveText(['T','Y','U']);
+ const box=await throttle.boundingBox();expect(box!.height).toBeGreaterThan(box!.width*2);
+ await throttle.click({position:{x:box!.width/2,y:box!.height-1}});await expect(throttle).toHaveValue('0');
+ await throttle.click({position:{x:box!.width/2,y:1}});await expect(throttle).toHaveValue('1');
+ await page.screenshot({path:info.outputPath('vertical-throttle.png')});
  await throttle.fill('0.5');
  await page.keyboard.down('2');
  try{await expect.poll(async()=>Number(await throttle.inputValue())).toBeLessThan(0.4);}finally{await page.keyboard.up('2');}
@@ -73,6 +80,22 @@ test('满油门待开始可调，1增2减且Shift和Ctrl不再控制油门',asyn
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await page.getByRole('button',{name:'暂停',exact:true}).click();
  await expect(throttle).toHaveValue(selected);
+});
+
+test('低高度及测试空间的油门仍保持竖直，布局可操作',async({page})=>{
+ await enterFlight(page,'低空飞行');
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'返回主菜单',exact:true}).click();
+ await page.locator('.welcome').getByRole('button',{name:'测试空间',exact:false}).click();
+ await page.getByRole('button',{name:'试飞',exact:true}).click();
+ const throttle=page.getByRole('slider',{name:'油门',exact:true});
+ for(const size of [{width:1280,height:720},{width:900,height:500},{width:600,height:900}]){
+  await page.setViewportSize(size);
+  const box=await throttle.boundingBox();
+  expect(box!.height).toBeGreaterThan(box!.width*2);
+  await throttle.click({position:{x:box!.width/2,y:1}});await expect(throttle).toHaveValue('1');
+  await throttle.click({position:{x:box!.width/2,y:box!.height-1}});await expect(throttle).toHaveValue('0');
+ }
 });
 
 test('R仅暂停时重飞，准备和飞行中保留当前试飞',async({page})=>{
@@ -102,7 +125,7 @@ test('工坊每个翼面保留响应轴，支持撤销与重置',async({page})=>
  await page.getByRole('button',{name:'高山速降',exact:false}).click();
  await page.getByRole('button',{name:'重置设计',exact:true}).click();
  const axes=page.getByRole('group',{name:'舵面响应轴',exact:true});
- for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['水平尾翼',true,true,false],['垂直尾翼',false,false,true]] as const){
+ for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['副翼',true,true,false],['垂直尾翼',false,false,true]] as const){
   await page.getByRole('tab',{name:part,exact:true}).click();
   for(const [axis,enabled] of [['滚转',roll],['俯仰',pitch],['偏航',yaw]] as const)await expect(axes.getByRole('switch',{name:`${axis}响应`,exact:true})).toHaveAttribute('aria-checked',String(enabled));
  }
@@ -153,12 +176,50 @@ test('回放智能混控只读且跟随记录和跳转',async({page})=>{
  const mixing=page.getByRole('region',{name:'实时杆量',exact:true}).getByRole('switch',{name:'智能混控（U）',exact:true});
  await expect(mixing).toBeVisible();await expect(mixing).toBeDisabled();await expect(mixing).toHaveAttribute('aria-checked','false');
  const timeline=page.getByRole('region',{name:'回放时间轴',exact:true});
- await page.getByRole('slider',{name:'回放进度',exact:true}).press('End');
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'max');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
  await expect(mixing).toHaveAttribute('aria-checked','true');
  await page.keyboard.press('u');await expect(mixing).toHaveAttribute('aria-checked','true');
  expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
- await page.getByRole('slider',{name:'回放进度',exact:true}).press('Home');
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'min');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
  await expect(mixing).toHaveAttribute('aria-checked','false');
+});
+
+test('回放倒飞时俯仰杆量与配平标记反向，配平设定不变',async({page})=>{
+ await page.addInitScript(()=>localStorage.setItem('aero-formula.language','zh'));
+ await page.goto('/');
+ const text=await page.evaluate(async()=>{
+  // Browser-only fixture modules must load in the page, not the Node test process.
+  const {FlightSimulation}=await import('/src/physics.ts');
+  const {presets,clone}=await import('/src/model.ts');
+  const {exportReplay}=await import('/src/replay.ts');
+  const definition=clone(presets.find(plane=>plane.name==='基础单发型')!);
+  const simulation=new FlightSimulation(definition,'downhill',0);
+  // Capture a valid replay keyframe in inverted free flight, without changing live UI state.
+  simulation.launching=false;
+  simulation.position.set(100,2000,0);
+  simulation.quaternion.set(1,0,0,0);
+  simulation.velocity.set(20,0,0);
+  simulation.omega.set(0,0,0);
+  for(let frame=0;frame<60;frame++)simulation.step({weight:0,lateral:0,elevator:0,aileron:0,rudder:0,trimPitch:0.4});
+  return exportReplay({definition,challenge:'downhill',recording:simulation.getRecording()});
+ });
+ await page.getByLabel('导入回放',{exact:true}).setInputFiles({name:'inverted.json',mimeType:'application/json',buffer:Buffer.from(text)});
+ await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'max');
+ await expect(page.getByRole('region',{name:'回放时间轴',exact:true})).toHaveAttribute('aria-busy','false');
+ await expect.poll(async()=>Number(await page.locator('.stick-pad .stick-position').getAttribute('cy'))).toBeGreaterThan(60);
+ const values=await page.evaluate(()=>{
+  const t=window.glider.telemetry;
+  const dot=document.querySelector('.stick-pad .stick-position')!;
+  return {roll:t.roll,pitch:t.controlInputs.elevator,trim:t.trimPitch,cy:Number(dot.getAttribute('cy')),marker:document.querySelector('.stick-trim-marker')!.getAttribute('d')!};
+ });
+ expect(Math.cos(values.roll)).toBeLessThan(-0.9);
+ expect(Math.abs(values.pitch)).toBeGreaterThan(0.1);
+ expect(values.cy).toBeCloseTo(60-values.pitch*Math.cos(values.roll)*35,5);
+ expect(Number(values.marker.split(' ')[2])).toBeCloseTo(60-values.trim*Math.cos(values.roll)*35,5);
+ expect(values.trim).toBeCloseTo(0.4);
+ const replayDot=page.locator('.replay-inputs .stick-position');
+ await expect(replayDot).toBeVisible();
+ expect(Number(await replayDot.getAttribute('cy'))).toBeCloseTo(values.cy,5);
 });

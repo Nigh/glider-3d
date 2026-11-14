@@ -41,11 +41,11 @@ export function testSpaceTerrainHeight(x: number, z: number) {
   if (tx + tz <= 1) { const c = terrainVertex(x0, z0); return c + (b - c) * tx + (a - c) * tz; }
   const c = terrainVertex(x0 + step, z0 + step); return c + (a - c) * (1 - tx) + (b - c) * (1 - tz);
 }
-export interface WindTunnelSettings { speed: number; roll: number; pitch: number; elevator: number; aileron: number; rudder: number }
-export const defaultWindTunnel: Readonly<WindTunnelSettings> = { speed: 10, roll: 0, pitch: 0, elevator: 0, aileron: 0, rudder: 0 };
+export interface WindTunnelSettings { speed: number; roll: number; pitch: number; elevator: number; aileron: number; rudder: number; mainIncidence: number; tailIncidence: number }
+export const defaultWindTunnel: Readonly<WindTunnelSettings> = { speed: 10, roll: 0, pitch: 0, elevator: 0, aileron: 0, rudder: 0, mainIncidence: 0, tailIncidence: 0 };
 // Keep the original travel speeds; the filters below soften acceleration instead
 // of slowing the entire manoeuvre. Calibrated with the balanced preset at 10 m/s.
-export const windTunnelRates: Readonly<WindTunnelSettings> = { speed: 30, roll: 45, pitch: 30, elevator: 1.5, aileron: 1.5, rudder: 1.5 };
+export const windTunnelRates: Readonly<WindTunnelSettings> = { speed: 30, roll: 45, pitch: 30, elevator: 1.5, aileron: 1.5, rudder: 1.5, mainIncidence: 30, tailIncidence: 30 };
 interface AttitudeMotion { command: number; lag: number; value: number }
 export const windTunnelAttitudeFrequency = 1; // rad/s, two identical low-pass stages
 export const createWindTunnelMotion = () => ({ roll: { command: 0, lag: 0, value: 0 }, pitch: { command: 0, lag: 0, value: 0 } });
@@ -71,10 +71,10 @@ function advanceAttitude(motion: AttitudeMotion, target: number, rate: number, d
   // Snap only below a microdegree, where the residual motion is negligible.
   if (Math.abs(target - motion.command) < 1e-9 && Math.abs(target - motion.lag) < 1e-6 && Math.abs(target - motion.value) < 1e-6) motion.command = motion.lag = motion.value = target;
 }
-export function windTunnelSettings(value: WindTunnelSettings): WindTunnelSettings {
-  const limits = { speed: [1, 200], roll: [-180, 180], pitch: [-45, 45], elevator: [-1, 1], aileron: [-1, 1], rudder: [-1, 1] };
+export function windTunnelSettings(value: WindTunnelSettings, birdman = false): WindTunnelSettings {
+  const limits = { speed: [1, 200], roll: [-180, 180], pitch: [-45, 45], elevator: [-1, 1], aileron: [-1, 1], rudder: [-1, 1], mainIncidence: [-10, 18], tailIncidence: [-12, 12] };
   for (const key of Object.keys(limits) as (keyof WindTunnelSettings)[]) if (!Number.isFinite(value[key]) || value[key] < limits[key][0] || value[key] > limits[key][1]) throw Error('风洞参数无效');
-  return { ...value };
+  return { ...value, speed: Math.min(value.speed, birdman ? 50 : 200) };
 }
 export function advanceWindTunnel(actual: WindTunnelSettings, target: WindTunnelSettings, dt: number, enabled: boolean, motion: ReturnType<typeof createWindTunnelMotion>) {
   for (const key of Object.keys(windTunnelRates) as (keyof WindTunnelSettings)[]) {
@@ -88,5 +88,5 @@ export function advanceWindTunnel(actual: WindTunnelSettings, target: WindTunnel
 /** Leave clearance for every pitch/roll attitude, including the largest editable span. */
 export function windTunnelRoom(definition: AircraftDefinition) {
   const radius = Math.max(definition.fuselage.length, definition.mainWing.points[1].y, definition.horizontalTail.points[1].y, definition.verticalTail.points[1].y) + 6;
-  return { halfX: Math.ceil(Math.max(20, radius)), halfY: Math.ceil(Math.max(14, radius)), halfZ: Math.ceil(Math.max(20, radius)), centerY: Math.ceil(Math.max(14, radius)) + 2 };
+  return { halfX: Math.ceil(Math.max(40, radius)), halfY: Math.ceil(Math.max(28, radius)), halfZ: Math.ceil(Math.max(40, radius)), centerY: Math.ceil(Math.max(28, radius)) + 2 };
 }

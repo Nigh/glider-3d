@@ -1,12 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
 import type { Material, MeshStandardMaterial } from 'three';
 import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint, presets } from '../src/model';
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
-import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, type ChallengeMode } from '../src/challenges';
-import { TEST_SPACE, testSpaceTerrainHeight } from '../src/laboratory';
+import { challengeCheckpoints, challengeCollisionHeight, challengeGateCeiling, challengeGateProfile, DOWNHILL_PLAIN_START, challengeLaunch, challengeStartGate, downhillRuins, type ChallengeMode } from '../src/challenges';
+import { TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from '../src/laboratory';
+
+it('废墟窗带完整位于所属墙面外，倾斜建筑也不与墙面相交', () => {
+  const view = Object.assign(Object.create(SceneView.prototype), {
+    mountainEnvironment: new Group(), renderer: { capabilities: { getMaxAnisotropy: () => 1 } },
+  });
+  view.buildDownhillRuins();
+  const bodies = view.mountainEnvironment.getObjectByName('fallen-highrises') as InstancedMesh;
+  const bands = view.mountainEnvironment.getObjectByName('ruin-window-bands') as InstancedMesh;
+  const bodyMatrix = new Matrix4(), bandMatrix = new Matrix4(), relative = new Matrix4();
+  const position = new Vector3(), rotation = new Quaternion(), dimensions = new Vector3();
+  const cube = new Box3(new Vector3(-0.5,-0.5,-0.5),new Vector3(0.5,0.5,0.5));
+  let index = 0;
+  for (const [bodyIndex, ruin] of downhillRuins.entries()) {
+    bodies.getMatrixAt(bodyIndex,bodyMatrix);
+    bodyMatrix.decompose(position,rotation,dimensions);
+    bodyMatrix.compose(position,rotation,new Vector3(1,1,1)).invert();
+    const windowCount = Math.ceil((ruin.length-6)/6)*2+1;
+    for (let window = 0; window < windowCount; window++) {
+      bands.getMatrixAt(index++,bandMatrix);
+      const bounds = cube.clone().applyMatrix4(relative.multiplyMatrices(bodyMatrix,bandMatrix));
+      const clearance = Math.max(bounds.min.x-dimensions.x/2,-dimensions.x/2-bounds.max.x,bounds.min.z-dimensions.z/2);
+      expect(clearance).toBeGreaterThan(0.01);
+    }
+  }
+  expect(index).toBe(bands.count);
+});
 
 it('renders every wing of a combined fin/tail fragment and removes only parts whose owner changed', () => {
   const geometry = () => new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(9), 3)).setIndex([0, 1, 2]);
@@ -206,6 +232,60 @@ function svgElement() {
 }
 
 describe('场景编辑与推力中心', () => {
+  it('根弦与梢弦共用圆形手柄，安装点为带十字菱形，顶点连线紧随手柄以共享hover/focus', () => {
+    type TestSvg = {
+      style: { display: string }; attributes: Map<string, string>;
+      setAttribute(name: string, value: string): void;
+      querySelector(): { textContent: string; setAttribute(): void };
+      tagName: string; children: TestSvg[]; classes: Set<string>;
+      classList: { add(...names: string[]): void };
+      addEventListener(): void; append(...children: TestSvg[]): void; appendChild(child: TestSvg): void;
+      removeAttribute(name: string): void; cloneNode(): TestSvg;
+    };
+    const create = (tagName: string): TestSvg => {
+      const classes = new Set<string>();
+      const node: TestSvg = {
+        ...svgElement(), tagName, children: [], classes,
+        classList: { add(...names: string[]) { for (const name of names) classes.add(name); } },
+        addEventListener() {},
+        append(...children: TestSvg[]) { node.children.push(...children); },
+        appendChild(child: TestSvg) { node.children.push(child); },
+        removeAttribute(name: string) { node.attributes.delete(name); },
+        cloneNode() {
+          const copy = create(tagName);
+          for (const [name, value] of node.attributes) copy.setAttribute(name, value);
+          return copy;
+        },
+      };
+      return node;
+    };
+    vi.stubGlobal('document', { createElementNS: (_namespace: string, tag: string) => create(tag) });
+    try {
+      const overlay = create('svg');
+      const segments: { group: TestSvg }[] = [];
+      const handles: { group: TestSvg; leader: TestSvg }[] = [];
+      const view = Object.assign(Object.create(SceneView.prototype), {
+        editorOverlay: overlay, editorHandles: handles, editorSegments: segments, editorPolygons: [],
+        host: { appendChild() {} },
+      });
+      view.buildEditorOverlay();
+      const knobs = segments.map(segment => segment.group.children.find(node => node.classes.has('editor-knob'))!);
+      expect(knobs.map(knob => knob.attributes.get('r'))).toEqual(['10', '10', '10']);
+      for (const segment of segments) {
+        expect(segment.group.children[1].classes.has('editor-chord-line')).toBe(true);
+        expect(segment.group.children[2].classes.has('editor-leader')).toBe(true);
+      }
+      for (const handle of handles) {
+        const index = overlay.children.indexOf(handle.group);
+        expect(overlay.children[index + 1]).toBe(handle.leader);
+        const mark = handle.group.children.find(node => node.classes.has('editor-mount-mark'))!;
+        expect(mark.attributes.get('d')).toContain('M -5 0 H 5 M 0 -5 V 5');
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('a visible vertex handle over a chord never selects the chord underneath', () => {
     const group=()=>({style:{display:'',cursor:''},focus(){}});
     const view=Object.assign(Object.create(SceneView.prototype),{
@@ -256,6 +336,70 @@ describe('场景编辑与推力中心', () => {
         expect(Number(handle.leader.attributes.get('y1'))).toBeCloseTo(anchors[index].y, 10);
       }
     }
+    anchors[1].x = 500;
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    for (const handle of handles) {
+      expect(handle.x).toBeCloseTo(handle.ax, 10);
+      expect(handle.y).toBeCloseTo(handle.ay, 10);
+      expect(handle.leader.style.display).toBe('none');
+    }
+  });
+
+  it.each([1, -1])('镜像视角%d中弦手柄始终朝投影翼面外侧，安装点保留真实位置', mirror => {
+    const anchors = [
+      { x: 400, y: 260 }, { x: 400 + mirror * 220, y: 260 },
+      { x: 400 + mirror * 220, y: 400 }, { x: 400, y: 400 },
+      { x: 400 - mirror * 220, y: 260 }, { x: 400 - mirror * 220, y: 400 },
+      { x: 400, y: 330 },
+    ];
+    const projection = new Vector3();
+    projection.project = () => projection;
+    const handles = anchors.map((_anchor, index) => ({
+      index: index < 4 ? index : index - 3, side: index < 4 ? 1 : -1,
+      x: 0, y: 0, ax: 0, ay: 0, group: svgElement(), leader: svgElement(),
+    }));
+    const segments = [0, 1, 2].map(index => ({
+      index: index === 0 ? 0 : 1, side: index === 2 ? -1 : 1,
+      x: 0, y: 0, ax: 0, ay: 0, x1: 0, y1: 0, x2: 0, y2: 0,
+      group: Object.assign(svgElement(), {
+        children: [svgElement(), svgElement(), svgElement()], querySelectorAll: () => [],
+      }),
+    }));
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      definition: clone(defaultAircraft), editorTarget: 'mainWing', simulation: null, editorDirty: true,
+      width: 1000, height: 700, aircraft: new Group(), camera: new OrthographicCamera(),
+      editorOverlay: svgElement(), editorHandles: handles, editorSegments: segments, editorPolygons: [svgElement(), svgElement()],
+      editProjection: projection, body: { localToWorld: (point: Vector3) => point },
+      wingEditorPoint(index: number, side: number, out: Vector3) {
+        const anchor = anchors[side < 0 ? index === 1 ? 4 : index === 2 ? 5 : index : index];
+        return out.set(anchor.x / 500 - 1, 1 - anchor.y / 350, 0);
+      },
+      assemblyEditorPoint(_index: number, out: Vector3) {
+        return out.set(anchors[6].x / 500 - 1, 1 - anchors[6].y / 350, 0);
+      },
+    });
+    view.updateEditorOverlay();
+    expect((segments[0].x - 400) * mirror).toBeCloseTo(-52, 10);
+    expect((segments[1].x - anchors[1].x) * mirror).toBeCloseTo(52, 10);
+    expect((segments[2].x - anchors[4].x) * mirror).toBeCloseTo(-52, 10);
+    expect(handles[6].x).toBeCloseTo(400, 10);
+    expect(handles[6].y).toBeCloseTo(330, 10);
+    const firstLayout = segments.map(segment => ({ x: segment.x, y: segment.y }));
+    segments[1].x += 104; // Old collision offsets must not survive a now-clear preferred position.
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    expect(segments.map(segment => ({ x: segment.x, y: segment.y }))).toEqual(firstLayout);
+    anchors[1].y = anchors[2].y = 330; // Edge-on chord projections still extend along the visible span.
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    expect((segments[1].x - anchors[1].x) * mirror).toBeCloseTo(52, 10);
+    anchors[6].x = -10; anchors[6].y = 40;
+    view.editorDirty = true;
+    view.updateEditorOverlay();
+    expect(handles[6].x).toBe(24);
+    expect(handles[6].y).toBe(64);
+    expect(handles[6].leader.style.display).not.toBe('none');
   });
 
   it('拖动编辑手柄时相机保持原投影，不套用飞行镜头极角限制', () => {
@@ -498,6 +642,7 @@ function steamView(challenge: ChallengeMode) {
     environmentChallenge: challenge, simulation: null,
     steam: new InstancedMesh(geometry, new MeshBasicMaterial({ opacity: 0.38 }), 384),
     steamParticle: new Object3D(), steamOpacity: opacity, steamTime: 0, steamEmitting: false,
+    steamReleaseTime: 0, steamFirstEmission: 1, steamBurstPairs: 0,
   });
 }
 
@@ -535,13 +680,22 @@ describe('弹射蒸汽与门框边界', () => {
       const released = view.steamDiagnostics();
       expect(released.count).toBe(384);
       expect(released.emitting).toBe(false);
-      simulation.elapsedTime += 0.8;
+      expect(released.burstCount).toBe(192);
+      const burst = released.particles.filter(particle => particle.burst);
+      expect(Math.min(...burst.map(particle => particle.radius))).toBeGreaterThan(0.6);
+      expect(Math.max(...burst.map(particle => particle.opacity))).toBeGreaterThan(0.8);
+      simulation.elapsedTime += 0.2;
+      view.updateSteam();
+      const expanded = view.steamDiagnostics().particles.filter(particle => particle.burst);
+      expect(expanded[0].radius).toBeGreaterThan(burst[0].radius);
+      expect(expanded[0].opacity).toBeLessThan(burst[0].opacity);
+      expect(Math.abs(expanded[0].position.z)).toBeGreaterThan(Math.abs(burst[0].position.z));
+      simulation.elapsedTime += 0.6;
       view.updateSteam();
       const dissipating = view.steamDiagnostics();
       expect(dissipating.count).toBeGreaterThan(0);
       expect(dissipating.count).toBeLessThan(released.count);
-      expect(dissipating.particles.at(-1).radius).toBeGreaterThan(released.particles.at(-1).radius);
-      expect(dissipating.particles.at(-1).opacity).toBeLessThan(released.particles.at(-1).opacity);
+      expect(dissipating.burstCount).toBe(0);
       const snapshot = view.steamDiagnostics();
       snapshot.particles[0].position.x = 1e6;
       expect(view.steamDiagnostics().particles[0].position.x).not.toBe(1e6);
@@ -593,6 +747,47 @@ describe('弹射蒸汽与门框边界', () => {
       while (!replay.replayFinished) replay.step(neutral);
       view.updateSteam();
       expect(view.steam.count).toBe(0);
+      view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
+    }
+  });
+
+  it('真实弹射分离时刻同步泄压，测试空间低速滑行不提前触发，暂停与跳转保持确定性', () => {
+    const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
+    for (const challenge of ['birdman', 'downhill', 'test-space'] as const) {
+      const settings = { height: 100, catapult: true, speed: 10 };
+      const sim = new FlightSimulation(defaultAircraft, challenge, 0, settings), view = steamView(challenge);
+      view.simulation = sim;
+      const matrices = view.steam.instanceMatrix.array;
+      while (sim.launching && !sim.ended) {
+        view.updateSteam();
+        expect(view.steamDiagnostics().burstCount).toBe(0);
+        sim.step(neutral);
+      }
+      expect(sim.ended).toBe(false);
+      view.updateSteam();
+      const separated = view.steamDiagnostics();
+      expect(separated.burstCount).toBe(192);
+      const launch = sim.launch;
+      const burst = separated.particles.filter(particle => particle.burst);
+      expect(burst.every(particle => Math.abs(particle.position.x - (launch?.endX ?? LAUNCH.endX)) < 1)).toBe(true);
+      if (challenge === 'test-space') expect(sim.elapsedTime).toBeGreaterThan(testCatapultSample(0, settings).duration - 1e-9);
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toEqual(separated);
+      for (let step = 0; step < 120; step++) sim.step(neutral);
+      view.updateSteam();
+      expect(view.steam.count).toBe(0);
+      // Direct time reconstruction gives identical clouds without replaying render frames.
+      view.simulation = { launch: sim.launch, challenge, testSpace: settings, elapsedTime: separated.time, launching: false, ended: false, replayFinished: false };
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toEqual(separated);
+      expect(view.steam.instanceMatrix.array).toBe(matrices);
+      view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
+    }
+    for (const challenge of ['test-space', 'wind-tunnel'] as const) {
+      const view = steamView(challenge);
+      view.simulation = new FlightSimulation(defaultAircraft, challenge, 0, { height: 100, speed: 10, catapult: false });
+      view.updateSteam();
+      expect(view.steamDiagnostics()).toMatchObject({ count: 0, burstCount: 0, emitting: false });
       view.steam.geometry.dispose(); view.steam.material.dispose(); view.steam.dispose();
     }
   });
@@ -883,7 +1078,7 @@ describe('工坊场景与直接选取', () => {
     definition.mainWing.dihedral = 25; definition.assembly.mainIncidence = 12;
     const view = Object.assign(Object.create(SceneView.prototype), {
       definition, editorTarget: 'mainWing', wingSections: [[], [], []], wingNormalGeometry: [],
-      wingNeutral: [], wingHinges: [], wingMovable: [], wingAxes: [],
+      wingCoordinates: [], wingNeutral: [], wingHinges: [], wingMovable: [], wingAxes: [],
       hingeLines: [{ geometry: new BufferGeometry() }],
     });
     const origin = wingOrigin(definition, 'mainWing'), wing = definition.mainWing;
@@ -907,7 +1102,7 @@ describe('工坊场景与直接选取', () => {
     const definition=clone(defaultAircraft);editWingPoint(definition,'verticalTail',1,0.3,-0.48);
     const view=Object.assign(Object.create(SceneView.prototype),{
       definition,editorTarget:'verticalTail',wingSections:[[],[],[]],wingNormalGeometry:[],
-      wingNeutral:[],wingHinges:[],wingMovable:[],wingAxes:[],
+      wingCoordinates:[],wingNeutral:[],wingHinges:[],wingMovable:[],wingAxes:[],
       hingeLines:Array.from({length:3},()=>({geometry:new BufferGeometry()})),
     });
     const origin=wingOrigin(definition,'verticalTail');
@@ -920,7 +1115,7 @@ describe('工坊场景与直接选取', () => {
     expect(simulation.structure.sections.filter(section=>section.wingKey==='verticalTail').at(-1)!.referenceTip.y).toBe(-0.48);
     geometry.dispose();view.wingNormalGeometry[2].dispose();for(const hinge of view.hingeLines)hinge.geometry.dispose();
   });
-  it('平尾安装在较大范围内吸附至精确梢弦中心，拖远脱离，Ctrl跳过吸附',()=>{
+  it('副翼安装在较大范围内吸附垂尾并保留安装角，拖远脱离，Ctrl跳过吸附',()=>{
     const view=designSceneView(),base=clone(defaultAircraft);
     Object.assign(view,{
       definition:base,editDefinition:clone(base),editorTarget:'horizontalTail',
@@ -933,7 +1128,9 @@ describe('工坊场景与直接选取', () => {
     expect(view.definition.assembly.tailOnFin).toBe(true);expect(view.editorSnap.kind).toBe('mount');
     expect(wingOrigin(view.definition,'horizontalTail').y).toBe(y);
     const mount=view.assemblyEditorPoint(1,new Vector3());
-    expect(mount.x).toBeCloseTo(origin.x-(p[1].x+p[2].x)/2,12);expect(mount.y).toBe(y);
+    const middle=(p[1].x+p[2].x)/2,angle=base.assembly.tailIncidence*DEG;
+    expect(view.definition.assembly.tailIncidence).toBe(base.assembly.tailIncidence);
+    expect(mount.x).toBeCloseTo(origin.x-middle*Math.cos(angle),12);expect(mount.y).toBeCloseTo(y-middle*Math.sin(angle),12);
     view.editDefinition=clone(view.definition);view.changeAssembly(1,0.6,0);
     expect(view.definition.assembly.tailOnFin).toBe(false);
     view.editDefinition=clone(base);view.editorSnap.disabled=true;view.changeAssembly(1,x,y);
@@ -972,6 +1169,59 @@ describe('工坊场景与直接选取', () => {
   });
 });
 
+it.each([0.3, 1])('live installation angle matches freshly built skin, hinges and controls (control fraction %s)', fraction => {
+  const definition = clone(presets.find(plane => !plane.birdman && plane.engine.count === 0)!);
+  definition.assembly.tailOnFin = false;
+  definition.mainWing.controlSurface = definition.horizontalTail.controlSurface = fraction;
+  const simulation = new FlightSimulation(definition, 'wind-tunnel', 0);
+  const build = () => {
+    const view = Object.assign(Object.create(SceneView.prototype), {
+      definition: simulation.definition, simulation, fragments: [], renderBlend: 1,
+      wingSections: [[], [], []], wingNormalGeometry: [], wingCoordinates: [], wingNeutral: [], wingHinges: [],
+      wingMovable: [], wingAxes: [], wingAngles: new Float64Array(3), wingMeshes: [],
+      hingeLines: Array.from({ length: 3 }, () => ({ geometry: new BufferGeometry() })),
+      deformationCenter: new Vector3(), controlRotation: new Quaternion(), deformationRotation: new Quaternion(),
+      deformationPoint: new Vector3(), deformationReference: new Vector3(), deformationRootTangent: new Vector3(),
+      deformationTipTangent: new Vector3(), deformationAxis: new Vector3(), deformationHinge: new Vector3(),
+      neutralReference: new Vector3(), incidenceRotation: new Quaternion(), vector: new Vector3(),
+    });
+    for (const [index, key] of (['mainWing', 'horizontalTail', 'verticalTail'] as const).entries()) {
+      const origin = wingOrigin(simulation.definition, key);
+      const incidence = index === 0 ? simulation.definition.assembly.mainIncidence : index === 1 ? simulation.definition.assembly.tailIncidence : 0;
+      view.wingMeshes.push(new Mesh(view.wingGeometry(simulation.definition[key], origin.x, origin.y, incidence, index)));
+    }
+    view.syncWingPhysics();
+    return view;
+  };
+  const dispose = (view: any) => {
+    for (let index = 0; index < 3; index++) {
+      view.wingMeshes[index].geometry.dispose(); view.wingNormalGeometry[index].dispose();
+      view.hingeLines[index].geometry.dispose(); view.wingMeshes[index].material.dispose();
+    }
+  };
+  const live = build(), originalGeometry = live.wingMeshes.map((mesh: Mesh) => mesh.geometry);
+  for (const [mainIncidence, tailIncidence] of [[18,-12], [-10,12], [4,0]]) {
+    simulation.setWindTunnel({ ...simulation.windTunnel, speed: 10, mainIncidence, tailIncidence, elevator: 0.2, aileron: -0.3 });
+    for (let frame = 0; frame < 60; frame++) simulation.step({ weight: 0, lateral: 0, elevator: 0, aileron: 0, rudder: 0 });
+    live.updateControlSurfaces();
+    const fresh = build(); fresh.updateControlSurfaces();
+    for (let index = 0; index < 3; index++) {
+      expect(live.wingMeshes[index].geometry).toBe(originalGeometry[index]);
+      for (const attribute of ['position', 'normal']) {
+        const actual = live.wingMeshes[index].geometry.getAttribute(attribute).array;
+        const expected = fresh.wingMeshes[index].geometry.getAttribute(attribute).array;
+        let maximumError = 0;
+        for (let value = 0; value < actual.length; value++) maximumError = Math.max(maximumError, Math.abs(actual[value] - expected[value]));
+        // Float32 skin coordinates feed thin cap/hinge triangle normals:
+        // require micron geometry and <0.1-degree normal agreement.
+        expect(maximumError, attribute).toBeLessThan(attribute === 'position' ? 3e-6 : 1.5e-3);
+      }
+    }
+    dispose(fresh);
+  }
+  dispose(live);
+});
+
 it.each([false, true])('renders per-strip control directions for front/rear tails and downward fin %s', downward => {
   const movement: number[][] = [];
   for (const mount of [-3, 2.5]) {
@@ -988,12 +1238,13 @@ it.each([false, true])('renders per-strip control directions for front/rear tail
     simulation.step({ weight: 0, elevator: 0.3, aileron: 0.3, rudder: 0.3 }, 0.05);
     const view = Object.assign(Object.create(SceneView.prototype), {
       definition: simulation.definition, simulation, fragments: [], renderBlend: 1,
-      wingSections: [[], [], []], wingNormalGeometry: [], wingNeutral: [], wingHinges: [],
+      wingSections: [[], [], []], wingNormalGeometry: [], wingCoordinates: [], wingNeutral: [], wingHinges: [],
       wingMovable: [], wingAxes: [], wingAngles: new Float64Array(3), wingMeshes: [],
       hingeLines: Array.from({ length: 3 }, () => ({ geometry: new BufferGeometry() })),
       deformationCenter: new Vector3(), controlRotation: new Quaternion(), deformationRotation: new Quaternion(),
       deformationPoint: new Vector3(), deformationReference: new Vector3(), deformationRootTangent: new Vector3(),
       deformationTipTangent: new Vector3(), deformationAxis: new Vector3(), deformationHinge: new Vector3(),
+      neutralReference: new Vector3(), incidenceRotation: new Quaternion(), vector: new Vector3(),
     });
     const keys = ['mainWing', 'horizontalTail', 'verticalTail'] as const;
     for (let index = 0; index < 3; index++) {
@@ -1011,17 +1262,24 @@ it.each([false, true])('renders per-strip control directions for front/rear tail
     const tailMovement: number[] = [];
     for (let index = 0; index < 3; index++) {
       for (const section of view.wingSections[index]) {
-        const vertex = section.vertexStart + Math.floor(section.rows / 2) * 32 + 16;
-        const neutral = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
-        const hinge = new Vector3().fromArray(view.wingHinges[index], vertex * 3);
-        const axis = view.wingAxes[index][index === 2 || section.side < 0 ? 0 : 1];
-        const expected = neutral.clone().sub(hinge).applyAxisAngle(axis, section.physics.controlDeflection).add(hinge);
-        const rendered = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
-        expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
-        if (index > 0 && section.side === 1 && section.spanStart === 0) {
-          tailMovement.push(index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z);
+        // Pitch and roll share these actuators, so main-wing strips need not move
+        // in opposite vertical directions. Check each local hinge rotation instead.
+        const rowStart = section.vertexStart + Math.floor(section.rows / 2) * 32;
+        for (const chordVertex of [0, 12, 16, 20]) {
+          const vertex = rowStart + chordVertex;
+          const neutral = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
+          const hinge = new Vector3().fromArray(view.wingHinges[index], vertex * 3);
+          const axis = view.wingAxes[index][index === 2 || section.side < 0 ? 0 : 1];
+          const expected = neutral.clone();
+          if (view.wingMovable[index][vertex]) {
+            expected.sub(hinge).applyAxisAngle(axis, section.physics.controlDeflection).add(hinge);
+          }
+          const rendered = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
+          expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
+          if (chordVertex === 16 && index > 0 && section.side === 1 && section.spanStart === 0) {
+            tailMovement.push(index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z);
+          }
         }
-        if (index === 0) expect((rendered.y - neutral.y) * section.side).toBeGreaterThan(0);
       }
     }
     movement.push(tailMovement);

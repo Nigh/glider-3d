@@ -75,12 +75,23 @@ describe('independent control allocation', () => {
     const sample = (smartMixing: boolean, rudder: number) => {
       const sim = new FlightSimulation(definition, 'test-space', 0, { height: 2000, catapult: false, speed: 20 });
       sim.launching = false;
+      // Rigid-wing limit isolates control allocation from asymmetric elastic baseline loads.
+      sim.structure.reset();
+      for (const section of sim.structure.sections) {
+        section.bendingStiffness = Infinity;
+        section.lateralStiffness = Infinity;
+        section.torsionalStiffness = Infinity;
+      }
       for (let frame = 0; frame < 30; frame++) {
         sim.position.set(100, 2000, 0); sim.quaternion.identity(); sim.velocity.set(20, 0, 0); sim.omega.set(0, 0, 0);
         sim.step({ ...neutral, rudder, smartMixing });
       }
       expect(sim.structure.fractureCount).toBe(0);
-      return sim.telemetry.torque.clone();
+      // Compare identical airflow/rates, not the different yaw trajectories within the last integration step.
+      sim.position.set(100, 2000, 0); sim.quaternion.identity(); sim.velocity.set(20, 0, 0); sim.omega.set(0, 0, 0);
+      Reflect.get(sim, 'updateControlDirections').call(sim);
+      Reflect.get(sim, 'evaluateForces').call(sim, neutral, sim.velocity, sim.omega, sim.quaternion, sim.position, { ...neutral, rudder });
+      return (Reflect.get(sim, 'torque') as Vector3).clone();
     };
     const ordinary = sample(false, 0.15).sub(sample(false, 0));
     const smart = sample(true, 0.15).sub(sample(true, 0));
@@ -102,7 +113,7 @@ describe('independent control allocation', () => {
       sim.step({ ...neutral, rudder: frame < 25 ? 0.5 : -0.5, smartMixing: true }, dt);
       expect(sim.telemetry.smartMixing).toBe(true);
       for (const section of sim.structure.sections) {
-        const limit = (section.wingKey === 'mainWing' ? 18 : section.wingKey === 'horizontalTail' ? 22 : 15) * DEG;
+        const limit = (section.wingKey === 'verticalTail' ? 15 : 22) * DEG;
         const current = section.controlDeflection / limit;
         expect(Math.abs(current)).toBeLessThanOrEqual(1 + 1e-12);
         expect(Math.abs(current - previous[section.id])).toBeLessThanOrEqual(CONTROL_SURFACE_RATE * dt + 1e-10);

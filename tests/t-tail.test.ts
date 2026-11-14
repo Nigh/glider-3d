@@ -19,7 +19,7 @@ function energy(body: StructuralBody) {
  return body.mass * (GRAVITY * body.position.y + body.velocity.lengthSq() / 2) + rotationalEnergy(body.inertiaTensor, body.omega);
 }
 
-it.each([1, -1])('transmits a mounted horizontal-tail contact through every supporting fin joint (%s)', sign => {
+it.each([1, -1])('transmits a mounted auxiliary-wing contact through every supporting fin joint (%s)', sign => {
  const sim = fixture(sign), sections = sim.structure.sections;
  const hit = sections.find(s => s.wingKey === 'horizontalTail' && s.side === 1)!;
  const force = new Vector3(60, 30, 40), point = hit.referenceTip.clone().add(new Vector3(0.2, 0, 0));

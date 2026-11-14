@@ -41,7 +41,7 @@ test('flight uses four views, repeated trim steps are 1%, and locked/pilot dragg
  expect(errors).toEqual([]);
 });
 
-test('replay retains all cameras and returning to a live flight restores an allowed view', async ({ page, isMobile }) => {
+test('replay retains all cameras and returning to a live flight restores an allowed view', async ({ page }) => {
  const text = await page.evaluate(async () => {
   const { FlightSimulation } = await import('/src/physics.ts');
   const { defaultAircraft } = await import('/src/model.ts');
@@ -57,7 +57,6 @@ test('replay retains all cameras and returning to a live flight restores an allo
   await camera.selectOption(name); await expect(camera).toHaveValue(name);
  }
  await camera.selectOption('自由');
- if (!isMobile) {
   const radius = () => page.evaluate(() => {
    const {camera,target} = (window as any).glider.scene;
    return Math.hypot(camera.x-target.x,camera.y-target.y,camera.z-target.z);
@@ -65,7 +64,6 @@ test('replay retains all cameras and returning to a live flight restores an allo
   const before = await radius();
   await page.mouse.move(900, 400); await page.mouse.wheel(0, 400);
   await expect.poll(radius).toBeGreaterThan(before * 1.1);
- }
  await page.getByRole('button', { name: '返回设计', exact: true }).click();
  await page.getByRole('navigation', { name: '游戏流程', exact: true }).getByRole('button', { name: '试飞', exact: true }).click();
  await expect(camera).toHaveValue('追尾');

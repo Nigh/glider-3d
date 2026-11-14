@@ -34,8 +34,8 @@ export const defaultStructures = {
 } satisfies Record<string, BeamStructure>;
 
 /** Closed rectangular tube; width chordwise, height normal to the wing. */
-export function beamSection(structure: BeamStructure, amount = 1) {
- const scale = Math.sqrt(amount), width = structure.width * scale, height = structure.height * scale, t = structure.wallThickness * scale;
+export function beamSection(structure: BeamStructure, amount = 1, depthScale = 1) {
+ const scale = Math.sqrt(amount), width = structure.width * scale, height = structure.height * scale * depthScale, t = structure.wallThickness * scale * Math.min(1, depthScale);
  const innerWidth = width - 2 * t, innerHeight = height - 2 * t;
  const middleWidth = width - t, middleHeight = height - t;
  return {

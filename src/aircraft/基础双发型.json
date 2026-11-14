@@ -6,7 +6,7 @@
     "center": 0
   },
   "cockpit": {
-    "position": 1.43
+    "position": 0.6299999999999999
   },
   "mainWing": {
     "points": [
@@ -15,12 +15,12 @@
         "y": 0
       },
       {
-        "x": 1.28,
-        "y": 2.2
+        "x": 0.94,
+        "y": 2.21
       },
       {
-        "x": 1.86,
-        "y": 2.2
+        "x": 1.52,
+        "y": 2.21
       },
       {
         "x": 2.56,
@@ -30,7 +30,11 @@
     "rootReference": 0.425,
     "dihedral": 2,
     "controlSurface": 0.15000000000000002,
-    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "carbon-epoxy",
@@ -63,7 +67,11 @@
     "rootReference": 0.325,
     "dihedral": 0,
     "controlSurface": 0.4,
-    "controlAxes": { "roll": true, "pitch": true, "yaw": false },
+    "controlAxes": {
+      "roll": true,
+      "pitch": true,
+      "yaw": false
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "carbon-epoxy",
@@ -96,7 +104,11 @@
     "rootReference": 0.35,
     "dihedral": 0,
     "controlSurface": 0.45,
-    "controlAxes": { "roll": false, "pitch": false, "yaw": true },
+    "controlAxes": {
+      "roll": false,
+      "pitch": false,
+      "yaw": true
+    },
     "controlResponse": 1,
     "controlReversed": false,
     "materialId": "carbon-epoxy",
@@ -108,11 +120,11 @@
     }
   },
   "assembly": {
-    "mainWing": 0.17999999999999994,
+    "mainWing": 0.6099999999999999,
     "mainWingHeight": 0,
     "horizontalTail": -2.92,
     "verticalTail": -2.9,
-    "mainIncidence": 0,
+    "mainIncidence": 2,
     "tailIncidence": 0,
     "tailOnFin": false
   },

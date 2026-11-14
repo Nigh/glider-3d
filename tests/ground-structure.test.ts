@@ -305,6 +305,7 @@ function collisionEvidence(sim: FlightSimulation) {
     for (const section of sim.structure.sectionsForBody(body.id)) {
       const sectionForce = section.surface.force.clone().applyQuaternion(inverse);
       const sectionMoment = new Vector3().crossVectors(section.surface.point, sectionForce);
+      sectionMoment.add(section.surface.moment.clone().applyQuaternion(inverse));
       if (contacts) { sectionForce.add(contacts[section.id].force); sectionMoment.add(contacts[section.id].moment); }
       sectionLoads.set(section.id, { force: sectionForce, moment: sectionMoment });
       residual.force.sub(sectionForce); residual.moment.sub(sectionMoment);
@@ -409,6 +410,10 @@ it.each([0.08, 0.4])('mirrors long-wing first fractures, stresses and ownership 
   vi.spyOn(challenges, 'challengeTerrainHeight').mockReturnValue(20);
   vi.spyOn(challenges, 'challengeCollisionHeight').mockReturnValue(20);
   const left = longWingCollision(bank), right = longWingCollision(-bank);
+  // Exercise fractured ownership as well as symmetry; a gentle flat-ground
+  // graze may remain intact with the current pressure couple and polar.
+  left.velocity.y = right.velocity.y = -2;
+  collisionInternals(left).updateTelemetry(); collisionInternals(right).updateTelemetry();
   const a = collisionEvidence(left), b = collisionEvidence(right);
   const initial = [ledger(left), ledger(right)];
   const mirrorId = (id: number) => {

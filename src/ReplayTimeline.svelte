@@ -12,7 +12,7 @@
 <section class="replay-timeline" class:paused aria-label={t('回放时间轴')} aria-busy={seeking}>
  <div class="timeline-heading"><strong>{t('回放时间轴')}</strong><output>{position.toFixed(2)} / {duration.toFixed(2)} s</output></div>
  <div class="waveform">
-  <div class="timeline-legend"><span class="main-load">{t('主翼')}</span><span class="tail-load">{t('水平尾翼')}</span><span class="vertical-load">{t('垂直尾翼')}</span><span>{t('结构极限利用率')} · {(scale*100).toFixed(0)}%</span></div>
+  <div class="timeline-legend"><span class="main-load">{t('主翼')}</span><span class="tail-load">{t('副翼')}</span><span class="vertical-load">{t('垂直尾翼')}</span><span>{t('结构极限利用率')} · {(scale*100).toFixed(0)}%</span></div>
   <svg viewBox="0 0 600 80" preserveAspectRatio="none" role="img" aria-label={t('翼面负载曲线')}>
    {#if scale>=1}<line x1="0" x2="600" y1={70-60/scale} y2={70-60/scale} stroke="currentColor" stroke-dasharray="4 4" opacity="0.3"/>{/if}
    {#each curves as curve}<polyline class={curve.key+'-load'} points={curve.points} fill="none" stroke-width="2" vector-effect="non-scaling-stroke"/>{/each}

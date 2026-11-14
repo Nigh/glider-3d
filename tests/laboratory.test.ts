@@ -237,7 +237,7 @@ describe('wind tunnel', () => {
   });
   it('smooths every input in both directions while fixing the body and using right-to-left airflow', () => {
     const sim = new FlightSimulation(powered(), 'wind-tunnel', 0), before = { ...sim.windTunnel };
-    const target = { speed: 200, roll: 180, pitch: 45, elevator: 1, aileron: -1, rudder: 1 };
+    const target = { ...defaultWindTunnel, speed: 200, roll: 180, pitch: 45, elevator: 1, aileron: -1, rudder: 1, mainIncidence: 18, tailIncidence: 12 };
     sim.setWindTunnelEnabled(true);
     sim.setWindTunnel(target); expect(sim.windTunnel).toEqual(before);
     sim.step(neutral);
@@ -247,13 +247,13 @@ describe('wind tunnel', () => {
     }
     expect(sim.velocity.lengthSq()).toBe(0); expect(sim.telemetry.drag.x).toBeLessThan(0);
     const current = { ...sim.windTunnel };
-    sim.setWindTunnel({ speed: 1, roll: -180, pitch: -45, elevator: -1, aileron: 1, rudder: -1 }); sim.step(neutral);
+    sim.setWindTunnel({ ...defaultWindTunnel, speed: 1, roll: -180, pitch: -45, elevator: -1, aileron: 1, rudder: -1, mainIncidence: -10, tailIncidence: -12 }); sim.step(neutral);
     for (const key of Object.keys(target) as (keyof typeof target)[]) expect(Math.abs(sim.windTunnel[key] - current[key])).toBeLessThanOrEqual(windTunnelRates[key] / 60 + 1e-10);
     expect(sim.recording.byteLength).toBe(0); expect(sim.recordingLength).toBe(0);
   });
   it('preserves targets and angular motion when restoring during an input transition', () => {
     const sim = new FlightSimulation(powered(), 'wind-tunnel', 0), reference = new FlightSimulation(powered(), 'wind-tunnel', 0);
-    const target = { speed: 25, roll: 10, pitch: 4.1, elevator: 0.2, aileron: -0.3, rudder: 0.1 };
+    const target = { ...defaultWindTunnel, speed: 25, roll: 10, pitch: 4.1, elevator: 0.2, aileron: -0.3, rudder: 0.1 };
     for (const flight of [sim, reference]) { flight.setWindTunnel(target); flight.setWindTunnelEnabled(true); }
     for (let i = 0; i < 3; i++) { sim.step(neutral); reference.step(neutral); }
     const actual = { ...sim.windTunnel }, omega = sim.omega.clone();
@@ -296,7 +296,7 @@ describe('wind tunnel', () => {
   });
   it('rejects out-of-range and non-finite live controls', () => {
     const sim = new FlightSimulation(defaultAircraft, 'wind-tunnel', 0);
-    for (const invalid of [{ speed: 0 }, { speed: 201 }, { pitch: NaN }, { pitch: 45.1 }, { pitch: -45.1 }, { roll: 181 }, { rudder: Infinity }]) expect(() => sim.setWindTunnel({ ...defaultWindTunnel, ...invalid })).toThrow();
+    for (const invalid of [{ speed: 0 }, { speed: 201 }, { pitch: NaN }, { pitch: 45.1 }, { pitch: -45.1 }, { roll: 181 }, { rudder: Infinity }, { mainIncidence: 18.1 }, { mainIncidence: -10.1 }, { tailIncidence: 12.1 }, { tailIncidence: NaN }]) expect(() => sim.setWindTunnel({ ...defaultWindTunnel, ...invalid })).toThrow();
     for (const pitch of [-45, -44.9, 44.9, 45]) expect(() => sim.setWindTunnel({ ...defaultWindTunnel, pitch })).not.toThrow();
   });
   it('reports angle of attack from relative airflow while the fixture stays stationary', () => {
@@ -310,5 +310,55 @@ describe('wind tunnel', () => {
     expect(sim.windTunnel.pitch).toBe(5);
     expect(sim.telemetry.alpha * 180 / Math.PI).toBeCloseTo(5 + sim.definition.assembly.mainIncidence, 7);
     expect(sim.telemetry.sink).toBeCloseTo(0, 12);
+  });
+  it.each([false, true])('routes roll and pitch to the real aircraft controls, birdman=%s', birdman => {
+    const definition = birdman ? clone(defaultAircraft) : powered();
+    const sim = new FlightSimulation(definition, 'wind-tunnel', 0);
+    sim.setWindTunnel({ ...sim.windTunnel, speed: 10, aileron: 0.6, elevator: -0.5, rudder: 0.25 });
+    for (let i = 0; i < 90; i++) sim.step(neutral);
+    if (birdman) {
+      expect(sim.pilotOffset.z).toBeCloseTo(0.6 * definition.controls.lateralTravel, 8);
+      expect(sim.pilotOffset.x).toBeCloseTo(-0.5 * definition.controls.travel, 8);
+    } else {
+      expect(sim.telemetry.controlInputs.aileron).toBeCloseTo(0.6, 8);
+      expect(sim.telemetry.controlInputs.elevator).toBeCloseTo(-0.5, 8);
+      expect(sim.surfaces.some(surface => Math.abs(surface.controlCommand) > 0.1)).toBe(true);
+    }
+    expect(sim.position.toArray().every(Number.isFinite)).toBe(true);
+  });
+  it('changes actual installation angles at the tunnel rate and restores without losing geometry', () => {
+    const definition = powered(), sim = new FlightSimulation(definition, 'wind-tunnel', 0);
+    expect(sim.windTunnel.mainIncidence).toBe(definition.assembly.mainIncidence);
+    expect(sim.windTunnel.tailIncidence).toBe(definition.assembly.tailIncidence);
+    const initial = { ...sim.windTunnel }, target = { ...initial, speed: 10, mainIncidence: 18, tailIncidence: -12 };
+    sim.setWindTunnel(target);
+    expect(sim.definition.assembly.mainIncidence).toBe(initial.mainIncidence);
+    sim.step(neutral);
+    for (const key of ['mainIncidence', 'tailIncidence'] as const) {
+      expect(Math.abs(sim.windTunnel[key] - initial[key])).toBeLessThanOrEqual(windTunnelRates[key] / 60 + 1e-10);
+      expect(sim.windTunnel[key]).not.toBe(target[key]);
+      expect(sim.definition.assembly[key]).toBe(sim.windTunnel[key]);
+    }
+    const actual = { ...sim.windTunnel };
+    sim.restoreWindTunnelAircraft();
+    expect(sim.windTunnel).toEqual(actual);
+    expect(sim.definition.assembly.mainIncidence).toBe(actual.mainIncidence);
+    expect(sim.definition.assembly.tailIncidence).toBe(actual.tailIncidence);
+    for (let i = 0; i < 60; i++) sim.step(neutral);
+    expect(sim.definition.assembly.mainIncidence).toBe(18);
+    expect(sim.definition.assembly.tailIncidence).toBe(-12);
+    sim.setWindTunnel({ ...target, mainIncidence: -10, tailIncidence: 12 });
+    sim.step(neutral);
+    expect(sim.definition.assembly.mainIncidence).toBeCloseTo(18 - windTunnelRates.mainIncidence / 60, 8);
+    expect(sim.definition.assembly.tailIncidence).toBeCloseTo(-12 + windTunnelRates.tailIncidence / 60, 8);
+  });
+  it('allows fin-mounted auxiliary wing incidence during live changes', () => {
+    const definition = powered(); definition.assembly.tailOnFin = true;
+    const sim = new FlightSimulation(definition, 'wind-tunnel', 0);
+    sim.setWindTunnel({ ...sim.windTunnel, speed: 10, mainIncidence: 4, tailIncidence: 12 });
+    for (let i = 0; i < 30; i++) sim.step(neutral);
+    expect(sim.windTunnel.mainIncidence).toBe(4);
+    expect(sim.windTunnel.tailIncidence).toBe(12);
+    expect(sim.definition.assembly.tailIncidence).toBe(12);
   });
 });
