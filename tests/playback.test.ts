@@ -48,7 +48,7 @@ it('records real per-step G peaks and reproduces them in replay, including launc
  const end=await seekReplay({definition,challenge:'downhill',recording:sim.getRecording()},Infinity,()=>false);
  expect(end!.result).toEqual(sim.result);
  sim.reset();expect(sim.telemetry.gForce).toBeCloseTo(1,12);
-},20000);
+});
 
 it('persists fixed frame-aligned keyframes and seeks untouched regions with bounded integration', async () => {
  const definition=clone(presets.find(p=>p.name==='基础单发型')!),sim=new FlightSimulation(definition,'low-altitude',0.005);
