@@ -2,6 +2,8 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "正在计算 Ghost 秒差…": ["Calculating ghost splits…", "ゴーストとの時間差を計算中…"],
+ "Ghost 回放状态无效": ["Invalid ghost replay state", "ゴーストの状態が無効です"],
  "有效计时": ["Race time", "有効タイム"],
  "Ghost 检查点秒差": ["Ghost checkpoint split", "ゴーストとのチェックポイント時間差"],
  "检查点 {number}": ["Checkpoint {number}", "チェックポイント {number}"],

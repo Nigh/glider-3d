@@ -1,9 +1,11 @@
 import { clone, validateAircraft, type AircraftDefinition } from './model';
-import { FRAME_WIDTH, MAX_FRAMES, LAUNCH, PLATFORM, validateRecording, restoreReplayKeyframe, type InputRecording, type ReplayKeyframe, type SimulationSnapshot } from './physics';
+import { FRAME_WIDTH, MAX_FRAMES, LAUNCH, PLATFORM, FlightSimulation, validateRecording, restoreReplayKeyframe, type InputRecording, type ReplayKeyframe, type SimulationSnapshot } from './physics';
 import { PHYSICS_VERSION, isAircraftCompatible } from './storage';
 import { isLaboratory } from './laboratory';
 import { challengeDefinitions, challengeLaunch, challengeStartGate, challengeCheckpoints, challengeGateProfile, challengeTerrainGrid, challengeTerrainHeight, challengeRiverHeight, challengeRiverCenter, downhillRuins, CHALLENGE_RIVER, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
-import { prepareReplay } from './playback';
+import { prepareReplay, replayDuration } from './playback';
+import { captureGhost, type GhostFrame } from './ghost';
+import { encodeGhostFrames, decodeGhostFrames } from './ghost-track';
 
 export const MAX_REPLAY_BYTES = 16 * 1024 * 1024;
 export const MAX_KEYFRAME_BYTES = 128 * 1024 * 1024;
@@ -33,6 +35,8 @@ function checkedReplay(replay: Replay): Replay {
   if (replay.challenge === 'birdman' && (!definition.birdman || definition.engine.count > 0)) throw Error('鸟人间比赛只允许无动力鸟人间设计');
   if (!isAircraftCompatible(definition, replay.challenge)) throw Error('当前挑战不可使用鸟人间飞机，请选择普通飞机。');
   validateRecording(replay.recording);
+  const splits=replay.recording.checkpointTimes;
+  if(splits!==undefined&&(!Array.isArray(splits)||splits.length>challengeCheckpoints(replay.challenge).length||splits.some((time,index)=>time!==null&&(!Number.isFinite(time)||time<0||index>0&&splits[index-1]!==null&&time<splits[index-1]!))))throw Error('Ghost 回放状态无效');
   if (!replay.recording.length) throw Error('飞行记录长度无效');
   return { definition, challenge: replay.challenge, recording: replay.recording };
 }
@@ -48,16 +52,17 @@ export async function exportReplay(replay: Replay): Promise<string> {
   const encoded = new Uint8Array(await new Response(new Blob([keyframeText]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
   let binary = '';
   for (let i = 0; i < encoded.length; i += 32768) binary += String.fromCharCode(...encoded.subarray(i, i + 32768));
-  const data = { format: 'aero-formula-replay', version: 1, physicsVersion: PHYSICS_VERSION, challenge: snapshot.challenge, definition: snapshot.definition, recording: { length: snapshot.recording.length, launchRoll: snapshot.recording.launchRoll, frames: Array.from(snapshot.recording.frames), wingLoads: snapshot.recording.wingLoads ? Array.from(snapshot.recording.wingLoads) : undefined, keyframeEncoding: 'gzip-base64', keyframeData: btoa(binary) } };
+  const ghostData=snapshot.recording.ghostFrames?await encodeGhostFrames(snapshot.recording.ghostFrames):undefined;
+  const data = { format: 'aero-formula-replay', version: 1, physicsVersion: PHYSICS_VERSION, challenge: snapshot.challenge, definition: snapshot.definition, recording: { length: snapshot.recording.length, launchRoll: snapshot.recording.launchRoll, frames: Array.from(snapshot.recording.frames), wingLoads: snapshot.recording.wingLoads ? Array.from(snapshot.recording.wingLoads) : undefined, keyframeEncoding: 'gzip-base64', keyframeData: btoa(binary), ghostEncoding:ghostData?'gzip-f64-v1':undefined,ghostData,checkpointTimes:snapshot.recording.checkpointTimes } };
   const text = JSON.stringify({ ...data, mapHash: await mapHash(snapshot.challenge) });
   if (new TextEncoder().encode(text).length > MAX_REPLAY_BYTES) throw Error('回放文件超过 16 MB');
   return text;
 }
 
-async function validateKeyframeStates(replay: Replay) {
+async function validateKeyframeStates(replay: Replay, read?: (sim: FlightSimulation) => void) {
   let deadline = performance.now() + 8;
   for (const point of replay.recording.keyframes ?? []) {
-    restoreReplayKeyframe(replay.definition, replay.challenge, replay.recording, point);
+    const sim=restoreReplayKeyframe(replay.definition, replay.challenge, replay.recording, point);read?.(sim);
     if (performance.now() >= deadline) {
       await new Promise(resolve => setTimeout(resolve, 0));
       deadline = performance.now() + 8;
@@ -117,7 +122,7 @@ async function decodeKeyframes(recording: Record<string, unknown>) {
   }
 }
 
-export async function importReplay(text: string): Promise<Replay> {
+export async function importReplay(text: string, purpose: 'replay' | 'ghost' = 'replay', onGhostFrames?: (replay: Replay, frames: GhostFrame[]) => void): Promise<Replay> {
   if (new TextEncoder().encode(text).length > MAX_REPLAY_BYTES) throw Error('回放文件超过 16 MB');
   let data: unknown;
   try { data = JSON.parse(text); } catch { throw Error('回放文件格式无效'); }
@@ -130,8 +135,28 @@ export async function importReplay(text: string): Promise<Replay> {
   if (!isObject(recording) || !Array.isArray(recording.frames) || recording.frames.length > MAX_FRAMES * FRAME_WIDTH || !recording.frames.every(value => typeof value === 'number')) throw Error('飞行记录包含无效输入');
   if (recording.wingLoads !== undefined && (!Array.isArray(recording.wingLoads) || !recording.wingLoads.every(value => typeof value === 'number'))) throw Error('飞行记录包含无效负载');
   if (typeof recording.length !== 'number' || typeof recording.launchRoll !== 'number') throw Error('飞行记录长度无效');
-  const replay = checkedReplay({ definition: validateAircraft(data.definition), challenge, recording: { length: recording.length, launchRoll: recording.launchRoll, frames: new Float64Array(recording.frames), wingLoads: recording.wingLoads === undefined ? undefined : new Float64Array(recording.wingLoads as number[]), keyframes: await decodeKeyframes(recording) } });
+  const visual=recording.ghostData!==undefined;
+  if(visual?recording.ghostEncoding!=='gzip-f64-v1':recording.ghostEncoding!==undefined)throw Error('Ghost 回放状态无效');
+  const replay = checkedReplay({ definition: validateAircraft(data.definition), challenge, recording: { length: recording.length, launchRoll: recording.launchRoll, frames: new Float64Array(recording.frames), wingLoads: recording.wingLoads === undefined ? undefined : new Float64Array(recording.wingLoads as number[]), keyframes: purpose==='ghost'&&visual?undefined:await decodeKeyframes(recording), checkpointTimes:recording.checkpointTimes as InputRecording['checkpointTimes'] } });
   if (data.mapHash !== await mapHash(replay.challenge)) throw Error('回放地图不匹配');
+  if(visual){
+    const sections=new FlightSimulation(replay.definition,challenge,replay.recording.launchRoll).structure.sections.length;
+    replay.recording.ghostFrames=await decodeGhostFrames(recording.ghostData,replayDuration(replay.recording),sections,replay.recording.length);
+  }
+  if(purpose==='ghost'){
+    if(!visual){
+      await prepareReplay(replay);
+      // shortcut: legacy motion follows sparse stored knots; new flight recordings supply 10 Hz tracks.
+      const frames: GhostFrame[]=[];let batch:GhostFrame[]=[],sent=false;
+      await validateKeyframeStates(replay,sim=>{
+        const frame=captureGhost(sim);frame.done=frames.length===replay.recording.keyframes!.length-1;frames.push(frame);batch.push(frame);
+        if(onGhostFrames&&batch.length>=(sent?32:2)){onGhostFrames(replay,batch);batch=[];sent=true;}
+      });
+      replay.recording.ghostFrames=frames;
+      if(onGhostFrames&&batch.length)onGhostFrames(replay,batch);
+    }
+    return replay;
+  }
   await validateKeyframeStates(replay);
   await prepareReplay(replay);
   return replay;

@@ -107,10 +107,10 @@
  function selectCamera(value:string){flightCamera=value;scene.cameraView(value);try{localStorage.setItem(cameraKey,value);}catch{/* Keep the session preference when storage is blocked. */}}
  let activeReplay=$state.raw<Replay|null>(null),seeking=$state(false),replayPosition=$state(0);let seekVersion=0;
  let ghost:GhostPlayer|null=null,ghostVersion=0,ghostSceneReady=false;
- let ghostName=$state(''),ghostBusy=$state(false),ghostBuffering=$state(false);
+ let ghostName=$state(''),ghostBusy=$state(false),ghostTimingReady=$state(false);
  let ghostInput=$state<HTMLInputElement>();
  let ghostTimes=$state.raw<readonly (number|null)[]>([]);
- function clearGhost(){ghostVersion++;ghost?.dispose();ghost=null;ghostName='';ghostTimes=[];ghostBusy=ghostBuffering=false;ghostSceneReady=false;scene?.setGhost(null);}
+ function clearGhost(){ghostVersion++;ghost?.dispose();ghost=null;ghostName='';ghostTimes=[];ghostBusy=ghostTimingReady=false;ghostSceneReady=false;scene?.setGhost(null);}
  async function ghostImport(event:Event){
   const input=event.target as HTMLInputElement,file=input.files?.[0];input.value='';
   if(!file||flightReady)return;
@@ -122,6 +122,7 @@
     if(version!==ghostVersion||!ghost)return;
     ghostBusy=!ghost.ready;
     ghostTimes=ghost.checkpointTimes;
+    ghostTimingReady=ghost.timingReady;
     if(ghost.ready&&!ghostSceneReady&&ghost.definition){scene.setGhost(ghost.definition,lastChallenge);ghostSceneReady=true;}
    },error=>{if(version===ghostVersion){clearGhost();notify(t('导入失败：{error}',{error:t(error)}));}});
   }catch(error){if(version===ghostVersion){clearGhost();notify(t('导入失败：{error}',{error:t((error as Error).message)}));}}
@@ -362,8 +363,7 @@ const tick=(now:number)=>{
      if(absolute>=0)throttle=absolute;
      throttle=clamp(throttle+(input.value('throttleUp')-input.value('throttleDown'))*elapsed*0.35,0,1);
     }
-    if(ghost&&simulation){ghost.request(simulation.elapsedTime);ghostBuffering=flightReady&&!paused&&!ghost.buffer.covers(simulation.elapsedTime+0.1);}
-    const running=screen==='flight'&&simulation&&flightReady&&!paused&&!seeking&&!inputSettingsOpen&&!ghostBuffering&&!replayImporting;
+    const running=screen==='flight'&&simulation&&flightReady&&!paused&&!seeking&&!inputSettingsOpen&&!replayImporting;
     let alpha=1;
     if(running){
       alpha=clock.advance(elapsed,stepFlight);
@@ -389,7 +389,7 @@ window.addEventListener('pointermove',mouse);
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get flightControls(){return {trimPitch:displayedPitch,trimRoll:displayedRoll,autoTrim:isReplay?hud.autoTrim:autoTrim,smartMixing:isReplay?hud.smartMixing??false:smartMixing,adaptiveControls:isReplay?hud.adaptiveControls:adaptiveControls,controlLimit:hud.controlLimit??1,inputs:simulation?.telemetry.controlInputs}},get result(){return result}}});
  Object.defineProperty((window as any).glider,'laboratory',{get:()=>simulation&&isLaboratory(simulation.challenge)?{mode:simulation.challenge,settings:{...simulation.testSpace},wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,recordingBytes:simulation.recording.byteLength,curveSamples:samples.length,fractures:simulation.structure.fractureCount,fragments:simulation.fragments.length}:null});
- Object.defineProperty((window as any).glider,'ghost',{get:()=>ghost?{ready:ghost.ready,buffering:ghostBuffering,frames:ghost.buffer.frames.length,end:ghost.buffer.end?.time,time:simulation?.elapsedTime}:null});
+ Object.defineProperty((window as any).glider,'ghost',{get:()=>ghost?{ready:ghost.ready,buffering:false,frames:ghost.buffer.frames.length,end:ghost.buffer.end?.time,time:simulation?.elapsedTime}:null});
  return()=>{window.removeEventListener('pointermove',mouse);clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',visibility);};});
 
 </script>
@@ -576,7 +576,7 @@ window.addEventListener('pointermove',mouse);
  </section>
  </section>
  {:else if screen==='flight'}
- {#if ghostBuffering}<div class="ghost-buffering" role="status">{t("Ghost 回放缓冲中…")}</div>{/if}
+ {#if lastChallenge==='downhill'}<div class="downhill-timing"><DownhillTiming time={hud.time} started={hud.timingStarted??false} checkpointTimes={hud.checkpointTimes??[]} {ghostTimes} ghostActive={!!ghostName} timingReady={ghostTimingReady}/></div>{/if}
  {#if !flightReady&&lastChallenge!=='wind-tunnel'}<div class="launch-action">{#if !isReplay&&!isLaboratory(lastChallenge)}<div class="ghost-selection"><span>{t("Ghost 回放")}</span><input bind:this={ghostInput} hidden type="file" accept=".json,application/json" onchange={ghostImport} aria-label={t("选择 Ghost 回放文件")}/><div class="ghost-actions"><button onclick={()=>ghostInput?.click()}>{t(ghostName?"更换 Ghost 回放":"选择 Ghost 回放文件")}</button>{#if ghostName}<button onclick={clearGhost}>{t("移除 Ghost")}</button>{/if}</div>{#if ghostName}<p role="status">{ghostBusy?t("正在准备 Ghost 回放…"):ghostName}</p>{/if}</div>{/if}<button class="primary launch-start flight-start" disabled={ghostBusy} onclick={beginFlight}>{t("开始试飞")}<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg></button><p>{t("空格开始 / 暂停 / 继续")}</p></div>{/if}
  {#if (flightCamera==='驾驶员'||flightCamera==='锁定')&&pilotHud}
  <svg class="pilot-hud" viewBox={`0 0 ${pilotHud.width} ${pilotHud.height}`} aria-label="HUD" role="img">
@@ -603,7 +603,6 @@ window.addEventListener('pointermove',mouse);
  {#if lastChallenge==='birdman'}<div><small>{t("滑翔距离")}</small><strong>{hud.distance.toFixed(1)}<em>m</em></strong></div>{/if}
  <div><small>{t("空速")}</small><strong>{hud.speed.toFixed(1)}<em>m/s</em></strong></div>
  {#if lastChallenge==='downhill'}
- <DownhillTiming time={hud.time} started={hud.timingStarted??false} checkpointTimes={hud.checkpointTimes??[]} {ghostTimes} ghostActive={!!ghostName}/>
  <div class="vertical-speed" data-direction={hud.sink<=-0.1?"up":hud.sink>=0.1?"down":"level"}><small>{t("垂直速度")}</small><strong><span class="vertical-arrow" aria-hidden="true">{hud.sink<=-0.1?"↑":hud.sink>=0.1?"↓":"━"}</span>{(-hud.sink).toFixed(1)}<em>m/s</em></strong></div>
  {:else if lastChallenge==='low-altitude'}
  <div><small>{t("离地高度")}</small><strong>{(hud.groundClearance??0).toFixed(1)}<em>m</em></strong></div><div><small>{t("剩余燃料")}</small><strong>{(hud.fuelRemaining??0).toFixed(2)}<em>L</em></strong></div>

@@ -10,6 +10,7 @@ import { mixControlSurfaces, type MixingSurface } from './control-mixing';
 import { airfoilY, AIR_VISCOSITY, highReDragScale, naca0012Section, type AirfoilId } from './airfoils';
 import { DRAG_TERMS, type DragTerm } from './drag';
 import { AirframeExposure } from './exposure';
+import { ghostRecording, recordGhost, resetGhostRecording, type GhostFrame } from './ghost';
 
 export const GRAVITY = 9.81;
 /** Production clock; diagnostic step(dt) calls share this overload interval. */
@@ -269,7 +270,7 @@ type SnapshotValue = number | string | boolean | null | [number];
 type SnapshotNode = [string, string[], SnapshotValue[]];
 export interface SimulationSnapshot { binding: string; changes: [number, (number | string | SnapshotValue)[]][]; extra: SnapshotNode[] }
 export interface ReplayKeyframe { time: number; frame: number; state: SimulationSnapshot }
-export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array; keyframes?: ReplayKeyframe[] }
+export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array; keyframes?: ReplayKeyframe[]; ghostFrames?: GhostFrame[]; checkpointTimes?: readonly (number | null)[] }
 
 export function validateRecording(recording: InputRecording): void {
   if (!(recording.frames instanceof Float64Array) || !Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length !== recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
@@ -1385,6 +1386,7 @@ export class FlightSimulation {
     if (!Number.isFinite(launchRoll) || Math.abs(launchRoll) > LAUNCH_ROLL_LIMIT) throw new RangeError('离台滚转角须在 ±1° 之间');
     this.launchRoll = launchRoll;
     raceCheckpointTimes.set(this, []);
+    resetGhostRecording(this);
     this.railX = LOW_RUNWAY.startX;
     this.position.set(LAUNCH.startX, this.launchAltitude, 0);
     this.velocity.set(0, 0, 0);
@@ -1471,7 +1473,7 @@ export class FlightSimulation {
   getRecording(): InputRecording {
     if(this.replay) return { ...this.replay, frames:this.replay.frames.slice(), wingLoads:this.replay.wingLoads?.slice() };
     if (!isLaboratory(this.challenge) && this.recordingLength && this.keyframes.at(-1)?.frame !== this.recordingLength) this.captureKeyframe();
-    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3), keyframes: this.keyframes.slice() };
+    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3), keyframes: this.keyframes.slice(), ghostFrames: ghostRecording(this), checkpointTimes: this.checkpointTimes.slice() };
   }
 
   private captureKeyframe() {
@@ -1739,7 +1741,7 @@ export class FlightSimulation {
   step(controls: FlightControls, dt = PHYSICS_TICK) {
     if (this.ended || this.replayFinished) return;
     const started = performance.now(), recordingFrame = this.recordingLength;
-    if (!this.replay && !isLaboratory(this.challenge) && !this.keyframes.length) this.captureKeyframe();
+    if (!this.replay && !isLaboratory(this.challenge) && !this.keyframes.length) { this.captureKeyframe(); recordGhost(this); }
     const input = this.effective;
     if (this.replay) {
       const offset = this.replayIndex * FRAME_WIDTH;
@@ -1802,6 +1804,7 @@ export class FlightSimulation {
     this.frameLoads.fill(0);
     this.integrateTicks(input, dt);
     if (!this.replay && recordingFrame < this.recordingLength) this.wingLoads.set(this.frameLoads, recordingFrame * 3);
+    if (!this.replay && recordingFrame < this.recordingLength) recordGhost(this);
     this.telemetry.physicsMs = performance.now() - started;
     if (!this.replay && !isLaboratory(this.challenge) && this.recordingLength > recordingFrame && (this.elapsed + 1e-9 >= this.nextKeyframe || this.ended)) {
       this.captureKeyframe();

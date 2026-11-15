@@ -1,13 +1,38 @@
 import { NoBlending, Quaternion, Vector3, type Material, type Object3D } from 'three';
 import type { FlightSimulation } from './physics';
 
-export const GHOST_LOOKAHEAD = 1;
 export const GHOST_SECTION_WIDTH = 24;
+export const MAX_GHOST_TRACK_BYTES = 32 * 1024 * 1024;
 export interface GhostFrame {
   time: number; flightTime: number; ended: boolean; position: number[]; quaternion: number[]; cg: number[];
   pilot: number[]; controls: number[]; thrust: number; sections: Float64Array; fragments: Float64Array; done: boolean;
 }
 export type GhostFragment = Pick<FlightSimulation['fragments'][number], 'id' | 'position' | 'quaternion' | 'cg'>;
+
+const recordings = new WeakMap<FlightSimulation, { frames: GhostFrame[]; events: WeakSet<GhostFrame>; interval: number; next: number; fractures: number; bytes: number }>();
+export function resetGhostRecording(sim: FlightSimulation) { recordings.delete(sim); }
+export function recordGhost(sim: FlightSimulation) {
+  let track = recordings.get(sim);
+  if (!track) { track = { frames: [], events: new WeakSet(), interval: 0.1, next: 0, fractures: 0, bytes: 0 }; recordings.set(sim, track); }
+  if (sim.elapsedTime + 1e-9 < track.next && !sim.ended && sim.structure.fractureCount === track.fractures) return;
+  const frame = captureGhost(sim); track.frames.push(frame);
+  if (sim.structure.fractureCount !== track.fractures) track.events.add(frame);
+  track.bytes += ghostFrameBytes(frame); track.fractures = sim.structure.fractureCount;
+  if (track.bytes > MAX_GHOST_TRACK_BYTES) {
+    // Long/complex flights lower their sample rate; retain topology changes and endpoints.
+    track.frames = track.frames.filter((f, i, all) => i % 2 === 0 || i === all.length - 1 || track.events.has(f));
+    track.bytes = track.frames.reduce((sum, f) => sum + ghostFrameBytes(f), 0); track.interval *= 2;
+  }
+  track.next = (Math.floor((sim.elapsedTime + 1e-9) / track.interval) + 1) * track.interval;
+}
+export function ghostRecording(sim: FlightSimulation): GhostFrame[] | undefined {
+  const track = recordings.get(sim); if (!track) return;
+  const frames = track.frames.slice();
+  if (frames.at(-1)!.time < sim.elapsedTime) frames.push(captureGhost(sim));
+  frames[frames.length - 1] = { ...frames.at(-1)!, done: true };
+  return frames;
+}
+export function ghostFrameBytes(f: GhostFrame) { return 22 * 8 + f.sections.byteLength + f.fragments.byteLength; }
 
 export function captureGhost(sim: FlightSimulation): GhostFrame {
   const sections = new Float64Array(sim.structure.sections.length * GHOST_SECTION_WIDTH);
@@ -21,17 +46,6 @@ export function captureGhost(sim: FlightSimulation): GhostFrame {
   return { time: sim.elapsedTime, flightTime: sim.time, ended: sim.ended, position: sim.position.toArray(), quaternion: sim.quaternion.toArray(), cg: sim.telemetry.cg.toArray(),
     pilot: [sim.pilotOffset.x, sim.pilotOffset.z], controls: [sim.controlDeflections.aileron, sim.controlDeflections.elevator, sim.controlDeflections.rudder],
     thrust: sim.telemetry.thrust, sections, fragments, done: sim.ended || sim.replayFinished };
-}
-
-/** Keep every input step, but send at most 60 visual samples per simulated second. */
-export function advanceGhost(sim: FlightSimulation, until: number): GhostFrame[] {
-  const frames: GhostFrame[] = [], neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
-  while (!sim.ended && !sim.replayFinished && sim.elapsedTime < until) {
-    const next = sim.elapsedTime + 1 / 60;
-    do { sim.step(neutral); } while (!sim.ended && !sim.replayFinished && sim.elapsedTime < next - 1e-9);
-    frames.push(captureGhost(sim));
-  }
-  return frames;
 }
 
 /** Update only render inputs. This simulation is never stepped on the UI thread. */
@@ -84,8 +98,9 @@ export class GhostBuffer {
   get end() { return this.frames.at(-1); }
   covers(time: number) { return !!this.end && (this.end.done || this.end.time >= time); }
   sample(time: number) {
-    while (this.frames.length > 2 && this.frames[1].time <= time) this.frames.shift();
-    const a = this.frames[0], b = this.frames[1] ?? a;
+    let low = 0, high = this.frames.length - 1;
+    while (low < high) { const middle = Math.ceil((low + high) / 2); if (this.frames[middle].time <= time) low = middle; else high = middle - 1; }
+    const a = this.frames[low], b = this.frames[low + 1] ?? a;
     if (!a) return null;
     return { a, b, alpha: b.time > a.time ? Math.max(0, Math.min(1, (time - a.time) / (b.time - a.time))) : 1 };
   }

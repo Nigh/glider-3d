@@ -15,6 +15,11 @@ async function fixture(page: Page, challenge: string) {
 async function enter(page: Page, name: string) {
   await page.setViewportSize({ width: 1000, height: 800 });
   await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
+  await page.addInitScript(() => {
+    const send=Worker.prototype.postMessage;
+    (window as any).ghostRequests=0;
+    Worker.prototype.postMessage=function(message:any,...args:any[]){if(message?.text)(window as any).ghostRequests++;return (send as any).call(this,message,...args);};
+  });
   await page.route(/https:\/\/fonts\.(googleapis|gstatic)\.com\//, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
@@ -33,6 +38,8 @@ for (const [challenge, name] of [['birdman', '鸟人间挑战'], ['downhill', '�
     const text = await fixture(page, challenge);
     await upload(page, text);
     await expect.poll(() => page.evaluate(() => (window as any).glider.ghost?.ready)).toBe(true);
+    const duration=JSON.parse(text).recording.frames.filter((_:unknown,index:number)=>index%12===0).reduce((sum:number,dt:number)=>sum+dt,0);
+    expect(await page.evaluate(() => (window as any).glider.ghost.end)).toBeCloseTo(duration,8);
     await expect(page.getByRole('button', { name: '开始试飞', exact: true })).toBeEnabled();
     await expect.poll(() => page.evaluate(() => (window as any).glider.scene.ghost?.name)).toBe('Ghost 独立机型');
     await page.getByRole('button', { name: '开始试飞', exact: true }).click();
@@ -43,6 +50,8 @@ for (const [challenge, name] of [['birdman', '鸟人间挑战'], ['downhill', '�
     expect(paused.ghost.opacity).toBeGreaterThanOrEqual(0.2); expect(paused.ghost.opacity).toBeLessThanOrEqual(1);
     expect(paused.ghost.materials).toBeGreaterThan(5); expect(paused.ghost.radius).toBeGreaterThan(1);
     await page.waitForTimeout(200);
+    await expect(page.locator('.ghost-buffering')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).ghostRequests)).toBe(1);
     expect(await page.evaluate(() => (window as any).glider.scene.ghost.time)).toBeCloseTo(paused.stream.time, 8);
     expect(await page.evaluate(() => (window as any).glider.ghost.frames)).toBeLessThanOrEqual(65);
     await page.screenshot({ path: info.outputPath(`${challenge}-ghost.png`) });
@@ -50,6 +59,7 @@ for (const [challenge, name] of [['birdman', '鸟人间挑战'], ['downhill', '�
     await expect.poll(() => page.evaluate(() => (window as any).glider.ghost?.ready)).toBe(true);
     await expect(page.getByRole('button', { name: '开始试飞', exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => (window as any).glider.scene.ghost?.time)).toBe(0);
+    expect(await page.evaluate(() => (window as any).ghostRequests)).toBe(1);
     await page.getByRole('button', { name: '移除 Ghost', exact: true }).click();
     expect(await page.evaluate(() => (window as any).glider.scene.ghost)).toBeNull();
     expect(await page.evaluate(() => (window as any).glider.ghost)).toBeNull();

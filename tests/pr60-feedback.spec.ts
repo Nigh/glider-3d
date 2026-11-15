@@ -47,10 +47,16 @@ test('Ghost 使用项目按钮，速降出发前显示有效计时零且窄屏�
  await page.locator('.welcome').getByRole('button', { name: /高山速降/ }).click();
  await page.getByRole('button', { name: '试飞', exact: true }).click();
  await expect(page.getByLabel('有效计时', { exact: true })).toHaveText('0.00');
+ await expect(page.locator('.flight-sidebar .race-clock')).toHaveCount(0);
+ let timerBounds=(await page.locator('.downhill-timing').boundingBox())!;
+ expect(timerBounds.x+timerBounds.width/2).toBeCloseTo(500,0);
  const picker = page.getByRole('button', { name: '选择 Ghost 回放文件', exact: true });
  await expect(picker).toBeVisible();
  await expect(page.getByLabel('选择 Ghost 回放文件', { exact: true })).toBeHidden();
  await page.setViewportSize({ width: 390, height: 844 });
+ timerBounds=(await page.locator('.downhill-timing').boundingBox())!;
+ expect(timerBounds.x+timerBounds.width/2).toBeCloseTo(195,0);
+ expect(await page.locator('.flight-hud').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
  const bounds = await picker.boundingBox();
  expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
  await page.screenshot({ path: info.outputPath('downhill-ghost-mobile.png') });
@@ -63,6 +69,7 @@ test('Ghost 使用项目按钮，速降出发前显示有效计时零且窄屏�
 });
 
 test('检查点秒差显示领先、落后、持平、未通过和重飞清零，语言切换即时生效', async ({ page }) => {
+ await page.route(/https:\/\/fonts\.(googleapis|gstatic)\.com\//, route => route.fulfill({status:200,contentType:'text/css',body:''}));
  await page.route('**/timing-test', route => route.fulfill({ contentType: 'text/html', body: '<html><body><div id="timing"></div><script type="module" src="/tests/fixtures/downhill-timing-harness.ts"></script></body></html>' }));
  await page.goto('/timing-test');
  await page.waitForFunction(() => typeof (window as any).timing === 'function');
@@ -77,6 +84,13 @@ test('检查点秒差显示领先、落后、持平、未通过和重飞清零�
  await page.evaluate(()=>(window as any).locale('en')); await expect(split).toContainText('Ghost did not reach this checkpoint');
  await render([10],[11],false); await expect(split).toHaveCount(0);
  await render([],[],true,false); await expect(split).toHaveCount(0); await expect(page.getByLabel('Race time', { exact: true })).toHaveText('0.00');
+ await render([10],[11]);
+ for(const language of ['zh','en','ja'])for(const viewport of [{width:1000,height:800},{width:390,height:844},{width:844,height:390}]){
+  await page.evaluate(value=>(window as any).locale(value),language);await page.setViewportSize(viewport);
+  const panel=page.locator('.downhill-timing'),bounds=(await panel.boundingBox())!;
+  expect(bounds.x+bounds.width/2).toBeCloseTo(viewport.width/2,0);expect(bounds.y).toBeLessThan(110);
+  expect(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+ }
 });
 
 for (const completed of [false,true]) test(`速降结算${completed?'完赛显示成绩':'未完赛隐藏成绩时间'}`, async ({ page }) => {
