@@ -5,7 +5,8 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BODY_GEOMETRY, finPoint, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { airfoilY, airfoilCamber } from './airfoils';
-import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
+import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, FlightSimulation } from './physics';
+import { applyGhost, ditherGhost, ghostOpacity, type GhostFrame, type GhostFragment } from './ghost';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
@@ -64,11 +65,11 @@ export class SceneView {
   private crashStroke: (() => void) | null = null;
   private crashSecond = false;
   private readonly scene = new THREE.Scene();
-  private readonly renderer: THREE.WebGLRenderer;
+  private readonly renderer!: THREE.WebGLRenderer;
   private readonly perspective = new THREE.PerspectiveCamera(43, 1, 0.1, 3000);
   private readonly orthographic = new THREE.OrthographicCamera(-15, 15, 15, -15, 0.1, 3000);
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.perspective;
-  private controls: OrbitControls;
+  private controls!: OrbitControls;
   private readonly controlsUp = UP.clone();
   private readonly aircraft = new THREE.Group();
   private readonly previousPosition = new THREE.Vector3();
@@ -234,7 +235,7 @@ export class SceneView {
   private designOrbitRotation = new THREE.Quaternion();
   private readonly trailArray = new Float32Array(TRAIL_CAPACITY * 6);
   private readonly trailGeometry = new THREE.BufferGeometry();
-  private readonly trail: THREE.LineSegments;
+  private readonly trail!: THREE.LineSegments;
   private readonly lastTrail = new THREE.Vector3();
   private trailClock = 0;
   private trailIndex = 0;
@@ -242,7 +243,7 @@ export class SceneView {
   private readonly wingTrailArray = new Float32Array(WING_TRAIL_CAPACITY * 36);
   private readonly wingTrailColors = new Float32Array(WING_TRAIL_CAPACITY * 48);
   private readonly wingTrailGeometry = new THREE.BufferGeometry();
-  private readonly wingTrail: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  private readonly wingTrail!: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private readonly wingTrailHistory = new Float32Array((WING_TRAIL_CAPACITY + 1) * 6);
   private readonly wingTrailDistances = new Float64Array(2);
   private readonly wingTrailLengths = new Float64Array(2);
@@ -260,8 +261,8 @@ export class SceneView {
   private readonly splashPositions = new Float32Array(PARTICLES * 3);
   private readonly splashVelocities = new Float32Array(PARTICLES * 3);
   private readonly splashGeometry = new THREE.BufferGeometry();
-  private readonly splash: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
-  private readonly ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  private readonly splash!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  private readonly ring!: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   private readonly waterTime = { value: 0 };
   private readonly frameTimes = new Float32Array(180);
   private readonly sortedTimes = new Float32Array(180);
@@ -284,6 +285,7 @@ export class SceneView {
   private readonly resultTarget = new THREE.Vector3();
   private readonly followPosition = new THREE.Vector3();
   private readonly followTarget = new THREE.Vector3();
+  private readonly cameraAircraftPosition = new THREE.Vector3();
   private followInitialized = false;
   private readonly cameraClearanceOffset = new THREE.Vector3();
   private readonly cameraClearanceOrigin = new THREE.Vector3();
@@ -291,8 +293,14 @@ export class SceneView {
   private readonly vector2 = new THREE.Vector3();
   private wingTrailTime = -1;
   private readonly designCG = new THREE.Vector3();
-  private readonly resizeObserver: ResizeObserver;
-  private readonly layoutObserver: MutationObserver;
+  private readonly resizeObserver!: ResizeObserver;
+  private readonly layoutObserver!: MutationObserver;
+  private ghost: SceneView | null = null;
+  private ghostFragments: GhostFragment[] | null = null;
+  private readonly ghostOpacity = { value: 1 };
+  private readonly ghostMaterials = new Set<THREE.Material>();
+  private ghostTime = 0;
+  private ghostRadius = 0;
   private simulation: FlightSimulation | null = null;
   private definition: AircraftDefinition = defaultAircraft;
   private view = 'orbit';
@@ -317,7 +325,13 @@ export class SceneView {
   private readonly coarsePointer = matchMedia('(pointer: coarse)').matches;
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  constructor(private readonly host: HTMLElement) {
+  constructor(private readonly host: HTMLElement, private readonly aircraftOnly?: FlightSimulation) {
+    // Reuse the aircraft deformation renderer without a second canvas or environment.
+    if (aircraftOnly) {
+      this.simulation = aircraftOnly; this.definition = aircraftOnly.definition; this.ghostFragments = [];
+      this.scene.add(this.aircraft); this.buildAircraft(); this.aircraftPending = true; this.applyAircraft();
+      return;
+    }
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setClearColor(0xd4e3e4);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -477,7 +491,7 @@ export class SceneView {
     this.controls.enableDamping = previous.enableDamping;
   }
 
-  private readonly unsubscribeLanguage: () => void;
+  private readonly unsubscribeLanguage!: () => void;
 
   setEditor(target: EditorTarget, onchange: (definition: AircraftDefinition) => void, oncommit: () => void): void {
     this.editorChange = onchange;
@@ -509,6 +523,10 @@ export class SceneView {
     return {
       view: this.view, orthographic: this.camera === this.orthographic,
       camera: position(this.camera.position), target: position(this.controls.enabled ? this.controls.target : this.target),
+      aircraftPosition: position(this.aircraft.position),
+      ghost: this.ghost ? { time: this.ghostTime, opacity: this.ghostOpacity.value, radius: this.ghostRadius,
+        position: position(this.ghost.aircraft.position), name: this.ghost.definition.name, fragments: this.ghost.fragments.length,
+        materials: this.ghostMaterials.size } : null,
       groundHeight: this.surfaceHeight(this.camera.position.x, this.camera.position.z),
       editing: this.editorTarget, shadowVisible: this.renderer.shadowMap.enabled,
       workshopVisible: this.workshop.visible,
@@ -2123,7 +2141,7 @@ export class SceneView {
       }
     }
     for (const fragment of this.fragments) {
-      const body = sim.fragments.find(body => body.id === fragment.id);
+      const body = (this.ghostFragments ?? sim.fragments).find(body => body.id === fragment.id);
       if (!body) continue;
       fragment.previousPosition.copy(body.position);
       fragment.previousQuaternion.copy(body.quaternion);
@@ -2180,6 +2198,13 @@ export class SceneView {
     this.updateEditorOverlay();
     this.updateLight();
     this.updateCatapult();
+    if (this.ghost) {
+      this.body.updateWorldMatrix(true, true);
+      const radius = cgGeometryRadius(this.body, this.aircraft.position, this.loadScratch) * 1.2;
+      this.ghostRadius = radius;
+      this.ghostOpacity.value = ghostOpacity(this.aircraft.position.distanceTo(this.ghost.aircraft.position), radius);
+      ditherGhost(this.ghost.scene, this.ghostOpacity, this.ghostMaterials);
+    }
     this.renderer.render(this.scene, this.camera);
     this.metrics.renderMs = performance.now() - start;
     this.metrics.drawCalls = this.renderer.info.render.calls;
@@ -2201,6 +2226,11 @@ export class SceneView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.setGhost(null);
+    if (this.aircraftOnly) {
+      for (const geometry of this.wingNormalGeometry) geometry.dispose();
+      this.release(this.scene); this.scene.clear(); return;
+    }
     this.endEditorDrag(true);
     this.selectionPointer = -1; this.selectionTarget = null;
     this.resizeObserver.disconnect();
@@ -2433,6 +2463,32 @@ export class SceneView {
     return undefined;
   }
 
+  setGhost(definition: AircraftDefinition | null, challenge: ChallengeMode = 'birdman'): void {
+    if (this.ghost) { this.scene.remove(this.ghost.scene); this.ghost.dispose(); this.ghost = null; }
+    this.ghostMaterials.clear();
+    if (definition) {
+      this.ghost = new SceneView(this.host, new FlightSimulation(clone(definition), challenge, 0));
+      this.scene.add(this.ghost.scene);
+    }
+  }
+
+  renderGhost(a: GhostFrame, b: GhostFrame, alpha: number): void {
+    const ghost = this.ghost;
+    if (!ghost?.simulation || !ghost.ghostFragments) return;
+    this.ghostTime = a.time + (b.time - a.time) * alpha;
+    applyGhost(ghost.simulation, a, ghost.ghostFragments);
+    ghost.ensureFragments(); ghost.captureFlightState();
+    applyGhost(ghost.simulation, b, ghost.ghostFragments);
+    ghost.renderBlend = alpha;
+    ghost.aircraft.position.lerpVectors(ghost.previousPosition, ghost.simulation.position, alpha);
+    ghost.aircraft.quaternion.slerpQuaternions(ghost.previousQuaternion, ghost.simulation.quaternion, alpha);
+    ghost.renderCG.lerpVectors(ghost.previousCG, ghost.simulation.telemetry.cg, alpha);
+    ghost.body.position.copy(ghost.renderCG).negate();
+    ghost.driver.position.set(ghost.simulation.pilotOffset.x, 0, ghost.simulation.pilotOffset.z);
+    ghost.updateControlSurfaces();
+    ghost.updateExhaust();
+  }
+
   private ensureFragments(): boolean {
     const sim = this.simulation;
     if (!sim) return false;
@@ -2440,13 +2496,13 @@ export class SceneView {
     for (let index = this.fragments.length - 1; index >= 0; index--) {
       const fragment = this.fragments[index];
       let present = false;
-      for (const body of sim.fragments) if (body.id === fragment.id) { present = true; break; }
+      for (const body of this.ghostFragments ?? sim.fragments) if (body.id === fragment.id) { present = true; break; }
       if (present && this.wingSections[fragment.wingIndex].some(section => section.physics?.bodyId === fragment.id)) continue;
       this.removeFragment(fragment);
       this.fragments.splice(index, 1);
       changed = true;
     }
-    for (const body of sim.fragments) for (let wingIndex = 0; wingIndex < 3; wingIndex++) {
+    for (const body of this.ghostFragments ?? sim.fragments) for (let wingIndex = 0; wingIndex < 3; wingIndex++) {
       if (this.fragmentRender(body.id, wingIndex) || !this.wingSections[wingIndex].some(section => section.physics?.bodyId === body.id)) continue;
       const source = this.wingMeshes[wingIndex].geometry;
       const geometry = new THREE.BufferGeometry();
@@ -2485,7 +2541,7 @@ export class SceneView {
     let topologyChanged = this.ensureFragments();
     if (sim) {
       for (const fragment of this.fragments) {
-        const body = sim.fragments.find(body => body.id === fragment.id);
+        const body = (this.ghostFragments ?? sim.fragments).find(body => body.id === fragment.id);
         if (!body) continue;
         const blend = fragment.captured ? this.renderBlend : 1;
         fragment.mesh.position.lerpVectors(fragment.previousPosition, body.position, blend);
@@ -2567,7 +2623,7 @@ export class SceneView {
       this.hingeLines[index].geometry.boundingSphere = geometry.boundingSphere;
     }
     if (topologyChanged) {
-      this.clearWingTrail();
+      if (!this.aircraftOnly) this.clearWingTrail();
       for (let index = 0; index < 3; index++) this.writeWingIndices(index, 0, this.wingMeshes[index].geometry, this.hingeLines[index].geometry);
       for (const fragment of this.fragments) this.writeWingIndices(fragment.wingIndex, fragment.id, fragment.mesh.geometry, fragment.hinge.geometry);
       this.metrics.memory = this.geometryMemory();
@@ -3627,8 +3683,10 @@ export class SceneView {
 
   private followCamera(dt: number, immediate: boolean): void {
     if (!immediate && !this.simulation?.ended && !this.controls.enabled && this.followInitialized) {
-      this.camera.position.copy(this.followPosition);
-      this.target.copy(this.followTarget);
+      // Follow interpolated translation exactly; damp only the camera offset and rotation.
+      this.vector.subVectors(this.aircraft.position, this.cameraAircraftPosition);
+      this.camera.position.copy(this.followPosition).add(this.vector);
+      this.target.copy(this.followTarget).add(this.vector);
     }
     if (this.simulation?.ended) {
       if (!this.resultOrbit) {
@@ -3724,6 +3782,7 @@ export class SceneView {
     }
     this.followPosition.copy(this.camera.position);
     this.followTarget.copy(this.target);
+    this.cameraAircraftPosition.copy(this.aircraft.position);
     this.followInitialized = true;
     const pilot = this.view === 'pilot' && !this.resultOrbit;
     this.vector.subVectors(pilot ? this.target : this.camera.position, pilot ? this.camera.position : this.target);

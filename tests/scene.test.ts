@@ -411,7 +411,7 @@ describe('场景编辑与推力中心', () => {
     const view = Object.assign(Object.create(SceneView.prototype), {
       editorPointerId: 7, simulation: null, camera, target: new Vector3(),
       controls: { enabled: false }, cameraDragging: false, elapsed: 1, cameraReleasedAt: -Infinity,
-      cameraYaw: 0, cameraPitch: 0, followPosition: new Vector3(), followTarget: new Vector3(),
+      cameraYaw: 0, cameraPitch: 0, cameraAircraftPosition: new Vector3(), followPosition: new Vector3(), followTarget: new Vector3(),
       vector: new Vector3(), cameraAngles: new Spherical(), view: 'top', resultOrbit: false,
     });
     for (let frame = 0; frame < 8; frame++) view.updateCameraInteraction(1 / 60);
@@ -490,7 +490,7 @@ it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回�
    aircraft,camera,definition:defaultAircraft,simulation:{ended:false},controls:{enabled:false},view:'chase',
    desiredPosition:new Vector3(),desiredTarget:new Vector3(),target:new Vector3(),vector:new Vector3(),vector2:new Vector3(),
    width:1440,height:900,followInitialized:false,editorPointerId:-1,elapsed:10,cameraReleasedAt:-Infinity,cameraDragging:false,
-   followPosition:new Vector3(),followTarget:new Vector3(),cameraYaw:0,cameraPitch:0,resultOrbit:false,
+   cameraAircraftPosition:new Vector3(),followPosition:new Vector3(),followTarget:new Vector3(),cameraYaw:0,cameraPitch:0,resultOrbit:false,
   });
   view.followCamera(1/60,true);
   const local=camera.position.clone().sub(aircraft.position).applyQuaternion(aircraft.quaternion.clone().invert());
@@ -503,7 +503,7 @@ it('追尾在竖直爬升、俯冲及滚转时保持机体后上方，鼠标回�
   aircraft.position.x+=12;
   view.followCamera(1/60,false);
   expect(camera.position.x-position.x).toBeGreaterThan(0);
-  expect(camera.position.x-position.x).toBeLessThan(12);
+  expect(camera.position.x-position.x).toBeCloseTo(12, 10);
   for(let frame=0;frame<240;frame++){view.updateCameraInteraction(1/60);view.followCamera(1/60,false);}
   expect(camera.position.distanceTo(view.desiredPosition)).toBeLessThan(0.001);
  }
@@ -517,7 +517,7 @@ function flightCameraView() {
     simulation: { ended: false, elapsedTime: 0, mass: 100, telemetry: { force: new Vector3(0, 981, 0) } }, controls: { enabled: false, target: new Vector3(), update() {} },
     desiredPosition: new Vector3(), desiredTarget: new Vector3(), target: new Vector3(),
     vector: new Vector3(), vector2: new Vector3(), cameraHome: new Vector3(), targetHome: new Vector3(),
-    followPosition: new Vector3(), followTarget: new Vector3(), followInitialized: false,
+    cameraAircraftPosition: new Vector3(), followPosition: new Vector3(), followTarget: new Vector3(), followInitialized: false,
     cameraYaw: 0, cameraPitch: 0, cameraPointer: -1, cameraDragging: false, cameraReleasedAt: -Infinity,
     view: 'chase', width: 1440, height: 900, editorPointerId: -1, elapsed: 10, resultOrbit: false,
     cameraClearanceOffset: new Vector3(), cameraClearanceOrigin: new Vector3(), cameraClearancePoint: new Vector3(),
@@ -525,6 +525,21 @@ function flightCameraView() {
     resize() {}, refreshControlsUp() {}, surfaceHeight() { return 0; },
   });
 }
+
+it('uneven render cadence preserves the camera offset under aircraft translation', () => {
+  const view = flightCameraView();
+  for (const name of ['追尾', '锁定', '侧追尾', '侧面']) {
+    view.cameraView(name); view.updateCameraInteraction(0);
+    const offset = view.camera.position.clone().sub(view.aircraft.position);
+    const target = view.target.clone().sub(view.aircraft.position);
+    for (const dt of [1 / 120, 1 / 30, 0, 0.1, 1 / 60, 1 / 240]) {
+      view.aircraft.position.add(new Vector3(dt * 70, -dt * 5, dt * 3));
+      view.followCamera(dt, false); view.updateCameraInteraction(dt);
+      expect(view.camera.position.clone().sub(view.aircraft.position).distanceTo(offset)).toBeLessThan(1e-9);
+      expect(view.target.clone().sub(view.aircraft.position).distanceTo(target)).toBeLessThan(1e-9);
+    }
+  }
+});
 
 it('锁定与追尾初始位置相同，短暂迟滞后收敛并允许小幅拖动，碰撞推挤仍有界', () => {
   const view = flightCameraView();

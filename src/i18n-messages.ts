@@ -2,6 +2,13 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "Ghost 回放": ["Ghost replay", "ゴーストリプレイ"],
+ "选择 Ghost 回放文件": ["Choose ghost replay file", "ゴーストファイルを選択"],
+ "正在准备 Ghost 回放…": ["Preparing ghost replay…", "ゴーストを準備中…"],
+ "Ghost 回放缓冲中…": ["Buffering ghost replay…", "ゴーストを読み込み中…"],
+ "移除 Ghost": ["Remove ghost", "ゴーストを削除"],
+ "Ghost 回放加载失败": ["Ghost replay failed to load", "ゴーストの読み込みに失敗しました"],
+ "Ghost 回放与当前关卡不一致": ["Ghost replay belongs to a different challenge", "ゴーストのステージが一致しません"],
  "翼型": ["Airfoil", "翼型"],
  "未知翼型": ["Unknown airfoil", "不明な翼型"],
  "垂尾不支持选择翼型": ["Fin airfoil selection is unavailable", "垂直尾翼の翼型は選択できません"],

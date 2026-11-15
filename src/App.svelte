@@ -25,6 +25,7 @@
  import { isTextEntry } from './focus-policy';
  import { trimStep, trimFromPointer, pitchDisplay } from './trim';
  import { FixedGameClock } from './game-clock';
+ import { GhostPlayer } from './ghost-player';
  import { energyCostScale } from './flight-chart';
  import { exportReplay, importReplay, MAX_REPLAY_BYTES, type Replay } from './replay';
  import { summarizeWingStructure } from './structure';
@@ -104,6 +105,24 @@
  function selectWindCamera(value:string){windCamera=value;scene.cameraView(value);}
  function selectCamera(value:string){flightCamera=value;scene.cameraView(value);try{localStorage.setItem(cameraKey,value);}catch{/* Keep the session preference when storage is blocked. */}}
  let activeReplay=$state.raw<Replay|null>(null),seeking=$state(false),replayPosition=$state(0);let seekVersion=0;
+ let ghost:GhostPlayer|null=null,ghostVersion=0,ghostSceneReady=false;
+ let ghostName=$state(''),ghostBusy=$state(false),ghostBuffering=$state(false);
+ function clearGhost(){ghostVersion++;ghost?.dispose();ghost=null;ghostName='';ghostBusy=ghostBuffering=false;ghostSceneReady=false;scene?.setGhost(null);}
+ async function ghostImport(event:Event){
+  const input=event.target as HTMLInputElement,file=input.files?.[0];input.value='';
+  if(!file||flightReady)return;
+  clearGhost();const version=ghostVersion;ghostBusy=true;ghostName=file.name;
+  try{
+   if(file.size>MAX_REPLAY_BYTES)throw Error('回放文件超过 16 MB');
+   const text=await file.text();if(version!==ghostVersion)return;
+   ghost=new GhostPlayer(text,lastChallenge,()=>{
+    if(version!==ghostVersion||!ghost)return;
+    ghostBusy=!ghost.ready;
+    if(ghost.ready&&!ghostSceneReady&&ghost.definition){scene.setGhost(ghost.definition,lastChallenge);ghostSceneReady=true;}
+   },error=>{if(version===ghostVersion){clearGhost();notify(t('导入失败：{error}',{error:t(error)}));}});
+  }catch(error){if(version===ghostVersion){clearGhost();notify(t('导入失败：{error}',{error:t((error as Error).message)}));}}
+ }
+ onDestroy(()=>ghost?.dispose());
  let seekFrame=0,seekSeconds=0,seekRequestVersion=0;let seekSource:Replay|null=null;
  function seekTo(seconds:number){
   seekSeconds=seconds;seekSource=activeReplay;seekRequestVersion=++seekVersion;seeking=true;
@@ -211,6 +230,8 @@
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
    samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;if(!replay&&!flightViews.includes(flightCamera))flightCamera='追尾';showLibrary=false;screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
    scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);
+   if(replay||isLaboratory(selectedChallenge))clearGhost();
+   else if(ghost){scene.setGhost(null);ghostSceneReady=false;ghostBusy=true;ghost.reset();}
    if(selectedChallenge==='wind-tunnel'){aero=true;windCamera='侧视';}
    scene.setDebug(aero);scene.cameraView(selectedChallenge==='wind-tunnel'?'侧视':flightCamera);
    activeReplay=replay?{definition:clone(lastDefinition),challenge:lastChallenge,recording:imported?.recording??recording!}:null;replayPosition=0;
@@ -246,10 +267,10 @@
   }catch(e){notify(t('导入失败：{error}',{error:t((e as Error).message)}));}
   finally{input.value='';replayBusy=false;}
  }
- function beginFlight(){if(screen!=='flight'||!simulation||flightReady||seeking)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='wind-tunnel'&&(lastChallenge!=='test-space'||testSettings.catapult)&&lastChallenge!=='low-altitude')audio.launch();}
+ function beginFlight(){if(screen!=='flight'||!simulation||flightReady||seeking||ghostBusy)return;clearControls();paused=false;flightReady=true;syncAudio();if(lastChallenge!=='wind-tunnel'&&(lastChallenge!=='test-space'||testSettings.catapult)&&lastChallenge!=='low-altitude')audio.launch();}
  function togglePause(){if(screen==='flight'&&lastChallenge!=='wind-tunnel'&&flightReady&&!seeking){paused=!paused;clearControls();}}
  function finish(){if(!simulation)return;sampleFlight(true);refreshHud();refreshTrajectory();result=simulation.result;if(result?.landing==='terrain'){audio.crash();scene.markCrash(()=>audio.stroke());}clearControls();recordedLength=simulation.recordingLength;screen='result';scene.cameraView('轨道');if(!isReplay&&!isLaboratory(lastChallenge)){recording=simulation.getRecording();cacheRecording(simulation,recording);replaySamples.set(recording,new Map(samples.map(p=>[p.time,p])));try{best=readBest(lastChallenge);if(lastChallenge==='birdman'||result.completed)best=writeBest(lastChallenge==='birdman'?result.distance:lastChallenge==='downhill'?result.time:result.score,lastChallenge);}catch(e){notify((e as Error).message);}}}
- function design(){syncWindDesign();seekVersion++;seeking=false;activeReplay=null;showLibrary=false;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
+ function design(){clearGhost();syncWindDesign();seekVersion++;seeking=false;activeReplay=null;showLibrary=false;if(aircraft.birdman&&tab==='动力')tab='主翼';screen='design';simulation=null;flightReady=false;scene?.setFlight(null);scene?.updateAircraft(aircraft);selectDesignCamera('自由');clearControls();}
  function challengeAircraft(){return challenge==='birdman'||isLaboratory(challenge)&&aircraft.birdman?defaultAircraft:presets.find(p=>p.name===(challenge==='low-altitude'?'基础单发型':'高性能滑翔型'))!;}
  function enterChallenge(next:ChallengeMode){const previous=challenge;challenge=next;if(!isAircraftCompatible(aircraft,next)){aircraft=clone(challengeAircraft());selectedId='';history=new History(clone(aircraft));historyVersion=0;}else if(isLaboratory(previous)&&!isLaboratory(next)){history=new History(clone(aircraft));historyVersion=0;}showLibrary=false;try{best=readBest(challenge);}catch(e){notify((e as Error).message);}design();}
  function toggleAutoTrim(){if(screen!=='flight'||isReplay||lastDefinition.birdman)return;if(autoTrim)trimPitch=0;autoTrim=!autoTrim;}
@@ -332,13 +353,15 @@ const tick=(now:number)=>{
      if(absolute>=0)throttle=absolute;
      throttle=clamp(throttle+(input.value('throttleUp')-input.value('throttleDown'))*elapsed*0.35,0,1);
     }
-    const running=screen==='flight'&&simulation&&flightReady&&!paused&&!seeking&&!inputSettingsOpen;
+    if(ghost&&simulation){ghost.request(simulation.elapsedTime);ghostBuffering=flightReady&&!paused&&!ghost.buffer.covers(simulation.elapsedTime+0.1);}
+    const running=screen==='flight'&&simulation&&flightReady&&!paused&&!seeking&&!inputSettingsOpen&&!ghostBuffering;
     let alpha=1;
     if(running){
       alpha=clock.advance(elapsed,stepFlight);
     }else{
       clock.reset();scene.captureFlightState();
     }
+    if(ghost&&simulation){const sample=ghost.buffer.sample(Math.max(0,simulation.elapsedTime-(running?(1-alpha)/60:0)));if(sample)scene.renderGhost(sample.a,sample.b,sample.alpha);}
     if(!seeking)scene.render(elapsed,alpha);
      syncAudio();
     if(screen==='flight')refreshHud();
@@ -357,6 +380,7 @@ window.addEventListener('pointermove',mouse);
  // Read-only diagnostics for automated measurement; interaction tests still use visible controls.
  Object.assign(window,{glider:{get aircraft(){return clone(aircraft)},get state(){return screen},get flightReady(){return flightReady},get time(){return simulation?.time??0},get recordingLength(){return simulation?.recordingLength??0},get scene(){return scene.getDiagnostics()},get trajectory(){return samples.map(p=>({...p}))},get metrics(){return {...scene.metrics,physicsMs:simulation?.telemetry.physicsMs??0}},get telemetry(){return simulation?.telemetry},get flightControls(){return {trimPitch:displayedPitch,trimRoll:displayedRoll,autoTrim:isReplay?hud.autoTrim:autoTrim,smartMixing:isReplay?hud.smartMixing??false:smartMixing,adaptiveControls:isReplay?hud.adaptiveControls:adaptiveControls,controlLimit:hud.controlLimit??1,inputs:simulation?.telemetry.controlInputs}},get result(){return result}}});
  Object.defineProperty((window as any).glider,'laboratory',{get:()=>simulation&&isLaboratory(simulation.challenge)?{mode:simulation.challenge,settings:{...simulation.testSpace},wind:{...simulation.windTunnel},windEnabled:simulation.windTunnelEnabled,recordingBytes:simulation.recording.byteLength,curveSamples:samples.length,fractures:simulation.structure.fractureCount,fragments:simulation.fragments.length}:null});
+ Object.defineProperty((window as any).glider,'ghost',{get:()=>ghost?{ready:ghost.ready,buffering:ghostBuffering,frames:ghost.buffer.frames.length,end:ghost.buffer.end?.time,time:simulation?.elapsedTime}:null});
  return()=>{window.removeEventListener('pointermove',mouse);clearTimeout(messageTimeout);cancelAnimationFrame(request);audio.dispose();scene.dispose();document.removeEventListener('pointerdown',unlock,true);document.removeEventListener('keydown',unlock,true);document.removeEventListener('click',click,true);window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',visibility);};});
 
 </script>
@@ -441,7 +465,7 @@ window.addEventListener('pointermove',mouse);
  <div class="scene" bind:this={host} aria-label={t("三维滑空机与湖面场景")}></div>
  <header class="topbar">
   <div class="brand-group">
-   <button class="brand" onclick={()=>{if(screen==='flight')togglePause();else{screen='menu';showLibrary=false;}}} aria-label={t("返回主菜单")}><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>{t('翼构方程')}<small>{t('设计与驾驶')}</small></span></button>
+   <button class="brand" onclick={()=>{if(screen==='flight')togglePause();else{clearGhost();screen='menu';showLibrary=false;}}} aria-label={t("返回主菜单")}><svg viewBox="0 0 36 28" width="34" height="28" fill="none" aria-hidden="true"><path d="M2 10 33 3 23 13 19 25 14 14 2 10Z" stroke="currentColor" stroke-width="1.7"/><path d="m14 14 19-11" stroke="currentColor"/></svg><span>{t('翼构方程')}<small>{t('设计与驾驶')}</small></span></button>
    <a class="github-link" href="https://github.com/Nigh/glider-3d" target="_blank" rel="noopener noreferrer" aria-label={t("GitHub 项目源码（新标签页）")} title={t("GitHub 项目源码")}><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
   </div>
   {#if screen!=='menu'}<nav aria-label={t("游戏流程")}><button class:active={screen==='design'} onclick={design}>{t("设计")}</button><button class:active={(screen==='flight'||screen==='result')&&lastChallenge!=='wind-tunnel'} onclick={()=>start()}>{t("试飞")}</button><button class:active={screen==='flight'&&lastChallenge==='wind-tunnel'} title={t('W · 前往风洞')} onclick={()=>{if(screen!=='design'||showLibrary)design();enterWindTunnel();}}>{t('风洞')}</button></nav>{/if}
@@ -543,7 +567,8 @@ window.addEventListener('pointermove',mouse);
  </section>
  </section>
  {:else if screen==='flight'}
- {#if !flightReady&&lastChallenge!=='wind-tunnel'}<div class="launch-action"><button class="primary launch-start flight-start" onclick={beginFlight}>{t("开始试飞")}<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg></button><p>{t("空格开始 / 暂停 / 继续")}</p></div>{/if}
+ {#if ghostBuffering}<div class="ghost-buffering" role="status">{t("Ghost 回放缓冲中…")}</div>{/if}
+ {#if !flightReady&&lastChallenge!=='wind-tunnel'}<div class="launch-action">{#if !isReplay&&!isLaboratory(lastChallenge)}<div class="ghost-selection"><label>{t("Ghost 回放")}<input type="file" accept=".json,application/json" onchange={ghostImport} aria-label={t("选择 Ghost 回放文件")}/></label>{#if ghostName}<p>{ghostBusy?t("正在准备 Ghost 回放…"):ghostName}</p><button onclick={clearGhost}>{t("移除 Ghost")}</button>{/if}</div>{/if}<button class="primary launch-start flight-start" disabled={ghostBusy} onclick={beginFlight}>{t("开始试飞")}<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg></button><p>{t("空格开始 / 暂停 / 继续")}</p></div>{/if}
  {#if (flightCamera==='驾驶员'||flightCamera==='锁定')&&pilotHud}
  <svg class="pilot-hud" viewBox={`0 0 ${pilotHud.width} ${pilotHud.height}`} aria-label="HUD" role="img">
  <title>{t("飞行数据")}</title>
