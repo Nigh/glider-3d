@@ -1384,6 +1384,7 @@ export class FlightSimulation {
     this.maxG = 1;
     if (!Number.isFinite(launchRoll) || Math.abs(launchRoll) > LAUNCH_ROLL_LIMIT) throw new RangeError('离台滚转角须在 ±1° 之间');
     this.launchRoll = launchRoll;
+    raceCheckpointTimes.set(this, []);
     this.railX = LOW_RUNWAY.startX;
     this.position.set(LAUNCH.startX, this.launchAltitude, 0);
     this.velocity.set(0, 0, 0);
@@ -1704,12 +1705,15 @@ export class FlightSimulation {
     };
     // This graph comes only from the existing, typed simulation.
     const result = copy(this) as FlightSimulation;
+    raceCheckpointTimes.set(result, this.checkpointTimes.slice());
     checkpointSizes.set(result, bytes);
     return result;
   }
 
   /** Conservative retained graph estimate; shared recording/design storage is excluded. */
   get checkpointBytes() { return checkpointSizes.get(this) ?? 0; }
+  /** Derived timing readout; kept outside the serialized physics graph for replay compatibility. */
+  get checkpointTimes(): readonly number[] { return raceCheckpointTimes.get(this) ?? []; }
 
   /** Attach immutable recorded inputs to an already restored state without resetting it. */
   resumeReplay(recording: InputRecording, frame: number) {
@@ -3102,6 +3106,7 @@ export class FlightSimulation {
         const bonus = LOW_ALTITUDE.scoreScale * 0.5 * clamp(1 - clearance / LOW_ALTITUDE.bonusHeight, 0, 1);
         this.checkpointScores.push(low + bonus);
       }
+      raceCheckpointTimes.get(this)![this.checkpointIndex] = this.time + dt * (fraction - startFraction);
       this.checkpointIndex++;
       this.completed = this.checkpointIndex === checkpoints.length;
       if (this.completed) return dt * (fraction - startFraction);
@@ -3405,6 +3410,7 @@ type SnapshotTemplate = { simulation: FlightSimulation; binding: string; nodes: 
 const snapshotTemplates = new WeakMap<FlightSimulation, SnapshotTemplate>();
 const recordingTemplates = new WeakMap<InputRecording, SnapshotTemplate>();
 const checkpointSizes = new WeakMap<FlightSimulation, number>();
+const raceCheckpointTimes = new WeakMap<FlightSimulation, number[]>();
 
 function simulationGraph(simulation: FlightSimulation): SnapshotTemplate {
   const nodes: StateRecord[] = [], keys: string[][] = [], ids = new Map<object, number>();

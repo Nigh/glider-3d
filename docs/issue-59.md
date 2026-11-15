@@ -30,3 +30,13 @@ The profiling script separates physics integration from live-cache work, using a
 | 24 m wing, 202 steps | 3.07 ms | 0.53 ms | 9.13 ms | 3.06 ms |
 
 The combined profile's deep-copy samples fell from 939 ms to 168 ms and garbage-collection samples from 324 ms to 84 ms. Physics results and the replay physics version remain unchanged. The browser test attaches separate frame-interval and physics/cache measurements for the 24 m flight; software-rendered desktop Chromium measurements do not establish mobile-device performance.
+
+## PR #60 review follow-up
+
+- Replay import in the menu/workshop opens a native modal with a full-screen translucent backdrop and an import status. Pointer input, Escape, game shortcuts and controller actions cannot reach the game until the import succeeds or fails. Both paths clear pending controls and restore interaction.
+- Ghost selection uses the existing button/panel palette and spacing, a hidden file input, replacement/removal actions and a wrapping filename/status. The 390 px layout is covered by a browser screenshot.
+- The downhill HUD displays `FlightSimulation.time` to two decimals, zero before the start gate. This is the effective result time, excluding departure. At each accepted checkpoint, the HUD retains the player's time minus the ghost's time at that same gate: negative means ahead, positive means behind. A missing ghost gate time is explicitly unavailable.
+- Gate times are captured at the fractional crossing inside each accepted physics segment. On ghost import, the Worker derives future splits by integrating only persistent-keyframe intervals whose progress changes. This allows an immediate comparison even when the player reaches a checkpoint first. These derived readings are outside the serialized physics graph, so existing keyframe bindings and the physics version stay compatible.
+- Downhill DNF results show `未完赛` instead of a time, and omit total time and personal-best time. Completed downhill results retain their time; the existing flight analysis remains available.
+
+Validation for this follow-up: `npm run check`, `npm run build`, 86 unit cases across the challenge/playback/ghost/translation/replay suites, and 12 browser cases across `tests/pr60-feedback.spec.ts` (5) and `tests/ghost.spec.ts` (7), run in separate invocations. The latter covers blocked import interaction, success/failure recovery, a replay exported by commit `5fe2e71`, narrow-screen controls, paused timing, split signs and unavailable splits, live language changes, restart state, and completed/DNF result rendering. The compatibility fixture is intentionally kept from before these changes. Browser checks use desktop Chromium and a mobile-size viewport, not physical mobile hardware.

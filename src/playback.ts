@@ -1,6 +1,7 @@
 import { FlightSimulation, FRAME_WIDTH, REPLAY_KEYFRAME_INTERVAL, captureReplayKeyframe, restoreReplayKeyframe, type InputRecording } from './physics';
 import { clone } from './model';
 import type { Replay } from './replay';
+import { challengeCheckpoints } from './challenges';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
 export interface LoadSample { time: number; main: number; tail: number; vertical: number }
@@ -93,6 +94,24 @@ export function replaySimulation(replay: Replay): FlightSimulation {
   return sim;
 }
 export function replayDuration(recording: InputRecording): number { return times(recording)[recording.length]; }
+
+/** Only integrate keyframe intervals containing gate crossings, including when the player leads the ghost. */
+export async function replayCheckpointTimes(replay: Replay): Promise<(number | null)[]> {
+  if (replay.challenge !== 'downhill') return [];
+  await prepareReplay(replay);
+  const result: (number | null)[] = challengeCheckpoints(replay.challenge).map(() => null);
+  const points = replay.recording.keyframes!;
+  let previous = restoreReplayKeyframe(replay.definition, replay.challenge, replay.recording, points[0]);
+  for (const point of points.slice(1)) {
+    const end = restoreReplayKeyframe(replay.definition, replay.challenge, replay.recording, point);
+    if (end.telemetry.challengeProgress > previous.telemetry.challengeProgress) {
+      await advance(previous, point.frame, () => false);
+      previous.checkpointTimes.forEach((time, index) => { result[index] = time; });
+    }
+    previous = end;
+  }
+  return result;
+}
 
 /** Upgrade input-only files once, before interactive seeking or exporting. */
 export async function prepareReplay(replay: Replay, cancelled: () => boolean = () => false): Promise<boolean> {

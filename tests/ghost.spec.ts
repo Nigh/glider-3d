@@ -15,7 +15,8 @@ async function fixture(page: Page, challenge: string) {
 async function enter(page: Page, name: string) {
   await page.setViewportSize({ width: 1000, height: 800 });
   await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
-  await page.goto('/');
+  await page.route(/https:\/\/fonts\.(googleapis|gstatic)\.com\//, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByRole('combobox', { name: '画质', exact: true }).selectOption('Low');
   await page.locator('.welcome').getByRole('button', { name, exact: false }).click();
   await page.getByRole('button', { name: '试飞', exact: true }).click();

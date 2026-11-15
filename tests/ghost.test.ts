@@ -93,13 +93,15 @@ it('ignores stale worker batches after restart, applies backpressure and termina
   vi.stubGlobal('Worker', FakeWorker);
   const failed = vi.fn(), changed = vi.fn(), player = new GhostPlayer('{}', 'birdman', changed, failed), worker = FakeWorker.instance;
   const frame = captureGhost(new FlightSimulation(defaultAircraft, 'birdman', 0));
-  worker.onmessage!({ data: { generation: 0, definition: defaultAircraft, frames: [frame, { ...frame, time: 1 / 60 }, { ...frame, time: 1 }] } });
+  worker.onmessage!({ data: { generation: 0, definition: defaultAircraft, checkpointTimes: [12.345, null], frames: [frame, { ...frame, time: 1 / 60 }, { ...frame, time: 1 }] } });
+  expect(player.checkpointTimes).toEqual([12.345, null]);
   player.request(1 / 60);
   expect(player.buffer.sample(1 / 120)!.alpha).toBeCloseTo(0.5, 12);
   player.request(0); expect(worker.postMessage).toHaveBeenCalledTimes(1);
   player.request(0.6); player.request(0.7); expect(worker.postMessage).toHaveBeenCalledTimes(2);
   player.reset(); expect(player.ready).toBe(false); expect(player.buffer.frames.length).toBe(0);
-  worker.onmessage!({ data: { generation: 0, frames: [frame] } }); expect(player.ready).toBe(false);
+  worker.onmessage!({ data: { generation: 0, checkpointTimes: [99], frames: [frame] } }); expect(player.ready).toBe(false);
+  expect(player.checkpointTimes).toEqual([12.345, null]);
   worker.onmessage!({ data: { generation: 1, frames: [frame] } }); expect(player.ready).toBe(true);
   worker.onmessage!({ data: { generation: 1, error: 'bad map' } }); expect(failed).toHaveBeenCalledWith('bad map');
   player.dispose(); expect(worker.terminate).toHaveBeenCalledOnce();

@@ -5,6 +5,7 @@ import type { ChallengeMode } from './challenges';
 export class GhostPlayer {
   readonly buffer = new GhostBuffer();
   definition?: AircraftDefinition;
+  checkpointTimes: (number | null)[] = [];
   ready = false;
   private generation = 0;
   private pending = false;
@@ -17,6 +18,7 @@ export class GhostPlayer {
       this.pending = false;
       if (data.error) { this.failed(data.error); return; }
       if (data.definition) this.definition = data.definition;
+      if (data.checkpointTimes) this.checkpointTimes = data.checkpointTimes;
       this.buffer.push(data.frames); this.ready = true; this.changed();
     };
     this.worker.onerror = event => { event.preventDefault(); this.failed('Ghost 回放加载失败'); };

@@ -2,6 +2,16 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "有效计时": ["Race time", "有効タイム"],
+ "Ghost 检查点秒差": ["Ghost checkpoint split", "ゴーストとのチェックポイント時間差"],
+ "检查点 {number}": ["Checkpoint {number}", "チェックポイント {number}"],
+ "领先 Ghost": ["Ahead of ghost", "ゴーストより先行"],
+ "落后 Ghost": ["Behind ghost", "ゴーストより遅れ"],
+ "与 Ghost 持平": ["Level with ghost", "ゴーストと同タイム"],
+ "Ghost 未通过此检查点": ["Ghost did not reach this checkpoint", "ゴーストはこのチェックポイントを未通過"],
+ "未完赛": ["Did not finish", "未完走"],
+ "更换 Ghost 回放": ["Replace ghost replay", "ゴーストを変更"],
+ "正在导入回放…": ["Importing replay…", "リプレイをインポート中…"],
  "Ghost 回放": ["Ghost replay", "ゴーストリプレイ"],
  "选择 Ghost 回放文件": ["Choose ghost replay file", "ゴーストファイルを選択"],
  "正在准备 Ghost 回放…": ["Preparing ghost replay…", "ゴーストを準備中…"],

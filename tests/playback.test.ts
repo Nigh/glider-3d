@@ -2,10 +2,28 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { clone, defaultAircraft, presets } from '../src/model';
 import { FlightSimulation, GRAVITY, REPLAY_KEYFRAME_INTERVAL, captureReplayKeyframe } from '../src/physics';
 import { Vector3 } from 'three';
-import { recordedLoads, replayDuration, replaySimulation, seekReplay, replayCacheStats, MAX_REPLAY_CACHED_STATES, MAX_REPLAY_CACHE_BYTES } from '../src/playback';
+import { recordedLoads, replayCheckpointTimes, replayDuration, replaySimulation, seekReplay, replayCacheStats, MAX_REPLAY_CACHED_STATES, MAX_REPLAY_CACHE_BYTES } from '../src/playback';
+import { challengeCheckpoints } from '../src/challenges';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it('indexes exact ghost gate times from only the keyframe intervals with progress', async () => {
+ const definition=clone(presets.find(p=>p.name==='高性能滑翔型')!), sim=new FlightSimulation(definition,'downhill',0);
+ const gate=challengeCheckpoints('downhill')[0];
+ sim.launching=false; sim.position.set(gate.x-0.2,gate.y+30,gate.z); sim.velocity.set(30,0,0); sim.quaternion.identity();
+ Reflect.set(sim,'raceStarted',true); sim.time=12;
+ for(let i=0;i<130&&!sim.ended;i++)sim.step(neutral);
+ const recording=sim.getRecording();
+ expect(sim.checkpointTimes).toHaveLength(1);
+ expect(sim.checkpointTimes[0]).toBeGreaterThan(12);
+ expect(sim.checkpointTimes[0]).toBeLessThan(12+1/60);
+ const steps=vi.spyOn(FlightSimulation.prototype,'step');
+ const indexed=await replayCheckpointTimes({definition,challenge:'downhill',recording});
+ expect(indexed).toEqual([sim.checkpointTimes[0],...Array(29).fill(null)]);
+ expect(steps.mock.calls.length).toBeLessThan(recording.length);
+ expect(await replayCheckpointTimes({definition:defaultAircraft,challenge:'birdman',recording})).toEqual([]);
+});
 
 it('measures 2 G and free fall using the mass before a structural split', () => {
  const sim=new FlightSimulation(defaultAircraft,'birdman',0), mass=sim.telemetry.mass;

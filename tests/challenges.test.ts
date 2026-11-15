@@ -301,12 +301,19 @@ describe('三轴操纵与高山路径边界', () => {
     expect(Reflect.get(s, 'raceStarted')).toBe(true);
     expect(Reflect.get(s, 'checkpointIndex')).toBe(2);
     expect(timed).toBeCloseTo(1 - 1 / (s.position.x - previous.x), 12);
+    for (let i = 0; i < 2; i++) expect(s.checkpointTimes[i]).toBeCloseTo((checkpoints[i].x - start.x) / (s.position.x - previous.x), 12);
+    const saved = s.checkpoint();
+    s.reset();
+    expect(s.checkpointTimes).toEqual([]);
+    expect(saved.checkpointTimes).toHaveLength(2);
+    expect(Object.keys(saved)).not.toContain('checkpointTimes');
     const missed = create(), first = challengeCheckpoints('downhill')[0], second = challengeCheckpoints('downhill')[1];
     Reflect.set(missed, 'raceStarted', true);
     (Reflect.get(missed, 'previousPosition') as Vector3).set(first.x - 1, first.y + first.maxHeight + 5, first.z);
     missed.position.set(second.x + 1, second.y + 10, second.z);
     advance.call(missed, 1, 1);
     expect(Reflect.get(missed, 'checkpointIndex')).toBe(0);
+    expect(missed.checkpointTimes).toEqual([]);
   });
 
   it('废墟平原两侧真实穿门超过中心绝对门顶仍算进度，明显过高继续淘汰', () => {
