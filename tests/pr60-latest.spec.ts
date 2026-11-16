@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { AircraftDefinition } from '../src/model';
 
 async function open(page: Page) {
  await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
@@ -47,6 +48,15 @@ test('结构面板可反复展开且实时刷新不折叠，结构图层切换�
  await summary.click();
  await expect(panel).toHaveAttribute('open','');
  for(const name of ['主翼','副翼','垂直尾翼']) await expect(page.getByRole('meter',{name:`${name}结构极限利用率`,exact:true})).toBeVisible();
+ await expect(page.locator('.flight-hud .advanced-hud')).toHaveCount(0);
+ await expect(page.locator('.flight-status')).toHaveCount(0);
+ await expect(panel.locator('.wing-structure')).toHaveCount(3);
+ await expect(panel).not.toContainText(/弹性|连接|脱离|形变|断片|结构完整/);
+ for(const row of await panel.locator('.wing-structure').all()){
+  const label=await row.locator('strong').boundingBox(),bar=await row.getByRole('meter').boundingBox();
+  expect(label!.x+label!.width).toBeLessThan(bar!.x);
+  await expect(row.getByRole('meter').locator('output')).toBeVisible();
+ }
  const toggle=page.getByRole('switch',{name:'结构图层',exact:true});
  await toggle.click(); await expect(toggle).toHaveAttribute('aria-checked','true');
  expect(await page.evaluate(()=>(window as any).glider.scene.structureLayer)).toBe(true);
@@ -98,4 +108,44 @@ for (const completed of [false,true]) test(`导出${completed?'完赛':'未完�
  await expect(page.getByRole('button',{name:'导出回放',exact:true})).toBeVisible();
  const expected=await page.evaluate(()=>{const result=(window as any).glider.result,date=new Date(),score=result.completed?result.time.toFixed(2).replaceAll('.','_'):'未完赛';return `replay-高山速降-${score}-${date.getFullYear()}${String(date.getMonth()+1).padStart(2,'0')}${String(date.getDate()).padStart(2,'0')}.json`;});
  const download=page.waitForEvent('download');await page.getByRole('button',{name:'导出回放',exact:true}).click();expect((await download).suggestedFilename()).toBe(expected);
+});
+
+test('动力操纵台横向合并，油量相对起飞满油显示，双发偏移可编辑和撤销',async({page},info)=>{
+ await open(page);
+ await page.locator('.welcome').getByRole('button',{name:/低空飞行/}).click();
+ await page.getByRole('tab',{name:'动力',exact:true}).click();
+ await page.getByRole('combobox',{name:'引擎数量',exact:true}).selectOption('2');
+ const offset=page.getByRole('spinbutton',{name:'引擎横向偏移精确值',exact:true});
+ const initial=await offset.inputValue();
+ await offset.fill('2');await offset.press('Tab');
+ await expect(offset).toHaveValue('2');
+ await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(offset).toHaveValue(initial);
+ await page.getByRole('button',{name:'重做',exact:true}).click();await expect(offset).toHaveValue('2');
+ const tinyTank=await page.evaluate(()=>{
+  // The development API returns an independent aircraft snapshot.
+  const app=window as unknown as {glider:{aircraft:AircraftDefinition}};
+  const aircraft=app.glider.aircraft;aircraft.fuelTank.capacity=0.02;return aircraft;
+ });
+ await page.getByRole('button',{name:'机库',exact:true}).click();
+ await page.getByLabel('导入飞机文件',{exact:true}).setInputFiles({name:'short-flight.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(tinyTank))});
+ await page.getByRole('button',{name:'试飞',exact:true}).click();
+ const consolePanel=page.locator('.stick-panel');
+ const engine=await consolePanel.locator('.engine-hud').boundingBox(),stick=await consolePanel.locator('.stick-main').boundingBox(),assists=await consolePanel.locator('.flight-assists').boundingBox();
+ expect(engine!.x+engine!.width).toBeLessThanOrEqual(stick!.x);
+ expect(stick!.x+stick!.width).toBeLessThanOrEqual(assists!.x);
+ expect((await consolePanel.boundingBox())!.height).toBeLessThan(220);
+ const fuel=consolePanel.getByRole('meter',{name:'剩余燃料',exact:true});
+ await expect(fuel).toHaveAttribute('aria-valuenow','100');
+ await expect(consolePanel.locator('.fuel-readout')).not.toHaveClass(/low-fuel/);
+ await page.screenshot({path:info.outputPath('compact-powered-controls.png')});
+ await page.getByRole('button',{name:'开始试飞',exact:true}).click();
+ await expect.poll(()=>fuel.getAttribute('aria-valuenow')).not.toBe('100');
+ await expect(consolePanel.locator('.fuel-readout')).toHaveClass(/low-fuel/,{timeout:30000});
+ expect(Number(await fuel.getAttribute('aria-valuenow'))).toBeLessThan(20);
+ await page.getByRole('button',{name:'暂停',exact:true}).click();
+ for(const locale of ['en','ja']){
+  await page.getByRole('combobox',{name:/语言|Language/,exact:true}).selectOption(locale);
+  expect((await consolePanel.boundingBox())!.height).toBeLessThan(220);
+  expect(await consolePanel.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+ }
 });

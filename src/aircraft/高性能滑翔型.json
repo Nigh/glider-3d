@@ -29,7 +29,7 @@
     ],
     "rootReference": 0.425,
     "dihedral": 5.9,
-    "controlSurface": 0.15000000000000002,
+    "controlSurface": 0.3,
     "controlAxes": {
       "roll": true,
       "pitch": true,
@@ -66,7 +66,7 @@
     ],
     "rootReference": 0.325,
     "dihedral": 0,
-    "controlSurface": 0.4,
+    "controlSurface": 0.3,
     "controlAxes": {
       "roll": true,
       "pitch": true,
@@ -103,7 +103,7 @@
     ],
     "rootReference": 0.35,
     "dihedral": 0,
-    "controlSurface": 0.45,
+    "controlSurface": 0.3,
     "controlAxes": {
       "roll": false,
       "pitch": false,

@@ -4,7 +4,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BODY_GEOMETRY, finPoint, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { BODY_GEOMETRY, finPoint, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, engineLateralOffset, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { airfoilY, airfoilCamber } from './airfoils';
 import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, FlightSimulation } from './physics';
 import { applyGhost, ditherGhost, ghostOpacity, type GhostFrame, type GhostFragment } from './ghost';
@@ -1097,7 +1097,7 @@ export class SceneView {
       group.addEventListener('keydown', e => this.keyEditor(e, i, true));
       overlay.appendChild(group);
     }
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 9; i++) {
       const group = document.createElementNS(SVG_NS, 'g');
       group.setAttribute('role', 'button');
       group.setAttribute('tabindex', '-1');
@@ -1174,6 +1174,7 @@ export class SceneView {
   private assemblyEditorPoint(index: number, out: THREE.Vector3): THREE.Vector3 {
     const d = this.definition;
     if (index === 6) return out.set(d.engine.x, d.engine.y, 0);
+    if (index === 8) return out.set(d.engine.x, d.engine.y, engineLateralOffset(d));
     if (index === 7) {
       const tank = fuelTankPosition(d);
       return out.set(tank.x, tank.y, tank.z);
@@ -1205,7 +1206,7 @@ export class SceneView {
     const wingMount = key !== 'fuselage' && key !== 'propulsion' ? this.editorHandles[6] : undefined;
     for (let i = 0; i < this.editorHandles.length; i++) {
       const handle = this.editorHandles[i];
-      const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
+      const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? this.definition.engine.count > 0 && (i === 6 || i === 7 && this.definition.fuelTank.capacity > 0 || i === 8 && this.definition.engine.count === 2) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
       handle.group.style.display = show ? '' : 'none';
       if (!show) { handle.leader.style.display = 'none'; continue; }
       const assemblyIndex = this.editorAssemblyIndex(i);
@@ -1221,10 +1222,10 @@ export class SceneView {
       handle.ax = ax; handle.ay = ay;
       handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
-      const name = assemblyIndex >= 0 ? t(['主翼位置', '副翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
+      const name = assemblyIndex >= 0 ? t(['主翼位置', '副翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置', '引擎横向偏移'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
       handle.group.setAttribute('aria-label', name);
       handle.group.setAttribute('data-handle', String(i));
-      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '副翼安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : String(handle.index + 1);
+      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '副翼安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置', '引擎横向偏移'][assemblyIndex]) : String(handle.index + 1);
     }
     for (let i = 0; i < this.editorSegments.length; i++) {
       const segment = this.editorSegments[i];
@@ -1371,7 +1372,7 @@ export class SceneView {
     else this.wingEditorPoint(handle.index, handle.side, this.editOrigin);
     this.body.localToWorld(this.editOrigin);
     const sideView = mount || this.editorTarget === 'fuselage' || this.editorTarget === 'verticalTail' || this.editorTarget === 'propulsion';
-    const normal = this.vector.set(0, sideView ? 0 : 1, sideView ? 1 : 0);
+    const normal = mount && index === 8 ? this.vector.set(1, 0, 0) : this.vector.set(0, sideView ? 0 : 1, sideView ? 1 : 0);
     if (!sideView) {
       const key = this.editorTarget as 'mainWing' | 'horizontalTail';
       const incidence = (key === 'mainWing' ? this.definition.assembly.mainIncidence : this.definition.assembly.tailIncidence) * DEG;
@@ -1401,7 +1402,7 @@ export class SceneView {
     const key = this.editorTarget;
     const handle = this.editorSegmentDrag >= 0 ? this.editorSegments[this.editorSegmentDrag] : this.editorHandles[this.editorDrag];
     const assemblyIndex = this.editorSegmentDrag < 0 ? this.editorAssemblyIndex(this.editorDrag) : -1;
-    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, this.editPoint.x - this.editStart.x, this.editPoint.y - this.editStart.y);
+    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, this.editPoint.x - this.editStart.x, this.editPoint.y - this.editStart.y, this.editPoint.z - this.editStart.z);
     else if (key !== 'fuselage' && key !== 'propulsion') {
       const base = this.editDefinition!;
       const incidence = (key === 'mainWing' ? base.assembly.mainIncidence : key === 'horizontalTail' ? base.assembly.tailIncidence : 0) * DEG;
@@ -1431,7 +1432,7 @@ export class SceneView {
     const vertical = event.key === 'ArrowUp' ? amount : event.key === 'ArrowDown' ? -amount : 0;
     const key = this.editorTarget;
     const assemblyIndex = segment ? -1 : this.editorAssemblyIndex(index);
-    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, horizontal, vertical);
+    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, horizontal, vertical, assemblyIndex === 8 ? horizontal || vertical : 0);
     else if (key !== 'fuselage' && key !== 'propulsion') {
       const handle = segment ? this.editorSegments[index] : this.editorHandles[index];
       const p = this.definition[key].points[handle.index];
@@ -1518,9 +1519,10 @@ export class SceneView {
     this.editorChange?.(next);
   }
 
-  private changeAssembly(index: number, x: number, y: number): void {
+  private changeAssembly(index: number, x: number, y: number, z = 0): void {
     const next = clone(this.editDefinition ?? this.definition);
     x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100;
+    z = Math.round(z * 100) / 100;
     const ends = fuselageEnds(next);
     if (index === 0) {
       const limits = mainWingMountLimits(next);
@@ -1557,6 +1559,9 @@ export class SceneView {
     } else if (index === 7) {
       const limits = fuelTankLimits(next);
       next.fuelTank.x = clamp(next.fuelTank.x + x, limits.min, limits.max);
+    } else if (index === 8) {
+      if (next.engine.count !== 2) return;
+      next.engine.lateralOffset = engineLateralOffset(next) + z;
     } else resizeFuselage(next, index === 4 ? 'nose' : 'tail', (index === 4 ? ends.nose : ends.tail) + x);
     normalizeAircraftGeometry(next);
     this.editorChange?.(next);

@@ -530,9 +530,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Twin · Jet 01",
   "双発 · Jet 01"
  ],
- "负值在下，正值在上。可用范围：{p0}。自动跳过机身重叠区；单发居中，双发固定在机身两侧。": [
-  "Negative is below, positive above. Available ranges: {p0}. Fuselage overlap is skipped automatically; single engines are centered and twin engines mount on both sides.",
-  "負は下、正は上。使用範囲：{p0}。胴体との重複域は自動で避けます。単発は中央、双発は胴体の両側に固定します。"
+ "负值在下，正值在上。可用范围：{p0}。自动跳过机身重叠区；单发居中，双发对称安装。": [
+  "Negative is below, positive above. Available ranges: {p0}. Body overlap is skipped automatically; single engines are centered and twins mount symmetrically.",
+  "負は下、正は上。使用範囲：{p0}。胴体との重複域は自動で避けます。単発は中央、双発は左右対称に取り付けます。"
  ],
  "{p0} 至 {p1} m": [
   "{p0} to {p1} m",
@@ -958,9 +958,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Yaw right",
   "右旋回"
  ],
- "姿态与结构 ·": [
-  "Attitude & structure ·",
-  "姿勢と構造 ·"
+ "姿态与结构": [
+  "Attitude & structure",
+  "姿勢と構造"
  ],
  "已断裂 {p0} 次": [
   "{p0} fractures",
@@ -1830,6 +1830,8 @@ export const messages: Record<string, readonly [string, string]> = {
   "Engine vertical offset",
   "エンジンの上下位置"
  ],
+ "引擎横向偏移": ["Engine lateral offset", "エンジンの左右間隔"],
+ "最小贴近机身，最大保持在主翼翼展内；缩小翼展时自动调整。": ["Minimum keeps engines beside the body; maximum keeps them within the main-wing span. Reducing span adjusts the offset automatically.", "最小値は胴体のすぐ外側、最大値は主翼の翼幅内です。翼幅を縮めると自動で調整します。"],
  "油箱容量": [
   "Tank capacity",
   "タンク容量"

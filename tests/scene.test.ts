@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, DirectionalLight, FogExp2, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, ShaderMaterial, BoxGeometry, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Spherical, Vector2, Vector3 } from 'three';
 import type { Material, MeshStandardMaterial } from 'three';
-import { clone, defaultAircraft, DEG, engineMounts, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint, presets } from '../src/model';
+import { clone, defaultAircraft, DEG, engineMounts, engineLateralOffset, engineLateralOffsetLimits, wingLocalPoint, wingOrigin, normalizeAircraftGeometry, resizeFuselage, fuselageEnds, editWingPoint, presets } from '../src/model';
 import { SceneView } from '../src/scene';
 import { Plane } from 'three';
 import { FlightSimulation, LAUNCH } from '../src/physics';
@@ -463,10 +463,17 @@ describe('场景编辑与推力中心', () => {
     });
     view.aircraft.position.set(10, 20, 30);
     view.aircraft.rotation.z = Math.PI / 6;
+    view.definition.engine.lateralOffset = 1.5;
     for (const count of [1, 2, 0] as const) {
       view.definition.engine.count = count;
       view.updatePropulsionGeometry();
       const mounts = engineMounts(view.definition);
+      for (const [index, mount] of mounts.entries()) {
+        expect(view.engines[index].position.toArray()).toEqual([mount.x, mount.y, mount.z]);
+        expect(view.engineSupports[index].scale.y).toBe(mount.supportLength);
+        expect(view.propulsionBounds.min.z).toBeLessThan(mount.z);
+        expect(view.propulsionBounds.max.z).toBeGreaterThan(mount.z);
+      }
       const center = new Vector3();
       for (const mount of mounts) center.add(new Vector3(mount.x, mount.y, mount.z));
       if (mounts.length) center.divideScalar(mounts.length);
@@ -1028,11 +1035,11 @@ describe('工坊场景与直接选取', () => {
     view.release(view.body);
   });
 
-  it('机身仅提供驾驶舱与端点，动力仅提供引擎和油箱，各翼保留安装拖动', () => {
+  it('机身提供驾驶舱与端点，动力提供引擎、油箱和仅双发可见的横向偏移手柄', () => {
     const view = designSceneView();
     view.definition = clone(defaultAircraft);
     view.definition.engine.count = 1; view.definition.fuelTank.capacity = 1;
-    view.editorHandles = Array.from({ length: 8 }, (_, index) => ({
+    view.editorHandles = Array.from({ length: 9 }, (_, index) => ({
       group: svgElement(), leader: svgElement(), index: index < 4 ? index : index - 3,
       side: index < 4 ? 1 : -1, x: 0, y: 0, ax: 0, ay: 0,
     }));
@@ -1042,6 +1049,12 @@ describe('工坊场景与直接选取', () => {
     expect(shown()).toEqual([3, 4, 5]);
     view.editorTarget = 'propulsion'; view.editorDirty = true; view.updateEditorOverlay();
     expect(shown()).toEqual([6, 7]);
+    view.definition.engine.count = 2; view.editorDirty = true; view.updateEditorOverlay();
+    expect(shown()).toEqual([6, 7, 8]);
+    expect(view.editorHandles[8].group.attributes.get('aria-label')).toBeTruthy();
+    expect(view.assemblyEditorPoint(8, new Vector3()).toArray()).toEqual([view.definition.engine.x, view.definition.engine.y, engineLateralOffset(view.definition)]);
+    view.definition.fuelTank.capacity = 0; view.editorDirty = true; view.updateEditorOverlay();
+    expect(shown()).toEqual([6, 8]);
     for (const [key, index] of [['mainWing', 0], ['horizontalTail', 1], ['verticalTail', 2]]) {
       view.editorTarget = key; view.editorDirty = true; view.updateEditorOverlay();
       expect(shown()).toContain(6);
@@ -1054,18 +1067,18 @@ describe('工坊场景与直接选取', () => {
 
   it.each([
     ['fuselage', 3], ['fuselage', 4], ['fuselage', 5],
-    ['mainWing', 6], ['horizontalTail', 6], ['verticalTail', 6], ['propulsion', 6], ['propulsion', 7],
+    ['mainWing', 6], ['horizontalTail', 6], ['verticalTail', 6], ['propulsion', 6], ['propulsion', 7], ['propulsion', 8],
   ])('%s手柄%d实际拖动更新对应部件，取消恢复原设计且不提交', (target, index) => {
     const view = designSceneView(), original = clone(defaultAircraft);
-    original.engine.count = 1; original.fuelTank.capacity = 1;
+    original.birdman = false; original.engine.count = index === 8 ? 2 : 1; original.fuelTank.capacity = 1;
     let commits = 0;
     const group = { style: { cursor: 'grabbing' } };
     const dragX = target === 'fuselage' && index === 5 ? -0.2 : 0.2;
     Object.assign(view, {
       definition: clone(original), editDefinition: clone(original), editorTarget: target,
       editorPointerId: 7, editorDrag: index, editorSegmentDrag: -1, editorChanged: false,
-      editorHandles: Array.from({ length: 8 }, () => ({ group })),
-      editStart: new Vector3(), editPoint: new Vector3(dragX, 0.1, 0),
+      editorHandles: Array.from({ length: 9 }, () => ({ group })),
+      editStart: new Vector3(), editPoint: new Vector3(dragX, 0.1, 0.2),
       editorSnap: { active: false, kind: null, value: null, disabled: false },
       intersectEditor: () => true,
       editorChange(next: typeof original) { this.definition = next; },
@@ -1074,6 +1087,12 @@ describe('工坊场景与直接选取', () => {
     });
     view.moveEditorDrag({ pointerId: 7, ctrlKey: true, preventDefault() {} });
     expect(view.definition).not.toEqual(original);
+    if (index === 8) {
+      expect(view.definition.engine.lateralOffset).toBeCloseTo(engineLateralOffset(original) + 0.2);
+      expect(view.definition.engine.x).toBe(original.engine.x);
+      expect(view.definition.engine.y).toBe(original.engine.y);
+      expect(engineMounts(view.definition).map(mount => mount.z)).toEqual([-view.definition.engine.lateralOffset, view.definition.engine.lateralOffset]);
+    }
     if (target === 'fuselage' && (index === 4 || index === 5)) {
       const before = fuselageEnds(original), after = fuselageEnds(view.definition);
       const end = index === 4 ? 'nose' : 'tail', fixed = index === 4 ? 'tail' : 'nose';
@@ -1086,6 +1105,40 @@ describe('工坊场景与直接选取', () => {
     expect(commits).toBe(0);
     expect(view.editorPointerId).toBe(-1);
     expect(group.style.cursor).toBe('grab');
+  });
+
+  it('双发偏移手柄用横向拖动平面，方向键支持0.01m与Shift 0.1m并夹紧边界', () => {
+    const view = designSceneView(), definition = clone(presets.find(plane => plane.engine.count === 2)!);
+    definition.engine.lateralOffset = 1.2;
+    const group = { style: { display: '', cursor: '' } };
+    const camera = new OrthographicCamera(-5, 5, 5, -5);
+    camera.position.set(10, 0, 0); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+    let commits = 0;
+    Object.assign(view, {
+      definition, camera, editorTarget: 'propulsion', editorPointerId: -1,
+      editorHandles: Array.from({ length: 9 }, (_, index) => ({ index, side: 1, x: 100, y: 100,
+        group: index === 8 ? group : { style: { display: 'none' } } })),
+      editOrigin: new Vector3(), editPlane: new Plane(), editPoint: new Vector3(), editStart: new Vector3(),
+      deformationRotation: new Quaternion(), editorSnap: { active: false, kind: null, value: null, disabled: false },
+      intersectEditor: () => true,
+      editorOverlay: { setPointerCapture() {}, hasPointerCapture: () => false },
+      editorChange(next: typeof definition) { this.definition = next; },
+      editorCommit() { commits++; },
+    });
+    view.beginEditorDrag({ button: 0, pointerId: 7, clientX: 100, clientY: 100, ctrlKey: false, preventDefault() {}, stopPropagation() {} }, 8);
+    expect(view.editorDrag).toBe(8);
+    expect(view.editPlane.normal.toArray()).toEqual([1, 0, 0]);
+    view.endEditorDrag(true);
+    const key = (name: string, shiftKey = false) => view.keyEditor({ key: name, shiftKey, ctrlKey: false, preventDefault() {}, stopPropagation() {} }, 8);
+    key('ArrowRight'); expect(view.definition.engine.lateralOffset).toBeCloseTo(1.21);
+    key('ArrowUp', true); expect(view.definition.engine.lateralOffset).toBeCloseTo(1.31);
+    key('ArrowLeft'); key('ArrowDown'); expect(view.definition.engine.lateralOffset).toBeCloseTo(1.29);
+    const limits = engineLateralOffsetLimits(view.definition);
+    view.definition.engine.lateralOffset = limits.max; key('ArrowRight', true);
+    expect(view.definition.engine.lateralOffset).toBe(limits.max);
+    view.definition.engine.lateralOffset = limits.min; key('ArrowLeft', true);
+    expect(view.definition.engine.lateralOffset).toBe(limits.min);
+    expect(commits).toBe(6);
   });
 
   it('上反角与安装角使用同一刚体旋转，真实翼长、渲染锚点和结构参考点一致', () => {

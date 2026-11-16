@@ -102,7 +102,7 @@
     ],
     "rootReference": 0.45,
     "dihedral": 0,
-    "controlSurface": 1,
+    "controlSurface": 0.3,
     "controlAxes": {
       "roll": false,
       "pitch": false,

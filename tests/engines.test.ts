@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clone, defaultAircraft, type Controls } from '../src/model';
+import type { Quaternion, Vector3 } from 'three';
+import { clone, defaultAircraft, engineMounts, engineLateralOffsetLimits, presets, type Controls } from '../src/model';
 import { engineCatalog, FUEL_DENSITY } from '../src/engines';
 import { FlightSimulation } from '../src/physics';
 
@@ -80,5 +81,39 @@ describe('发动机独立加减速响应', () => {
       expect([replay.telemetry.engineRpm, replay.telemetry.fuelRemaining, replay.telemetry.thrust]).toEqual(state);
     }
     expect(replay.replayFinished).toBe(true);
+  });
+
+  it('双发侧距同步质量、惯量、阻力、接触及角速度下的推力矩', () => {
+    const definition = clone(presets.find(plane => plane.engine.count === 2)!);
+    definition.engine.y = 0;
+    const flights = [engineLateralOffsetLimits(definition).min, 1.5].map(offset => {
+      const d = clone(definition); d.engine.lateralOffset = offset;
+      const s = new FlightSimulation(d, 'test-space', 0);
+      const mounts = engineMounts(s.definition);
+      expect(mounts.map(mount => mount.z)).toEqual([-offset, offset]);
+      expect((Reflect.get(s, 'enginePositions') as typeof mounts).map(mount => mount.z)).toEqual([-offset, offset]);
+      expect(s.telemetry.aerodynamics.engines.map(engine => engine.point.z)).toEqual([-offset, offset]);
+      const parts = Reflect.get(s, 'parts') as { mass: number; x: number; y: number; z: number }[];
+      const contacts = Reflect.get(s, 'contacts') as Vector3[];
+      for (const mount of mounts) {
+        expect(parts.some(part => part.mass === spec.mass && part.x === mount.x && part.y === mount.y && part.z === mount.z)).toBe(true);
+        expect(contacts.some(point => Math.abs(point.x - mount.x - spec.length / 2) < 1e-8
+          && Math.abs(point.y - mount.y - spec.radius) < 1e-8 && Math.abs(point.z - mount.z) < 1e-8)).toBe(true);
+      }
+      s.position.set(100, 1000, 0); s.velocity.set(40, 0, 0); s.omega.set(0, 1, 0); s.quaternion.identity();
+      Reflect.set(s, 'seaLevelReference', true);
+      const evaluate = Reflect.get(s, 'evaluateForces') as (input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3) => void;
+      Reflect.set(s, 'availableThrust', 0);
+      evaluate.call(s, neutral, s.velocity, s.omega, s.quaternion, s.position);
+      const unpoweredYaw = s.telemetry.torque.y;
+      Reflect.set(s, 'availableThrust', spec.maxThrust * 2);
+      evaluate.call(s, neutral, s.velocity, s.omega, s.quaternion, s.position);
+      expect(s.telemetry.torque.y - unpoweredYaw).toBeCloseTo(-2 * spec.maxThrust * offset ** 2 / spec.exhaustVelocity, 8);
+      return s;
+    });
+    expect(flights[1].mass).toBeGreaterThan(flights[0].mass);
+    expect(flights[1].aircraft.inertia.x).toBeGreaterThan(flights[0].aircraft.inertia.x);
+    expect(flights[1].aircraft.inertia.y).toBeGreaterThan(flights[0].aircraft.inertia.y);
+    expect(flights[1].telemetry.aerodynamics.engines[0].supportArea).toBeGreaterThan(flights[0].telemetry.aerodynamics.engines[0].supportArea);
   });
 });

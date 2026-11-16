@@ -1,6 +1,6 @@
 <script lang="ts">
  import { onDestroy, onMount, tick as flushUi } from 'svelte';
- import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, fuselageEndLimits, resizeFuselage, mainWingMountLimits, mainWingSupport, wingMountLimits, cockpitLimits, cockpitRearLengthLimits, fuelCapacityLimit, normalizeAircraftGeometry, editWingPoint, engineMountLimits, engineMounts, engineHeightRanges, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Wing } from './model';
+ import { defaultAircraft, presets, clone, clamp, planform, validateAircraft, fuselageEnds, fuselageEndLimits, resizeFuselage, mainWingMountLimits, mainWingSupport, wingMountLimits, cockpitLimits, cockpitRearLengthLimits, fuelCapacityLimit, normalizeAircraftGeometry, editWingPoint, engineMountLimits, engineMounts, engineHeightRanges, engineLateralOffset, engineLateralOffsetLimits, fuelTankLimits, PILOT_MASS, type AircraftDefinition, type Wing } from './model';
  import { FlightSimulation, derive, GRAVITY, LAUNCH, type FlightControls } from './physics';
  import { engineCatalog, FUEL_DENSITY } from './engines';
  import type { CruiseReference } from './cruise';
@@ -201,7 +201,7 @@
  function toggleControlAxis(axis:keyof NonNullable<Wing['controlAxes']>){change(d=>{d[wingKey].controlAxes={...wingControlAxes,[axis]:!wingControlAxes[axis]};});commit();}
  function forChallenge(definition:AircraftDefinition,mode:ChallengeMode=challenge){const d=validateAircraft(definition);if(!isAircraftCompatible(d,mode))throw Error(mode==='birdman'?'鸟人间比赛只允许无动力鸟人间设计':'当前挑战不可使用鸟人间飞机，请选择普通飞机。');return d;}
  function replace(d:AircraftDefinition){try{aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';scene?.updateAircraft(aircraft);commit();return true;}catch(e){notify((e as Error).message);return false;}}
- function setAircraftType(birdman:boolean){if(!isLaboratory(challenge)||birdman===aircraft.birdman)return;change(d=>{d.birdman=birdman;if(birdman){d.engine.count=0;d.fuelTank.capacity=0;d.mainWing.controlSurface=0;d.horizontalTail.controlSurface=0;}else{d.mainWing.controlSurface=0.28;d.horizontalTail.controlSurface=0.4;}});if(birdman&&tab==='动力')tab='主翼';selectedId='';commit();}
+ function setAircraftType(birdman:boolean){if(!isLaboratory(challenge)||birdman===aircraft.birdman)return;change(d=>{d.birdman=birdman;if(birdman){d.engine.count=0;d.fuelTank.capacity=0;d.mainWing.controlSurface=0;d.horizontalTail.controlSurface=0;}else{d.mainWing.controlSurface=0.3;d.horizontalTail.controlSurface=0.3;}});if(birdman&&tab==='动力')tab='主翼';selectedId='';commit();}
  function undo(){if(screen!=='design'||showLibrary)return;const d=history.undo();if(d){aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
  function redo(){if(screen!=='design'||showLibrary)return;const d=history.redo();if(d){aircraft=forChallenge(d);if(aircraft.birdman&&tab==='动力')tab='主翼';selectedId='';scene?.updateAircraft(aircraft);historyVersion++;}}
  function library(){try{saved=listAircraft();}catch(e){saved=presets.map(preset=>loadAircraft(`system:${preset.name}`));notify((e as Error).message);}clearControls();showLibrary=true;}
@@ -440,6 +440,9 @@ window.addEventListener('pointermove',mouse);
  </section>
 {/snippet}
 
+{#snippet engineData()}
+ {#if lastDefinition.engine.count}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t("油门")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><span class="throttle-track" style={`--rpm:${clamp(hud.engineRpm??0,0,1)*100}%`}><input aria-label={t("油门")} title={t("实色表示实际转速，滑块表示设定转速。")} disabled={isReplay} type="range" min="0" max="1" step="0.01" value={isReplay?hud.throttle??0:throttle} oninput={e=>{throttle=e.currentTarget.valueAsNumber;input.clear();}}/></span></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}% · {t("推力")} {(hud.thrust??0).toFixed(0)} N</p><p class="fuel-readout" class:low-fuel={(hud.fuelRemaining??0)<lastDefinition.fuelTank.capacity*0.2}>{t("剩余燃料")} {(hud.fuelRemaining??0).toFixed(2)} L <span class="fuel-meter" role="meter" aria-label={t("剩余燃料")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={lastDefinition.fuelTank.capacity>0?clamp((hud.fuelRemaining??0)/lastDefinition.fuelTank.capacity,0,1)*100:0}><i style:width={`${lastDefinition.fuelTank.capacity>0?clamp((hud.fuelRemaining??0)/lastDefinition.fuelTank.capacity,0,1)*100:0}%`}></i></span></p></section>{/if}
+{/snippet}
 {#snippet trimControls()}
  <div class="trim-controls" aria-label={t("配平控制")}>
  <label class="pitch-trim" class:auto-trim={pitchTrimLocked}><span>{t("升降舵配平")} <kbd>J/K</kbd> <output>{((displayedPitch+1)*50).toFixed(0)}%</output></span><span class="trim-track"><input aria-label={t("升降舵配平")} disabled={isReplay||pitchTrimLocked} type="range" min="0" max="100" step="1" value={(displayedPitch+1)*50} oninput={e=>{setPitchTrim(trimFromPointer(e.currentTarget.valueAsNumber));e.currentTarget.value=String((trimPitch+1)*50);}}/><i aria-hidden="true"></i></span></label>
@@ -448,7 +451,14 @@ window.addEventListener('pointermove',mouse);
  </div>
 {/snippet}
 {#snippet structureData()}
-<details class="advanced-hud" bind:open={structureExpanded}><summary>{t("姿态与结构 ·")} {(hud.fractureCount??0)>0?t("已断裂 {p0} 次",{p0:hud.fractureCount}):t("结构完整")} {t("· 极限")} {((hud.maxStressRatio??0)*100).toFixed(0)}%</summary><div class="structure-status" aria-label={t("结构载荷与断裂状态")}><p>{t("结构极限利用率")} <output aria-label={t("结构极限利用率")}>{((hud.maxStressRatio??0)*100).toFixed(1)}%</output> {t("· 弹性限利用率")} {((hud.maxYieldRatio??0)*100).toFixed(1)}%</p>{#each hud.wings??[] as wing}<div class="wing-load" role="meter" aria-label={t('{name}结构极限利用率',{name:t(wing.name)})} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100,Math.max(0,wing.stress*100))} aria-valuetext={`${(wing.stress*100).toFixed(1)}%`}><span style:width={`${Math.min(100,Math.max(0,wing.stress*100))}%`} style:background-color={`#${structureLoadColor(wing.stress).toString(16).padStart(6,'0')}`}></span></div><p class="wing-structure" data-wing={wing.key}><strong>{t(wing.name)}</strong> · {t('结构极限')} <output aria-label={t('{name}结构极限利用率',{name:t(wing.name)})}>{(wing.stress*100).toFixed(1)}%</output> · {t('弹性限')} {(wing.yieldRatio*100).toFixed(1)}% · {t('连接 {attached} 段 / 脱离 {detached} 段',{attached:wing.attached,detached:wing.detached})}</p>{/each}<p>{t("最大形变")} <output aria-label={t("最大结构形变")}>{((hud.maxDeflection??0)*1000).toFixed(1)}</output> {t("mm · 独立断片")} <output aria-label={t("独立断片数量")}>{hud.fragmentCount??0}</output> {t("片")}</p>{#if (hud.fractureCount??0)>0}<p role="status"><strong>{t("承力梁已断裂")} {hud.fractureCount} {t("次。")}</strong>{t(lastChallenge==='wind-tunnel'?"主体由夹具固定，断片随气流运动；测试继续。":"主体继续飞行；断片独立运动，断片落地不结束主体。")}</p>{:else if (hud.maxStressRatio??0)>=0.8}<p role="status"><strong>{t("接近结构极限，减小载荷。")}</strong></p>{/if}{#if (hud.maxYieldRatio??0)>1}<p>{t("超过等效弹性限。当前仍为线弹性近似，不模拟塑性或真实颤振。")}</p>{/if}</div></details>
+<details class="advanced-hud" bind:open={structureExpanded}>
+ <summary>{t("姿态与结构")} <output aria-label={t("结构极限利用率")}>· {((hud.maxStressRatio??0)*100).toFixed(0)}%</output></summary>
+ <div class="structure-status" aria-label={t("结构极限利用率")}>
+ {#each hud.wings??[] as wing}
+ <div class="wing-structure" data-wing={wing.key}><strong>{t(wing.name)}</strong><div class="wing-load" role="meter" aria-label={t('{name}结构极限利用率',{name:t(wing.name)})} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100,Math.max(0,wing.stress*100))} aria-valuetext={`${(wing.stress*100).toFixed(1)}%`}><span style:width={`${Math.min(100,Math.max(0,wing.stress*100))}%`} style:background-color={`#${structureLoadColor(wing.stress).toString(16).padStart(6,'0')}`}></span><output>{(wing.stress*100).toFixed(1)}%</output></div></div>
+ {/each}
+ </div>
+</details>
 {/snippet}
 {#snippet aeroWindow()}
 {#if aero&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
@@ -535,7 +545,8 @@ window.addEventListener('pointermove',mouse);
  <label class="fixed-parameter">{t("喷气引擎")}<select aria-label={t("引擎数量")} value={aircraft.engine.count} onchange={e=>{change(d=>{const previous=d.engine.count;d.engine.count=Number(e.currentTarget.value) as 0|1|2;if(d.engine.count){if(d.engine.count===2&&previous!==2)d.engine.y=0;if(!d.fuelTank.capacity)d.fuelTank.capacity=12;}else d.fuelTank.capacity=0;});commit();}}><option value={0}>{t("无引擎")}</option><option value={1}>{t("单发 · Jet 01")}</option><option value={2}>{t("双发 · Jet 01")}</option></select></label>
  {#if aircraft.engine.count}
  <Parameter label={t("引擎纵向位置")} value={aircraft.engine.x} min={engineMountLimits(aircraft).min} max={engineMountLimits(aircraft).max} unit="m" onchange={n=>change(d=>d.engine.x=n)} oncommit={commit}/>
- <Parameter label={t("引擎垂直偏移")} value={aircraft.engine.y} min={-0.5} max={1} step={0.01} unit="m" onchange={n=>change(d=>d.engine.y=n)} oncommit={commit} hint={t("负值在下，正值在上。可用范围：{p0}。自动跳过机身重叠区；单发居中，双发固定在机身两侧。",{p0:engineRanges.map(r=>t('{p0} 至 {p1} m',{p0:r.min.toFixed(2),p1:r.max.toFixed(2)})).join(' / ')})}/>
+ <Parameter label={t("引擎垂直偏移")} value={aircraft.engine.y} min={-0.5} max={1} step={0.01} unit="m" onchange={n=>change(d=>d.engine.y=n)} oncommit={commit} hint={t("负值在下，正值在上。可用范围：{p0}。自动跳过机身重叠区；单发居中，双发对称安装。",{p0:engineRanges.map(r=>t('{p0} 至 {p1} m',{p0:r.min.toFixed(2),p1:r.max.toFixed(2)})).join(' / ')})}/>
+ {#if aircraft.engine.count===2}<Parameter label={t("引擎横向偏移")} value={engineLateralOffset(aircraft)} min={engineLateralOffsetLimits(aircraft).min} max={engineLateralOffsetLimits(aircraft).max} step={0.01} unit="m" onchange={n=>change(d=>d.engine.lateralOffset=n)} oncommit={commit} hint={t("最小贴近机身，最大保持在主翼翼展内；缩小翼展时自动调整。")}/>{/if}
  <Parameter label={t("油箱容量")} value={aircraft.fuelTank.capacity} min={0} max={fuelCapacityLimit(aircraft)} step={0.5} unit="L" onchange={n=>change(d=>d.fuelTank.capacity=n)} oncommit={commit} hint={t("油箱固定在机身内部，起飞装满；燃油消耗改变质量与重心，耗尽后引擎无推力。")}/>
  <Parameter label={t("油箱纵向位置")} value={aircraft.fuelTank.x} min={tankLimits.min} max={tankLimits.max} step={0.01} unit="m" onchange={n=>change(d=>d.fuelTank.x=n)} oncommit={commit} hint={t("位置范围随容量和机身空间调整，油箱整体始终位于机身内部。")}/>
  {:else}<p class="help">{t("未安装引擎，油箱已自动取消。")}</p>{/if}
@@ -621,22 +632,24 @@ window.addEventListener('pointermove',mouse);
  <div title={t("真实耗散功率除以世界水平速度；助跑或水平速度不超过0.05 m/s时无定义")}><small>{t("实时能耗")}</small><strong><output aria-label={t("实时能耗")}>{hud.energyPerDistance!=null&&Number.isFinite(hud.energyPerDistance)?hud.energyPerDistance.toFixed(1):'—'}</output><em>J/m</em></strong></div>
  {/if}
  </section>{/if}
- {#if isLaboratory(lastChallenge)}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {t(!flightReady?"待开始":lastChallenge==='wind-tunnel'?"测试运行中":hud.launching?(testSettings.catapult?"弹射助跑":"跑道滑跑"):"飞行中")}</span><span>{t("自由测试 · 不计成绩")}</span></div>{:else}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {!flightReady?t("待开始"):hud.launching?(lastChallenge==='low-altitude'?t("跑道滑跑"):t("弹射助跑")):t("飞行中")}</span><span>{lastChallenge==='birdman'?t("湖面最远距离"):!hud.timingStarted?(lastChallenge==='low-altitude'?t("通过出发门后开始计时与计分"):t("通过出发门后开始计时")):t("赛道进度 {p0}% · 依次穿过航线检查点",{p0:(100*(hud.challengeProgress??0)).toFixed(0)})}</span>{#if hud.stall}<b>{t("攻角过大 · 失速")}</b>{/if}</div>{/if}
+ {#if lastChallenge!=='wind-tunnel'}{@render structureData()}{/if}
+ {#if isLaboratory(lastChallenge)}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {t(!flightReady?"待开始":lastChallenge==='wind-tunnel'?"测试运行中":hud.launching?(testSettings.catapult?"弹射助跑":"跑道滑跑"):"飞行中")}</span><span>{t("自由测试 · 不计成绩")}</span></div>{:else if lastChallenge!=='downhill'}<div class="flight-status"><span>{t(challengeDefinitions[lastChallenge].name)} · {!flightReady?t("待开始"):hud.launching?(lastChallenge==='low-altitude'?t("跑道滑跑"):t("弹射助跑")):t("飞行中")}</span><span>{lastChallenge==='birdman'?t("湖面最远距离"):!hud.timingStarted?t("通过出发门后开始计时与计分"):t("赛道进度 {p0}% · 依次穿过航线检查点",{p0:(100*(hud.challengeProgress??0)).toFixed(0)})}</span>{#if hud.stall}<b>{t("攻角过大 · 失速")}</b>{/if}</div>{:else if hud.stall}<div class="flight-status"><b>{t("攻角过大 · 失速")}</b></div>{/if}
  {#if lastChallenge==='low-altitude'}<section class="challenge-hud" class:over-height={(hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight} aria-label={t("贴地挑战数据")}><span>{t("离地")} <strong>{(hud.groundClearance??0).toFixed(1)} m / {LOW_ALTITUDE.scoringHeight} m</strong></span><span>{t("得分")} <strong>{(hud.score??0).toFixed(0)}</strong></span><span>{t("连续超高")} <strong>{(hud.aboveHeightTime??0).toFixed(1)} s</strong></span>{#if (hud.groundClearance??0)>LOW_ALTITUDE.scoringHeight}<b role="status">{t("超出计分高度 · 降低高度")}</b>{/if}</section>{/if}
- {#if lastDefinition.engine.count&&lastChallenge!=='wind-tunnel'}<section class="engine-hud" aria-label={t("引擎数据")}><label>{t("油门")} <output>{((isReplay?hud.throttle??0:throttle)*100).toFixed(0)}%</output><span class="throttle-track" style={`--rpm:${clamp(hud.engineRpm??0,0,1)*100}%`}><input aria-label={t("油门")} title={t("实色表示实际转速，滑块表示设定转速。")} disabled={isReplay} type="range" min="0" max="1" step="0.01" value={isReplay?hud.throttle??0:throttle} oninput={e=>{throttle=e.currentTarget.valueAsNumber;input.clear();}}/></span></label><p>{t("转速")} {((hud.engineRpm??0)*100).toFixed(0)}{t("% · 推力")} {(hud.thrust??0).toFixed(0)} {t("N · 余油")} {(hud.fuelRemaining??0).toFixed(2)} L</p></section>{/if}
  {#if lastChallenge!=='wind-tunnel'}<div class="flight-tools"><span class="keyboard-hint">X · {t("虚拟操纵杆")} / R · {t("再试一次（仅暂停或结算时）")} / Esc · {t("设计")}</span>{#if flightReady}<button title={t("空格开始 / 暂停 / 继续")} onclick={togglePause}>{paused?t("继续飞行"):t("暂停")}</button>{/if}<select aria-label={t("飞行相机")} title={t("C 键切换视角 · 锁定视角可小幅拖动 · 回放支持全部视角")} bind:value={flightCamera} onchange={e=>selectCamera(e.currentTarget.value)}>{#each availableViews as c}<option value={c}>{t(c)}</option>{/each}</select><button onclick={design}>{t("返回设计")}</button></div>{/if}
  {#if paused}<div class="pause-banner">{t("飞行已暂停")} <button onclick={togglePause}>{t("继续")}</button></div>{/if}
  <div class="flight-right">{#if lastChallenge==='wind-tunnel'&&hud.windForces}<WindForces loads={hud.windForces}/>{/if}{@render aeroWindow()}{#if lastChallenge==='wind-tunnel'}{@render structureData()}{/if}</div>
  {#if lastChallenge==='birdman'}<div class="flight-instruments">{@render energyPanel()}{@render altitudeCurve()}</div>{/if}
- {#if lastChallenge!=='wind-tunnel'}{@render structureData()}{/if}
  </div>
  {#if lastChallenge==='wind-tunnel'}<section class="wind-speed-hud" aria-label={t('风洞风速')}><span>{t('当前风速')}</span><strong><output aria-label={t('当前风速')}>{(hud.wind?.speed??0).toFixed(1)}</output><small>m/s</small></strong></section>{/if}
  {#if isReplay}<section class="replay-inputs" aria-label={t("实时杆量")}>
  <InputReadout pitch={actualPitch*pitchDisplayScale} roll={actualRoll} yaw={hud.controlInputs?.rudder??0} throttle={hud.throttle??0}/>
+ {@render engineData()}
  <button class="toggle-switch" role="switch" aria-label={t("智能混控（U）")} aria-checked={hud.smartMixing??false} disabled><span>{t("智能混控")}</span></button>
  </section>{/if}
  {#if lastChallenge!=='wind-tunnel'}<section class="stick-panel" aria-label={t("杆量与配平")}>
  <div class="stick-heading"><strong>{t("杆量与配平")}</strong>{#if isReplay}<span>{t("飞行重放")}</span>{:else}<span>{t("自定义映射见输入设置")}</span>{/if}</div>
+ <div class="control-console">
+ {@render engineData()}
  <div class="stick-main">
  <div class="stick-input">
  <button class="stick-pad" aria-label={t("操纵杆")} title={t("拖动控制俯仰与滚转")} disabled={flightInputDisabled} onpointerdown={beginStick} onpointermove={e=>{if(stickPointer===e.pointerId)moveStick(e);}} onpointerup={releaseStick} onpointercancel={releaseStick} onlostpointercapture={releaseStick}>
@@ -647,6 +660,7 @@ window.addEventListener('pointermove',mouse);
  {@render trimControls()}
  </div>
  <div class="flight-assists"><button class="toggle-switch" role="switch" aria-label={t("自动升降舵配平（T）")} aria-checked={isReplay?hud.autoTrim??false:autoTrim} disabled={lastDefinition.birdman||isReplay} onclick={toggleAutoTrim}><span>{t("自动升降舵配平")}</span><kbd>T</kbd></button><button class="toggle-switch" role="switch" aria-label={t("自适应杆量（Y）")} aria-checked={isReplay?hud.adaptiveControls??false:adaptiveControls} disabled={isReplay} onclick={toggleAdaptiveControls}><span>{t("自适应杆量")}</span><kbd>Y</kbd></button><button class="toggle-switch" role="switch" aria-label={t("智能混控（U）")} aria-checked={isReplay?hud.smartMixing??false:smartMixing} disabled={isReplay} onclick={toggleSmartMixing}><span>{t("智能混控")}</span><kbd>U</kbd></button></div>
+ </div>
  </section>
  {#if flightReady}<p class="flight-keyboard-hints">{t("W / S 俯仰 · A / D 滚转 · Q / E 偏航 · X 鼠标操纵 · C 镜头 · Space 开始/暂停")}</p>{/if}
  {/if}
