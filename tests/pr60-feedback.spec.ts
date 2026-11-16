@@ -1,5 +1,4 @@
 import { expect, test, type Page } from '@playwright/test';
-import { createLegacyReplay } from './fixtures/legacy-replay';
 async function open(page: Page) {
  await page.setViewportSize({ width: 1000, height: 800 });
  await page.addInitScript(() => localStorage.setItem('aero-formula.language', 'zh'));
@@ -17,7 +16,13 @@ test('导入旧回放时全局遮罩阻挡鼠标和快捷键，成功和失败�
   File.prototype.text = function () { return new Promise(resolve => { (window as any).releaseImport = async () => resolve(await original.call(this)); }); };
  });
  const upload = (buffer: Buffer) => page.getByLabel('导入回放', { exact: true }).setInputFiles({ name: 'replay.json', mimeType: 'application/json', buffer });
- await upload(Buffer.from(await createLegacyReplay()));
+ const compatibleReplay=await page.evaluate(async()=>{
+  // Vite resolves the application's JSON modules in the browser.
+  const fixturePath='/tests/fixtures/legacy-replay.ts';
+  const {createLegacyReplay}=await import(fixturePath);
+  return createLegacyReplay();
+ });
+ await upload(Buffer.from(compatibleReplay));
  const overlay = page.getByRole('dialog', { name: '正在导入回放…' });
  await expect(overlay).toBeVisible();
  expect(await overlay.evaluate(el => el.matches(':modal'))).toBe(true);
