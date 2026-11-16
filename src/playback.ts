@@ -1,11 +1,12 @@
 import { FlightSimulation, FRAME_WIDTH, REPLAY_KEYFRAME_INTERVAL, captureReplayKeyframe, restoreReplayKeyframe, type InputRecording } from './physics';
 import { clone } from './model';
 import type { Replay } from './replay';
+import { challengeCheckpoints } from './challenges';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
 export interface LoadSample { time: number; main: number; tail: number; vertical: number }
 type Checkpoint = { time: number; frame: number; state: FlightSimulation };
-type NearbyCache = { states: Map<number, Checkpoint>; center: number; bytes: number; failure?: Error };
+type NearbyCache = { states: Map<number, Checkpoint>; center: number; bytes: number; failure?: Error; lastPlayingTime?: number };
 const nearby = new WeakMap<InputRecording, NearbyCache>();
 const live = new WeakMap<FlightSimulation, NearbyCache>();
 const frameTimes = new WeakMap<InputRecording, Float64Array>();
@@ -32,12 +33,20 @@ function remember(cache: NearbyCache, sim: FlightSimulation, frame: number) {
   }
 }
 
-/** Live caches keep each accepted state, not a progressively thinned flight history. */
+// Interactive seeks still prefetch every neighboring frame. Live flight only needs
+// a recent starting point; copying the whole structure every tick caused GC stalls.
+function rememberPlaying(cache: NearbyCache, sim: FlightSimulation, frame: number) {
+  const latest = cache.lastPlayingTime;
+  if (latest === undefined || sim.elapsedTime < latest || sim.elapsedTime - latest >= 0.1 - 1e-9 || sim.ended || sim.replayFinished) {
+    remember(cache, sim, frame); cache.lastPlayingTime = sim.elapsedTime;
+  }
+}
+
 export function cacheFlight(sim: FlightSimulation) {
   let cache = live.get(sim);
   if (!cache) { cache = { states: new Map(), center: sim.elapsedTime, bytes: 0 }; live.set(sim, cache); }
   cache.center = sim.elapsedTime;
-  remember(cache, sim, sim.recordingLength);
+  rememberPlaying(cache, sim, sim.recordingLength);
 }
 export function cacheRecording(sim: FlightSimulation, recording: InputRecording) {
   const cache = live.get(sim);
@@ -47,7 +56,7 @@ export function cacheReplay(replay: Replay, sim: FlightSimulation) {
   let cache = nearby.get(replay.recording);
   if (!cache) { cache = { states: new Map(), center: sim.elapsedTime, bytes: 0 }; nearby.set(replay.recording, cache); }
   cache.center = sim.elapsedTime;
-  remember(cache, sim, sim.replayFrame);
+  rememberPlaying(cache, sim, sim.replayFrame);
 }
 
 export function replayCacheStats(recording: InputRecording) {
@@ -85,6 +94,24 @@ export function replaySimulation(replay: Replay): FlightSimulation {
   return sim;
 }
 export function replayDuration(recording: InputRecording): number { return times(recording)[recording.length]; }
+
+/** Only integrate keyframe intervals containing gate crossings, including when the player leads the ghost. */
+export async function replayCheckpointTimes(replay: Replay): Promise<(number | null)[]> {
+  if (replay.challenge !== 'downhill') return [];
+  await prepareReplay(replay);
+  const result: (number | null)[] = challengeCheckpoints(replay.challenge).map(() => null);
+  const points = replay.recording.keyframes!;
+  let previous = restoreReplayKeyframe(replay.definition, replay.challenge, replay.recording, points[0]);
+  for (const point of points.slice(1)) {
+    const end = restoreReplayKeyframe(replay.definition, replay.challenge, replay.recording, point);
+    if (end.telemetry.challengeProgress > previous.telemetry.challengeProgress) {
+      await advance(previous, point.frame, () => false);
+      previous.checkpointTimes.forEach((time, index) => { result[index] = time; });
+    }
+    previous = end;
+  }
+  return result;
+}
 
 /** Upgrade input-only files once, before interactive seeking or exporting. */
 export async function prepareReplay(replay: Replay, cancelled: () => boolean = () => false): Promise<boolean> {

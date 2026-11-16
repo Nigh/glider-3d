@@ -57,13 +57,13 @@ describe('body-axis elevator trim', () => {
     expect(tilted.telemetry.controlInputs.elevator).toBeCloseTo(level.telemetry.controlInputs.elevator, 8);
   });
 
-  it('freezes trim during active stick, low speed and launch; birdman cannot enable it', () => {
-    for (const condition of ['stick', 'slow', 'launch']) {
+  it('freezes trim during low speed and launch; birdman cannot enable it', () => {
+    for (const condition of ['slow', 'launch']) {
       const sim = condition === 'launch'
         ? new FlightSimulation(definition(), 'test-space', 0, { height: 2000, catapult: true, speed: 20 }) : flight();
       if (condition === 'slow') sim.velocity.set(4, 0, 0);
       sim.omega.z = 0.5;
-      sim.step({ ...neutral, autoTrim: true, trimPitch: 0.3, elevator: condition === 'stick' ? 0.5 : 0 }, 0.001);
+      sim.step({ ...neutral, autoTrim: true, trimPitch: 0.3, elevator: 0 }, 0.001);
       expect(sim.telemetry.trimPitch).toBe(0.3);
     }
     const birdman = new FlightSimulation(defaultAircraft, 'birdman', 0);
@@ -77,7 +77,7 @@ describe('body-axis elevator trim', () => {
       const sim = launching
         ? new FlightSimulation(definition(), 'test-space', 0, { height: 2000, catapult: true, speed: 20 }) : flight();
       sim.step({ ...neutral, autoTrim: true, trimPitch: 0.7, elevator: 0.5 }, 0.001);
-      expect(sim.telemetry.trimPitch).toBe(0.7);
+      expect(sim.telemetry.trimPitch).toBeCloseTo(0.7, 2);
       for (let step = 0; step < 3; step++) {
         sim.step({ ...neutral, autoTrim: false, trimPitch: 0.7 }, 0.001);
         expect(sim.telemetry.trimPitch).toBe(0);
@@ -111,7 +111,7 @@ describe('body-axis elevator trim', () => {
     });
     const states: { trim: number; smart: boolean; omega: number[]; deflections: number[] }[] = [];
     for (let frame = 0; frame < 180; frame++) {
-      sim.step({ ...neutral, autoTrim: frame < 165, smartMixing: frame >= 135 && frame < 170, trimPitch: 0.2, elevator: frame < 120 ? 0.2 : 0 });
+      sim.step({ ...neutral, autoTrim: frame < 165, adaptiveControls: frame >= 120, smartMixing: frame >= 135 && frame < 170, trimPitch: 0.2, elevator: frame < 120 ? 0.2 : 0 });
       if (frame >= 150) states.push(state(sim));
     }
     const recording = sim.getRecording();

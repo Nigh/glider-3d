@@ -19,7 +19,7 @@ export interface AircraftDefinition {
  mainWing: Wing; horizontalTail: Wing; verticalTail: Wing;
  assembly: { mainWing: number; mainWingHeight: number; horizontalTail: number; verticalTail: number; mainIncidence: number; tailIncidence: number; tailOnFin?: boolean };
  pilot: { mass: number }; controls: { travel: number; lateralTravel: number };
- engine: { type: EngineType; count: 0 | 1 | 2; x: number; y: number };
+ engine: { type: EngineType; count: 0 | 1 | 2; x: number; y: number; lateralOffset?: number };
  fuelTank: { x: number; capacity: number };
 }
 export interface Controls { weight: number; lateral?: number; rudder: number; elevator: number; aileron: number; throttle?: number }
@@ -65,8 +65,15 @@ export function fuelCapacityLimit(d: AircraftDefinition): number {
  return Math.min(40, 40 * shell.xRadius / BODY_GEOMETRY.shell.xRadius, 4000 * Math.PI * radius ** 3);
 }
 const PROPULSION_CLEARANCE = 0.03;
+export function engineLateralOffsetLimits(d: AircraftDefinition): { min: number; max: number } {
+ const radius = engineCatalog[d.engine.type].radius;
+ const min = BODY_GEOMETRY.shell.zRadius + radius + PROPULSION_CLEARANCE;
+ const halfSpan = Math.max(d.mainWing.points[1].y, d.mainWing.points[2].y) * Math.cos(d.mainWing.dihedral * DEG);
+ return { min, max: Math.max(min, Math.floor((halfSpan - radius) * 100 + 1e-8) / 100) };
+}
 export function engineLateralOffset(d: AircraftDefinition): number {
- return BODY_GEOMETRY.shell.zRadius + engineCatalog[d.engine.type].radius + PROPULSION_CLEARANCE;
+ const limits = engineLateralOffsetLimits(d);
+ return clamp(d.engine.lateralOffset ?? limits.min, limits.min, limits.max);
 }
 /** Allowed signed heights; cylinder's full axial interval clears the visible body, not only its beam. */
 export function engineHeightRanges(d: AircraftDefinition): { min: number; max: number }[] {
@@ -146,6 +153,7 @@ export function normalizePropulsion(d: AircraftDefinition): void {
  if (d.engine.count === 0) d.fuelTank.capacity = 0;
  d.fuelTank.capacity = Math.min(d.fuelTank.capacity, fuelCapacityLimit(d));
  d.engine.y = normalizeEngineHeight(d, d.engine.y);
+ if (d.engine.lateralOffset !== undefined) d.engine.lateralOffset = engineLateralOffset(d);
  d.fuelTank.x = fuelTankPosition(d).x;
 }
 /** 尾翼位置为翼根中心；主翼保留纵向前缘基准，高度统一为翼根中心高度。 */
@@ -298,6 +306,7 @@ export function resizeFuselage(d: AircraftDefinition, end: 'nose' | 'tail', posi
 }
 export const wing = (span:number,root:number,tip:number,sweep=0):Wing => ({points:[{x:0,y:0},{x:sweep,y:span/2},{x:sweep+tip,y:span/2},{x:root,y:0}],dihedral:0,controlSurface:0,materialId:'carbon-epoxy',materialAmount:1,structure:{...defaultStructures.horizontalTail}});
 export const defaultAircraft:AircraftDefinition = clone(birdmanGlider as AircraftDefinition);
+normalizePropulsion(defaultAircraft);
 export function planform(w:Wing,symmetric=true) {
  const p=w.points; let twice=0; for(let i=0;i<4;i++){const a=p[i],b=p[(i+1)%4];twice+=a.x*b.y-b.x*a.y;}
  const area=Math.abs(twice)/2*(symmetric?2:1);const span=Math.max(...p.map(p=>Math.abs(p.y)))*(symmetric?2:1);
@@ -328,9 +337,10 @@ export function validateAircraft(value:unknown):AircraftDefinition {
   d.engine.y = clamp((oldEngine.mount === 'below' ? -1 : 1) * d.engine.y,-0.5,1);
  } else finite(d.engine.y,-0.5,1);
  if (oldEngine.z !== undefined) finite(oldEngine.z,-4,4);
+ if (d.engine.lateralOffset !== undefined) finite(d.engine.lateralOffset,0,12);
  if (oldTank?.y !== undefined) finite(oldTank.y,-1,1);
  finite(d.fuelTank?.x,-12,12);finite(d.fuelTank?.capacity,0,40);
- d.engine = { type: d.engine.type, count: d.engine.count, x: d.engine.x, y: d.engine.y };
+ d.engine = { type: d.engine.type, count: d.engine.count, x: d.engine.x, y: d.engine.y, ...(d.engine.lateralOffset === undefined ? {} : { lateralOffset: d.engine.lateralOffset }) };
  d.fuelTank = { x: d.fuelTank.x, capacity: d.fuelTank.capacity };
  if(d.birdman&&d.engine.count!==0)throw Error('鸟人间设计不能安装动力发动机');
  // Normalize existing saved designs at the trust boundary; flight mass is fixed.
@@ -338,7 +348,7 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  finite(d.fuselage.center,-12,12);
  d.pilot.mass = PILOT_MASS;
  for(const key of ['mainWing','horizontalTail','verticalTail'] as const){const w=d[key];if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p.x,-3,6);finite(p.y,key==='verticalTail'?-0.5:0,12);} finite(w.dihedral,-25,25);
- if(w.controlSurface===undefined)w.controlSurface=key==='verticalTail'?1:0;
+ if(w.controlSurface===undefined)w.controlSurface=d.birdman&&key!=='verticalTail'?0:0.3;
  finite(w.controlSurface,0,1);
  if(w.controlAxes===undefined)w.controlAxes={roll:key!=='verticalTail',pitch:key!=='verticalTail',yaw:key==='verticalTail'};
  if(!w.controlAxes||typeof w.controlAxes!=='object'||['roll','pitch','yaw'].some(axis=>typeof w.controlAxes![axis as keyof NonNullable<Wing['controlAxes']>]!=='boolean'))throw Error('舵面控制轴必须是布尔值');
@@ -387,4 +397,8 @@ export function validateAircraft(value:unknown):AircraftDefinition {
   assembly:{mainWing:d.assembly.mainWing,mainWingHeight:d.assembly.mainWingHeight,horizontalTail:d.assembly.horizontalTail,verticalTail:d.assembly.verticalTail,mainIncidence:d.assembly.mainIncidence,tailIncidence:d.assembly.tailIncidence,...(d.assembly.tailOnFin===undefined?{}:{tailOnFin:d.assembly.tailOnFin})},
   pilot:{mass:d.pilot.mass},controls:{travel:d.controls.travel,lateralTravel:d.controls.lateralTravel},engine:d.engine,fuelTank:d.fuelTank};
 }
-export const presets: AircraftDefinition[] = [birdmanGlider, performanceGlider, twinJet, singleJet].map(definition => clone(definition as AircraftDefinition));
+export const presets: AircraftDefinition[] = [birdmanGlider, performanceGlider, twinJet, singleJet].map(definition => {
+ const d = clone(definition as AircraftDefinition);
+ normalizePropulsion(d);
+ return d;
+});

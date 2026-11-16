@@ -10,6 +10,7 @@ import { mixControlSurfaces, type MixingSurface } from './control-mixing';
 import { airfoilY, AIR_VISCOSITY, highReDragScale, naca0012Section, type AirfoilId } from './airfoils';
 import { DRAG_TERMS, type DragTerm } from './drag';
 import { AirframeExposure } from './exposure';
+import { ghostRecording, recordGhost, resetGhostRecording, type GhostFrame } from './ghost';
 
 export const GRAVITY = 9.81;
 /** Production clock; diagnostic step(dt) calls share this overload interval. */
@@ -269,7 +270,7 @@ type SnapshotValue = number | string | boolean | null | [number];
 type SnapshotNode = [string, string[], SnapshotValue[]];
 export interface SimulationSnapshot { binding: string; changes: [number, (number | string | SnapshotValue)[]][]; extra: SnapshotNode[] }
 export interface ReplayKeyframe { time: number; frame: number; state: SimulationSnapshot }
-export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array; keyframes?: ReplayKeyframe[] }
+export interface InputRecording { frames: Float64Array; length: number; launchRoll: number; wingLoads?: Float64Array; keyframes?: ReplayKeyframe[]; ghostFrames?: GhostFrame[]; checkpointTimes?: readonly (number | null)[] }
 
 export function validateRecording(recording: InputRecording): void {
   if (!(recording.frames instanceof Float64Array) || !Number.isInteger(recording.length) || recording.length < 0 || recording.length > MAX_FRAMES || recording.frames.length !== recording.length * FRAME_WIDTH) throw new Error('飞行记录长度无效');
@@ -1384,6 +1385,8 @@ export class FlightSimulation {
     this.maxG = 1;
     if (!Number.isFinite(launchRoll) || Math.abs(launchRoll) > LAUNCH_ROLL_LIMIT) throw new RangeError('离台滚转角须在 ±1° 之间');
     this.launchRoll = launchRoll;
+    raceCheckpointTimes.set(this, []);
+    resetGhostRecording(this);
     this.railX = LOW_RUNWAY.startX;
     this.position.set(LAUNCH.startX, this.launchAltitude, 0);
     this.velocity.set(0, 0, 0);
@@ -1470,7 +1473,7 @@ export class FlightSimulation {
   getRecording(): InputRecording {
     if(this.replay) return { ...this.replay, frames:this.replay.frames.slice(), wingLoads:this.replay.wingLoads?.slice() };
     if (!isLaboratory(this.challenge) && this.recordingLength && this.keyframes.at(-1)?.frame !== this.recordingLength) this.captureKeyframe();
-    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3), keyframes: this.keyframes.slice() };
+    return { frames: this.recording.slice(0, this.recordingLength * FRAME_WIDTH), length: this.recordingLength, launchRoll: this.launchRoll, wingLoads: this.wingLoads.slice(0, this.recordingLength * 3), keyframes: this.keyframes.slice(), ghostFrames: ghostRecording(this), checkpointTimes: this.checkpointTimes.slice() };
   }
 
   private captureKeyframe() {
@@ -1634,7 +1637,7 @@ export class FlightSimulation {
     this.laboratoryState.windVelocity.set(this.laboratoryState.windTunnel.speed, 0, 0);
     for (const axis of CONTROL_AXES) this.applied[axis] = this.definition.birdman && axis !== 'rudder' ? 0 : this.laboratoryState.windTunnel[axis];
     this.updateControlDirections();
-    mixControlSurfaces(this.surfaces, this.applied, this.effective.smartMixing === true);
+    this.mixControls(this.applied, this.velocity, this.omega, this.quaternion);
     for (const surface of this.surfaces) if (surface.bodyId === 0) surface.controlCommand = surface.controlCandidate;
     this.updateControlDeflections();
   }
@@ -1704,12 +1707,15 @@ export class FlightSimulation {
     };
     // This graph comes only from the existing, typed simulation.
     const result = copy(this) as FlightSimulation;
+    raceCheckpointTimes.set(result, this.checkpointTimes.slice());
     checkpointSizes.set(result, bytes);
     return result;
   }
 
   /** Conservative retained graph estimate; shared recording/design storage is excluded. */
   get checkpointBytes() { return checkpointSizes.get(this) ?? 0; }
+  /** Derived timing readout; kept outside the serialized physics graph for replay compatibility. */
+  get checkpointTimes(): readonly number[] { return raceCheckpointTimes.get(this) ?? []; }
 
   /** Attach immutable recorded inputs to an already restored state without resetting it. */
   resumeReplay(recording: InputRecording, frame: number) {
@@ -1735,7 +1741,7 @@ export class FlightSimulation {
   step(controls: FlightControls, dt = PHYSICS_TICK) {
     if (this.ended || this.replayFinished) return;
     const started = performance.now(), recordingFrame = this.recordingLength;
-    if (!this.replay && !isLaboratory(this.challenge) && !this.keyframes.length) this.captureKeyframe();
+    if (!this.replay && !isLaboratory(this.challenge) && !this.keyframes.length) { this.captureKeyframe(); recordGhost(this); }
     const input = this.effective;
     if (this.replay) {
       const offset = this.replayIndex * FRAME_WIDTH;
@@ -1798,6 +1804,7 @@ export class FlightSimulation {
     this.frameLoads.fill(0);
     this.integrateTicks(input, dt);
     if (!this.replay && recordingFrame < this.recordingLength) this.wingLoads.set(this.frameLoads, recordingFrame * 3);
+    if (!this.replay && recordingFrame < this.recordingLength) recordGhost(this);
     this.telemetry.physicsMs = performance.now() - started;
     if (!this.replay && !isLaboratory(this.challenge) && this.recordingLength > recordingFrame && (this.elapsed + 1e-9 >= this.nextKeyframe || this.ended)) {
       this.captureKeyframe();
@@ -1862,7 +1869,7 @@ export class FlightSimulation {
     // Quasi-static impact loads use the nominal physics interval. Narrowing a
     // swept-contact search must not turn the same impulse into infinite stress.
     this.controlLimit = 1;
-    const trimming = this.autoTrim && !this.launching && Math.abs(input.elevator) < 0.05 && this.velocity.lengthSq() >= 25;
+    const trimming = this.autoTrim && !this.launching && this.velocity.lengthSq() >= 25;
     this.updatePropulsion(input.throttle!, dt);
     // 前后移动仍沿用原准静态代理；侧移使用完整非对称惯量并守恒机体轴角动量。
     this.weight += clamp(input.weight - this.weight, -dt * 1.5, dt * 1.5);
@@ -1892,7 +1899,7 @@ export class FlightSimulation {
       this.telemetry.controlWork += this.mass * this.velocity.lengthSq() / 2 + rotationalEnergy(this.inertiaTensor, this.omega) - oldKinetic;
     }
     this.updateControlDirections();
-    const pitchDamping = trimming ? this.updateAutoTrim(dt) : 0;
+    const pitchDamping = trimming ? this.updateAutoTrim(dt, input.elevator) : 0;
     for (const axis of CONTROL_AXES) {
       const trim = this.definition.birdman ? 0 : axis === 'elevator' ? clamp(this.trimPitch + pitchDamping, -1, 1) : axis === 'aileron' ? input.trimRoll! : 0;
       this.requestedControls[axis] = mixTrim(input[axis], trim);
@@ -1911,7 +1918,7 @@ export class FlightSimulation {
       this.applied[axis] = clamp(this.applied[axis] + clamp(target - this.applied[axis], -CONTROL_SURFACE_RATE * dt, CONTROL_SURFACE_RATE * dt),
         -this.controlLimit, this.controlLimit);
     }
-    mixControlSurfaces(this.surfaces, this.fullControls, input.smartMixing === true);
+    this.mixControls(this.fullControls, this.velocity, this.omega, this.quaternion);
     for (const surface of this.surfaces) if (surface.bodyId === 0) {
       const target = surface.controlCandidate;
       surface.controlCommand = clamp(surface.controlCommand + clamp(target - surface.controlCommand,
@@ -2014,7 +2021,7 @@ export class FlightSimulation {
   }
 
   /** Predict equilibrium trim; apply rate damping separately, without another low-pass delay. */
-  private updateAutoTrim(dt: number) {
+  private updateAutoTrim(dt: number, stick: number) {
     this.trimOmega.copy(this.omega); this.trimOmega.z = 0;
     Object.assign(this.predictedControls, this.applied);
     const low = Math.max(-1, this.applied.elevator - 0.01), high = Math.min(1, this.applied.elevator + 0.01);
@@ -2032,11 +2039,12 @@ export class FlightSimulation {
     // A stalled or missing elevator cannot provide the requested restoring moment.
     if (authority >= -1e-6) return 0;
     const equilibrium = clamp(low - lowAcceleration / authority, -1, 1);
-    const damping = clamp(-4 * this.omega.z / authority, -1, 1);
+    const neutral = Math.abs(stick) < 0.05;
+    const damping = neutral ? clamp(-4 * this.omega.z / authority, -1, 1) : 0;
     // Remove persistent prediction/midpoint error; never wind up against travel or structural limits.
     const correction = -8 * this.omega.z / authority * dt;
     const requested = equilibrium + this.trimPitchBias + damping;
-    if (correction * (this.requestedControls.elevator - this.applied.elevator) <= 1e-10
+    if (neutral && correction * (this.requestedControls.elevator - this.applied.elevator) <= 1e-10
       && correction * (requested - clamp(requested, -1, 1)) <= 1e-10) {
       this.trimPitchBias = clamp(this.trimPitchBias + correction, -1, 1);
     }
@@ -2152,9 +2160,23 @@ export class FlightSimulation {
     }
   }
 
+  private mixControls(controls: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion): void {
+    mixControlSurfaces(this.surfaces, controls, this.effective.smartMixing === true);
+    if (!this.effective.adaptiveControls) return;
+    this.inverse.copy(orientation).invert();
+    this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
+    for (const surface of this.surfaces) if (surface.bodyId === 0) {
+      this.arm.subVectors(surface.point, this.aircraft.cg);
+      this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
+      const chord = this.localVelocity.dot(surface.chordDirection), normal = this.localVelocity.dot(surface.normal);
+      // Preserve full low-speed travel; above 30 m/s hold reference dynamic-pressure authority.
+      surface.controlCandidate *= Math.min(1, 900 / Math.max(900, chord * chord + normal * normal));
+    }
+  }
+
   private evaluateForces(_input: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3, controls?: Controls, surfaceScale = 1, linearize = false) {
     this.aerodynamics.updateExposure();
-    if (controls) mixControlSurfaces(this.surfaces, controls, this.effective.smartMixing === true);
+    if (controls) this.mixControls(controls, velocity, omega, orientation);
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
     const speed = velocity.length();
@@ -3102,6 +3124,7 @@ export class FlightSimulation {
         const bonus = LOW_ALTITUDE.scoreScale * 0.5 * clamp(1 - clearance / LOW_ALTITUDE.bonusHeight, 0, 1);
         this.checkpointScores.push(low + bonus);
       }
+      raceCheckpointTimes.get(this)![this.checkpointIndex] = this.time + dt * (fraction - startFraction);
       this.checkpointIndex++;
       this.completed = this.checkpointIndex === checkpoints.length;
       if (this.completed) return dt * (fraction - startFraction);
@@ -3405,6 +3428,7 @@ type SnapshotTemplate = { simulation: FlightSimulation; binding: string; nodes: 
 const snapshotTemplates = new WeakMap<FlightSimulation, SnapshotTemplate>();
 const recordingTemplates = new WeakMap<InputRecording, SnapshotTemplate>();
 const checkpointSizes = new WeakMap<FlightSimulation, number>();
+const raceCheckpointTimes = new WeakMap<FlightSimulation, number[]>();
 
 function simulationGraph(simulation: FlightSimulation): SnapshotTemplate {
   const nodes: StateRecord[] = [], keys: string[][] = [], ids = new Map<object, number>();

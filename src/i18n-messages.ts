@@ -2,6 +2,26 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "结构图层": ["Structure layer", "構造レイヤー"],
+ "正在计算 Ghost 秒差…": ["Calculating ghost splits…", "ゴーストとの時間差を計算中…"],
+ "Ghost 回放状态无效": ["Invalid ghost replay state", "ゴーストの状態が無効です"],
+ "有效计时": ["Race time", "有効タイム"],
+ "Ghost 检查点秒差": ["Ghost checkpoint split", "ゴーストとのチェックポイント時間差"],
+ "检查点 {number}": ["Checkpoint {number}", "チェックポイント {number}"],
+ "领先 Ghost": ["Ahead of ghost", "ゴーストより先行"],
+ "落后 Ghost": ["Behind ghost", "ゴーストより遅れ"],
+ "与 Ghost 持平": ["Level with ghost", "ゴーストと同タイム"],
+ "Ghost 未通过此检查点": ["Ghost did not reach this checkpoint", "ゴーストはこのチェックポイントを未通過"],
+ "未完赛": ["Did not finish", "未完走"],
+ "更换 Ghost 回放": ["Replace ghost replay", "ゴーストを変更"],
+ "正在导入回放…": ["Importing replay…", "リプレイをインポート中…"],
+ "Ghost 回放": ["Ghost replay", "ゴーストリプレイ"],
+ "选择 Ghost 回放文件": ["Choose ghost replay file", "ゴーストファイルを選択"],
+ "正在准备 Ghost 回放…": ["Preparing ghost replay…", "ゴーストを準備中…"],
+ "Ghost 回放缓冲中…": ["Buffering ghost replay…", "ゴーストを読み込み中…"],
+ "移除 Ghost": ["Remove ghost", "ゴーストを削除"],
+ "Ghost 回放加载失败": ["Ghost replay failed to load", "ゴーストの読み込みに失敗しました"],
+ "Ghost 回放与当前关卡不一致": ["Ghost replay belongs to a different challenge", "ゴーストのステージが一致しません"],
  "翼型": ["Airfoil", "翼型"],
  "未知翼型": ["Unknown airfoil", "不明な翼型"],
  "垂尾不支持选择翼型": ["Fin airfoil selection is unavailable", "垂直尾翼の翼型は選択できません"],
@@ -510,9 +530,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Twin · Jet 01",
   "双発 · Jet 01"
  ],
- "负值在下，正值在上。可用范围：{p0}。自动跳过机身重叠区；单发居中，双发固定在机身两侧。": [
-  "Negative is below, positive above. Available ranges: {p0}. Fuselage overlap is skipped automatically; single engines are centered and twin engines mount on both sides.",
-  "負は下、正は上。使用範囲：{p0}。胴体との重複域は自動で避けます。単発は中央、双発は胴体の両側に固定します。"
+ "负值在下，正值在上。可用范围：{p0}。自动跳过机身重叠区；单发居中，双发对称安装。": [
+  "Negative is below, positive above. Available ranges: {p0}. Body overlap is skipped automatically; single engines are centered and twins mount symmetrically.",
+  "負は下、正は上。使用範囲：{p0}。胴体との重複域は自動で避けます。単発は中央、双発は左右対称に取り付けます。"
  ],
  "{p0} 至 {p1} m": [
   "{p0} to {p1} m",
@@ -938,9 +958,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "Yaw right",
   "右旋回"
  ],
- "姿态与结构 ·": [
-  "Attitude & structure ·",
-  "姿勢と構造 ·"
+ "姿态与结构": [
+  "Attitude & structure",
+  "姿勢と構造"
  ],
  "已断裂 {p0} 次": [
   "{p0} fractures",
@@ -1810,6 +1830,8 @@ export const messages: Record<string, readonly [string, string]> = {
   "Engine vertical offset",
   "エンジンの上下位置"
  ],
+ "引擎横向偏移": ["Engine lateral offset", "エンジンの左右間隔"],
+ "最小贴近机身，最大保持在主翼翼展内；缩小翼展时自动调整。": ["Minimum keeps engines beside the body; maximum keeps them within the main-wing span. Reducing span adjusts the offset automatically.", "最小値は胴体のすぐ外側、最大値は主翼の翼幅内です。翼幅を縮めると自動で調整します。"],
  "油箱容量": [
   "Tank capacity",
   "タンク容量"

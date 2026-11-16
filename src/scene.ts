@@ -1,11 +1,13 @@
 import * as THREE from 'three';
+import { structureLoadColor } from './structure-display';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BODY_GEOMETRY, finPoint, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
+import { BODY_GEOMETRY, finPoint, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, engineLateralOffset, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey } from './model';
 import { airfoilY, airfoilCamber } from './airfoils';
-import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, type FlightSimulation } from './physics';
+import { GRAVITY, LAUNCH, PLATFORM, SURFACE_STEP, launchHeight, derive, fuelCgRange, FlightSimulation } from './physics';
+import { applyGhost, ditherGhost, ghostOpacity, type GhostFrame, type GhostFragment } from './ghost';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
@@ -64,11 +66,11 @@ export class SceneView {
   private crashStroke: (() => void) | null = null;
   private crashSecond = false;
   private readonly scene = new THREE.Scene();
-  private readonly renderer: THREE.WebGLRenderer;
+  private readonly renderer!: THREE.WebGLRenderer;
   private readonly perspective = new THREE.PerspectiveCamera(43, 1, 0.1, 3000);
   private readonly orthographic = new THREE.OrthographicCamera(-15, 15, 15, -15, 0.1, 3000);
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.perspective;
-  private controls: OrbitControls;
+  private controls!: OrbitControls;
   private readonly controlsUp = UP.clone();
   private readonly aircraft = new THREE.Group();
   private readonly previousPosition = new THREE.Vector3();
@@ -132,6 +134,9 @@ export class SceneView {
   private renderBlend = 1;
   private readonly hingeLines: THREE.LineSegments[] = [];
   private readonly surfaceParameters = new Float64Array(3).fill(NaN);
+  private structureLayer = false;
+  private readonly wingOriginalColors: Float32Array[] = [];
+  private readonly structureColor = new THREE.Color();
   private readonly wingBaseColor = new THREE.Color(0xf4f0dc);
   private readonly wingTipColor = new THREE.Color(0xd97343);
   private beam!: THREE.Mesh;
@@ -234,7 +239,7 @@ export class SceneView {
   private designOrbitRotation = new THREE.Quaternion();
   private readonly trailArray = new Float32Array(TRAIL_CAPACITY * 6);
   private readonly trailGeometry = new THREE.BufferGeometry();
-  private readonly trail: THREE.LineSegments;
+  private readonly trail!: THREE.LineSegments;
   private readonly lastTrail = new THREE.Vector3();
   private trailClock = 0;
   private trailIndex = 0;
@@ -242,7 +247,7 @@ export class SceneView {
   private readonly wingTrailArray = new Float32Array(WING_TRAIL_CAPACITY * 36);
   private readonly wingTrailColors = new Float32Array(WING_TRAIL_CAPACITY * 48);
   private readonly wingTrailGeometry = new THREE.BufferGeometry();
-  private readonly wingTrail: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  private readonly wingTrail!: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private readonly wingTrailHistory = new Float32Array((WING_TRAIL_CAPACITY + 1) * 6);
   private readonly wingTrailDistances = new Float64Array(2);
   private readonly wingTrailLengths = new Float64Array(2);
@@ -260,8 +265,8 @@ export class SceneView {
   private readonly splashPositions = new Float32Array(PARTICLES * 3);
   private readonly splashVelocities = new Float32Array(PARTICLES * 3);
   private readonly splashGeometry = new THREE.BufferGeometry();
-  private readonly splash: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
-  private readonly ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  private readonly splash!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  private readonly ring!: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   private readonly waterTime = { value: 0 };
   private readonly frameTimes = new Float32Array(180);
   private readonly sortedTimes = new Float32Array(180);
@@ -284,6 +289,7 @@ export class SceneView {
   private readonly resultTarget = new THREE.Vector3();
   private readonly followPosition = new THREE.Vector3();
   private readonly followTarget = new THREE.Vector3();
+  private readonly cameraAircraftPosition = new THREE.Vector3();
   private followInitialized = false;
   private readonly cameraClearanceOffset = new THREE.Vector3();
   private readonly cameraClearanceOrigin = new THREE.Vector3();
@@ -291,8 +297,14 @@ export class SceneView {
   private readonly vector2 = new THREE.Vector3();
   private wingTrailTime = -1;
   private readonly designCG = new THREE.Vector3();
-  private readonly resizeObserver: ResizeObserver;
-  private readonly layoutObserver: MutationObserver;
+  private readonly resizeObserver!: ResizeObserver;
+  private readonly layoutObserver!: MutationObserver;
+  private ghost: SceneView | null = null;
+  private ghostFragments: GhostFragment[] | null = null;
+  private readonly ghostOpacity = { value: 1 };
+  private readonly ghostMaterials = new Set<THREE.Material>();
+  private ghostTime = 0;
+  private ghostRadius = 0;
   private simulation: FlightSimulation | null = null;
   private definition: AircraftDefinition = defaultAircraft;
   private view = 'orbit';
@@ -317,7 +329,13 @@ export class SceneView {
   private readonly coarsePointer = matchMedia('(pointer: coarse)').matches;
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  constructor(private readonly host: HTMLElement) {
+  constructor(private readonly host: HTMLElement, private readonly aircraftOnly?: FlightSimulation) {
+    // Reuse the aircraft deformation renderer without a second canvas or environment.
+    if (aircraftOnly) {
+      this.simulation = aircraftOnly; this.definition = aircraftOnly.definition; this.ghostFragments = [];
+      this.scene.add(this.aircraft); this.buildAircraft(); this.aircraftPending = true; this.applyAircraft();
+      return;
+    }
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setClearColor(0xd4e3e4);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -477,7 +495,7 @@ export class SceneView {
     this.controls.enableDamping = previous.enableDamping;
   }
 
-  private readonly unsubscribeLanguage: () => void;
+  private readonly unsubscribeLanguage!: () => void;
 
   setEditor(target: EditorTarget, onchange: (definition: AircraftDefinition) => void, oncommit: () => void): void {
     this.editorChange = onchange;
@@ -509,6 +527,10 @@ export class SceneView {
     return {
       view: this.view, orthographic: this.camera === this.orthographic,
       camera: position(this.camera.position), target: position(this.controls.enabled ? this.controls.target : this.target),
+      aircraftPosition: position(this.aircraft.position),
+      ghost: this.ghost ? { time: this.ghostTime, opacity: this.ghostOpacity.value, radius: this.ghostRadius,
+        position: position(this.ghost.aircraft.position), name: this.ghost.definition.name, fragments: this.ghost.fragments.length,
+        materials: this.ghostMaterials.size } : null,
       groundHeight: this.surfaceHeight(this.camera.position.x, this.camera.position.z),
       editing: this.editorTarget, shadowVisible: this.renderer.shadowMap.enabled,
       workshopVisible: this.workshop.visible,
@@ -545,6 +567,11 @@ export class SceneView {
         fullWorld: position(this.fuelCgFull.position), emptyWorld: position(this.fuelCgEmpty.position),
         labels: ['满油圆点', '空油菱形'],
       },
+      structureLayer: this.structureLayer,
+      structureColors: this.wingSections.map((sections,index) => sections.map(section => {
+        const colors=this.wingMeshes[index].geometry.getAttribute('color');
+        return {load:section.physics?.stressRatio??0,r:colors.getX(section.vertexStart),g:colors.getY(section.vertexStart),b:colors.getZ(section.vertexStart)};
+      })),
       controlSurfaces: this.wingMeshes.map((_mesh, index) => ({ fraction: this.surfaceParameters[index], angle: this.wingAngles[index], hingeVisible: this.hingeLines[index].visible })),
       centers: { cg: position(this.cg.position), lift: position(this.liftCenter.position), drag: position(this.dragCenter.position), thrust: position(this.thrustCenter.position) },
       centerVisibility: { cg: this.cg.visible, lift: this.liftCenter.visible, drag: this.dragCenter.visible, thrust: this.thrustCenter.visible },
@@ -1070,7 +1097,7 @@ export class SceneView {
       group.addEventListener('keydown', e => this.keyEditor(e, i, true));
       overlay.appendChild(group);
     }
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 9; i++) {
       const group = document.createElementNS(SVG_NS, 'g');
       group.setAttribute('role', 'button');
       group.setAttribute('tabindex', '-1');
@@ -1147,6 +1174,7 @@ export class SceneView {
   private assemblyEditorPoint(index: number, out: THREE.Vector3): THREE.Vector3 {
     const d = this.definition;
     if (index === 6) return out.set(d.engine.x, d.engine.y, 0);
+    if (index === 8) return out.set(d.engine.x, d.engine.y, engineLateralOffset(d));
     if (index === 7) {
       const tank = fuelTankPosition(d);
       return out.set(tank.x, tank.y, tank.z);
@@ -1178,7 +1206,7 @@ export class SceneView {
     const wingMount = key !== 'fuselage' && key !== 'propulsion' ? this.editorHandles[6] : undefined;
     for (let i = 0; i < this.editorHandles.length; i++) {
       const handle = this.editorHandles[i];
-      const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? i >= 6 && this.definition.engine.count > 0 && (i === 6 || this.definition.fuelTank.capacity > 0) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
+      const show = key === 'fuselage' ? i >= 3 && i <= 5 : key === 'propulsion' ? this.definition.engine.count > 0 && (i === 6 || i === 7 && this.definition.fuelTank.capacity > 0 || i === 8 && this.definition.engine.count === 2) : i === 6 || i < (key === 'verticalTail' ? 4 : 6);
       handle.group.style.display = show ? '' : 'none';
       if (!show) { handle.leader.style.display = 'none'; continue; }
       const assemblyIndex = this.editorAssemblyIndex(i);
@@ -1194,10 +1222,10 @@ export class SceneView {
       handle.ax = ax; handle.ay = ay;
       handle.leader.style.display = 'none';
       handle.group.setAttribute('transform', `translate(${handle.x} ${handle.y})`);
-      const name = assemblyIndex >= 0 ? t(['主翼位置', '副翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
+      const name = assemblyIndex >= 0 ? t(['主翼位置', '副翼位置', '垂直尾翼位置', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置', '引擎横向偏移'][assemblyIndex]) : t('{wing}{side}顶点{index}', { wing: label, side: handle.side < 0 ? t('左翼') : '', index: handle.index + 1 });
       handle.group.setAttribute('aria-label', name);
       handle.group.setAttribute('data-handle', String(i));
-      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '副翼安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置'][assemblyIndex]) : String(handle.index + 1);
+      handle.group.querySelector('text')!.textContent = assemblyIndex >= 0 ? t(['主翼安装', '副翼安装', '垂尾安装', '驾驶舱位置', '机头端点', '机尾端点', '引擎位置', '油箱位置', '引擎横向偏移'][assemblyIndex]) : String(handle.index + 1);
     }
     for (let i = 0; i < this.editorSegments.length; i++) {
       const segment = this.editorSegments[i];
@@ -1344,7 +1372,7 @@ export class SceneView {
     else this.wingEditorPoint(handle.index, handle.side, this.editOrigin);
     this.body.localToWorld(this.editOrigin);
     const sideView = mount || this.editorTarget === 'fuselage' || this.editorTarget === 'verticalTail' || this.editorTarget === 'propulsion';
-    const normal = this.vector.set(0, sideView ? 0 : 1, sideView ? 1 : 0);
+    const normal = mount && index === 8 ? this.vector.set(1, 0, 0) : this.vector.set(0, sideView ? 0 : 1, sideView ? 1 : 0);
     if (!sideView) {
       const key = this.editorTarget as 'mainWing' | 'horizontalTail';
       const incidence = (key === 'mainWing' ? this.definition.assembly.mainIncidence : this.definition.assembly.tailIncidence) * DEG;
@@ -1374,7 +1402,7 @@ export class SceneView {
     const key = this.editorTarget;
     const handle = this.editorSegmentDrag >= 0 ? this.editorSegments[this.editorSegmentDrag] : this.editorHandles[this.editorDrag];
     const assemblyIndex = this.editorSegmentDrag < 0 ? this.editorAssemblyIndex(this.editorDrag) : -1;
-    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, this.editPoint.x - this.editStart.x, this.editPoint.y - this.editStart.y);
+    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, this.editPoint.x - this.editStart.x, this.editPoint.y - this.editStart.y, this.editPoint.z - this.editStart.z);
     else if (key !== 'fuselage' && key !== 'propulsion') {
       const base = this.editDefinition!;
       const incidence = (key === 'mainWing' ? base.assembly.mainIncidence : key === 'horizontalTail' ? base.assembly.tailIncidence : 0) * DEG;
@@ -1404,7 +1432,7 @@ export class SceneView {
     const vertical = event.key === 'ArrowUp' ? amount : event.key === 'ArrowDown' ? -amount : 0;
     const key = this.editorTarget;
     const assemblyIndex = segment ? -1 : this.editorAssemblyIndex(index);
-    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, horizontal, vertical);
+    if (assemblyIndex >= 0) this.changeAssembly(assemblyIndex, horizontal, vertical, assemblyIndex === 8 ? horizontal || vertical : 0);
     else if (key !== 'fuselage' && key !== 'propulsion') {
       const handle = segment ? this.editorSegments[index] : this.editorHandles[index];
       const p = this.definition[key].points[handle.index];
@@ -1491,9 +1519,10 @@ export class SceneView {
     this.editorChange?.(next);
   }
 
-  private changeAssembly(index: number, x: number, y: number): void {
+  private changeAssembly(index: number, x: number, y: number, z = 0): void {
     const next = clone(this.editDefinition ?? this.definition);
     x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100;
+    z = Math.round(z * 100) / 100;
     const ends = fuselageEnds(next);
     if (index === 0) {
       const limits = mainWingMountLimits(next);
@@ -1530,6 +1559,9 @@ export class SceneView {
     } else if (index === 7) {
       const limits = fuelTankLimits(next);
       next.fuelTank.x = clamp(next.fuelTank.x + x, limits.min, limits.max);
+    } else if (index === 8) {
+      if (next.engine.count !== 2) return;
+      next.engine.lateralOffset = engineLateralOffset(next) + z;
     } else resizeFuselage(next, index === 4 ? 'nose' : 'tail', (index === 4 ? ends.nose : ends.tail) + x);
     normalizeAircraftGeometry(next);
     this.editorChange?.(next);
@@ -1624,6 +1656,7 @@ export class SceneView {
         (orange ? this.wingTipColor : this.wingBaseColor).toArray(colors, vertex * 3);
       }
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      this.wingOriginalColors[i] = colors.slice();
       this.metrics.memory += (this.geometryBytes(geometry) - this.geometryBytes(this.wingMeshes[i].geometry)) / 1048576;
       this.wingMeshes[i].geometry.dispose();
       this.wingMeshes[i].geometry = geometry;
@@ -2123,7 +2156,7 @@ export class SceneView {
       }
     }
     for (const fragment of this.fragments) {
-      const body = sim.fragments.find(body => body.id === fragment.id);
+      const body = (this.ghostFragments ?? sim.fragments).find(body => body.id === fragment.id);
       if (!body) continue;
       fragment.previousPosition.copy(body.position);
       fragment.previousQuaternion.copy(body.quaternion);
@@ -2180,6 +2213,13 @@ export class SceneView {
     this.updateEditorOverlay();
     this.updateLight();
     this.updateCatapult();
+    if (this.ghost) {
+      this.body.updateWorldMatrix(true, true);
+      const radius = cgGeometryRadius(this.body, this.aircraft.position, this.loadScratch) * 1.2;
+      this.ghostRadius = radius;
+      this.ghostOpacity.value = ghostOpacity(this.aircraft.position.distanceTo(this.ghost.aircraft.position), radius);
+      ditherGhost(this.ghost.scene, this.ghostOpacity, this.ghostMaterials);
+    }
     this.renderer.render(this.scene, this.camera);
     this.metrics.renderMs = performance.now() - start;
     this.metrics.drawCalls = this.renderer.info.render.calls;
@@ -2201,6 +2241,11 @@ export class SceneView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.setGhost(null);
+    if (this.aircraftOnly) {
+      for (const geometry of this.wingNormalGeometry) geometry.dispose();
+      this.release(this.scene); this.scene.clear(); return;
+    }
     this.endEditorDrag(true);
     this.selectionPointer = -1; this.selectionTarget = null;
     this.resizeObserver.disconnect();
@@ -2433,6 +2478,32 @@ export class SceneView {
     return undefined;
   }
 
+  setGhost(definition: AircraftDefinition | null, challenge: ChallengeMode = 'birdman'): void {
+    if (this.ghost) { this.scene.remove(this.ghost.scene); this.ghost.dispose(); this.ghost = null; }
+    this.ghostMaterials.clear();
+    if (definition) {
+      this.ghost = new SceneView(this.host, new FlightSimulation(clone(definition), challenge, 0));
+      this.scene.add(this.ghost.scene);
+    }
+  }
+
+  renderGhost(a: GhostFrame, b: GhostFrame, alpha: number): void {
+    const ghost = this.ghost;
+    if (!ghost?.simulation || !ghost.ghostFragments) return;
+    this.ghostTime = a.time + (b.time - a.time) * alpha;
+    applyGhost(ghost.simulation, a, ghost.ghostFragments);
+    ghost.ensureFragments(); ghost.captureFlightState();
+    applyGhost(ghost.simulation, b, ghost.ghostFragments);
+    ghost.renderBlend = alpha;
+    ghost.aircraft.position.lerpVectors(ghost.previousPosition, ghost.simulation.position, alpha);
+    ghost.aircraft.quaternion.slerpQuaternions(ghost.previousQuaternion, ghost.simulation.quaternion, alpha);
+    ghost.renderCG.lerpVectors(ghost.previousCG, ghost.simulation.telemetry.cg, alpha);
+    ghost.body.position.copy(ghost.renderCG).negate();
+    ghost.driver.position.set(ghost.simulation.pilotOffset.x, 0, ghost.simulation.pilotOffset.z);
+    ghost.updateControlSurfaces();
+    ghost.updateExhaust();
+  }
+
   private ensureFragments(): boolean {
     const sim = this.simulation;
     if (!sim) return false;
@@ -2440,13 +2511,13 @@ export class SceneView {
     for (let index = this.fragments.length - 1; index >= 0; index--) {
       const fragment = this.fragments[index];
       let present = false;
-      for (const body of sim.fragments) if (body.id === fragment.id) { present = true; break; }
+      for (const body of this.ghostFragments ?? sim.fragments) if (body.id === fragment.id) { present = true; break; }
       if (present && this.wingSections[fragment.wingIndex].some(section => section.physics?.bodyId === fragment.id)) continue;
       this.removeFragment(fragment);
       this.fragments.splice(index, 1);
       changed = true;
     }
-    for (const body of sim.fragments) for (let wingIndex = 0; wingIndex < 3; wingIndex++) {
+    for (const body of this.ghostFragments ?? sim.fragments) for (let wingIndex = 0; wingIndex < 3; wingIndex++) {
       if (this.fragmentRender(body.id, wingIndex) || !this.wingSections[wingIndex].some(section => section.physics?.bodyId === body.id)) continue;
       const source = this.wingMeshes[wingIndex].geometry;
       const geometry = new THREE.BufferGeometry();
@@ -2485,7 +2556,7 @@ export class SceneView {
     let topologyChanged = this.ensureFragments();
     if (sim) {
       for (const fragment of this.fragments) {
-        const body = sim.fragments.find(body => body.id === fragment.id);
+        const body = (this.ghostFragments ?? sim.fragments).find(body => body.id === fragment.id);
         if (!body) continue;
         const blend = fragment.captured ? this.renderBlend : 1;
         fragment.mesh.position.lerpVectors(fragment.previousPosition, body.position, blend);
@@ -2566,8 +2637,9 @@ export class SceneView {
       this.hingeLines[index].geometry.boundingBox = geometry.boundingBox;
       this.hingeLines[index].geometry.boundingSphere = geometry.boundingSphere;
     }
+    if (this.structureLayer) this.updateStructureColors();
     if (topologyChanged) {
-      this.clearWingTrail();
+      if (!this.aircraftOnly) this.clearWingTrail();
       for (let index = 0; index < 3; index++) this.writeWingIndices(index, 0, this.wingMeshes[index].geometry, this.hingeLines[index].geometry);
       for (const fragment of this.fragments) this.writeWingIndices(fragment.wingIndex, fragment.id, fragment.mesh.geometry, fragment.hinge.geometry);
       this.metrics.memory = this.geometryMemory();
@@ -2577,6 +2649,31 @@ export class SceneView {
       fragment.hinge.geometry.boundingBox = fragment.mesh.geometry.boundingBox;
       fragment.hinge.geometry.boundingSphere = fragment.mesh.geometry.boundingSphere;
       fragment.hinge.visible = this.hingeLines[fragment.wingIndex].visible;
+    }
+  }
+
+  setStructureLayer(enabled: boolean): void {
+    this.structureLayer = enabled;
+    this.updateStructureColors();
+  }
+
+  private updateStructureColors(): void {
+    for (let index = 0; index < this.wingMeshes.length; index++) {
+      const colors = this.wingMeshes[index].geometry.getAttribute('color') as THREE.BufferAttribute;
+      const original = this.wingOriginalColors[index];
+      if (!original || !colors) continue;
+      (colors.array as Float32Array).set(original);
+      if (this.structureLayer) for (const section of this.wingSections[index]) {
+        const ratio = section.physics?.stressRatio ?? 0;
+        if (ratio <= 0.5) continue;
+        this.structureColor.setHex(structureLoadColor(ratio));
+        const count = (section.rows + 1) * 32;
+        for (let local = 0; local < count + 64; local++) {
+          const vertex = local < count ? section.vertexStart + local : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
+          colors.setXYZ(vertex, this.structureColor.r, this.structureColor.g, this.structureColor.b);
+        }
+      }
+      colors.needsUpdate = true;
     }
   }
 
@@ -3627,8 +3724,10 @@ export class SceneView {
 
   private followCamera(dt: number, immediate: boolean): void {
     if (!immediate && !this.simulation?.ended && !this.controls.enabled && this.followInitialized) {
-      this.camera.position.copy(this.followPosition);
-      this.target.copy(this.followTarget);
+      // Follow interpolated translation exactly; damp only the camera offset and rotation.
+      this.vector.subVectors(this.aircraft.position, this.cameraAircraftPosition);
+      this.camera.position.copy(this.followPosition).add(this.vector);
+      this.target.copy(this.followTarget).add(this.vector);
     }
     if (this.simulation?.ended) {
       if (!this.resultOrbit) {
@@ -3724,6 +3823,7 @@ export class SceneView {
     }
     this.followPosition.copy(this.camera.position);
     this.followTarget.copy(this.target);
+    this.cameraAircraftPosition.copy(this.aircraft.position);
     this.followInitialized = true;
     const pilot = this.view === 'pilot' && !this.resultOrbit;
     this.vector.subVectors(pilot ? this.target : this.camera.position, pilot ? this.camera.position : this.target);

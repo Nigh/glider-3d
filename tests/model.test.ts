@@ -1,12 +1,35 @@
 import { describe,it,expect } from 'vitest';
 import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingLocalPoint,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions,engineLateralOffset,engineHeightRanges,normalizeEngineHeight,fuelTankLimits,fuelTankPosition,BODY_GEOMETRY,cockpitGeometry,cockpitLimits,cockpitMass,cockpitRearLengthLimits,fuelCapacityLimit,normalizeAircraftGeometry,editWingPoint,wingMountLimits,fuselageEndLimits } from '../src/model';
+import { defaultAircraft,clone,wing,planform,validateAircraft,presets,fuselageEnds,resizeFuselage,PILOT_MASS,wingLocalPoint,wingOrigin,mainWingSupport,mainWingMountLimits,DEG,engineMounts,fuelTankDimensions,engineLateralOffset,engineLateralOffsetLimits,engineHeightRanges,normalizeEngineHeight,fuelTankLimits,fuelTankPosition,BODY_GEOMETRY,cockpitGeometry,cockpitLimits,cockpitMass,cockpitRearLengthLimits,fuelCapacityLimit,normalizeAircraftGeometry,editWingPoint,wingMountLimits,fuselageEndLimits } from '../src/model';
 import { beamSection, defaultStructures, materialCatalog, type MaterialId } from '../src/materials';
 import { derive, FlightSimulation } from '../src/physics';
+import { engineCatalog } from '../src/engines';
+import { exportAircraft, importAircraft, History } from '../src/storage';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
  it('所有系统飞机均通过几何校验且参数不被修改',()=>{for(const d of presets)expect(validateAircraft(d)).toEqual(d);});
+ it('系统预设控制弦长比例统一0.3，鸟人间主翼和副翼保持禁用',()=>{
+  for(const d of presets)for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
+   expect(d[key].controlSurface).toBe(d.birdman&&key!=='verticalTail'?0:0.3);
+  }
+ });
+ it('缺省导入补齐控制弦长比例，不覆盖显式自定义值或修改原始对象',()=>{
+  for(const preset of presets){
+   const legacy:any=clone(preset);
+   for(const key of ['mainWing','horizontalTail','verticalTail'] as const)delete legacy[key].controlSurface;
+   const checked=validateAircraft(legacy);
+   for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
+    expect(checked[key].controlSurface).toBe(preset.birdman&&key!=='verticalTail'?0:0.3);
+    expect(legacy[key].controlSurface).toBeUndefined();
+    for(const value of [0,0.15,0.4,0.45,1]){
+     const custom=clone(preset);custom[key].controlSurface=value;
+     if(preset.birdman&&key!=='verticalTail'&&value!==0)expect(()=>validateAircraft(custom)).toThrow('鸟人间');
+     else expect(validateAircraft(custom)[key].controlSurface).toBe(value);
+    }
+   }
+  }
+ });
  it('材料用量默认1，迁移旧档并拒绝非有限或越界字段',()=>{
   for(const key of ['mainWing','horizontalTail','verticalTail'] as const){
    const legacy:any=clone(defaultAircraft);delete legacy[key].materialAmount;
@@ -148,7 +171,7 @@ describe('参数化几何与信任边界',()=>{
   for(const key of ['mainWing','horizontalTail','verticalTail'])delete legacy[key].controlSurface;
   const checked=validateAircraft(legacy);
   expect(checked.birdman).toBe(true);expect(checked.controls.lateralTravel).toBe(0.1);
-  expect(checked.mainWing.controlSurface).toBe(0);expect(checked.horizontalTail.controlSurface).toBe(0);expect(checked.verticalTail.controlSurface).toBe(1);
+  expect(checked.mainWing.controlSurface).toBe(0);expect(checked.horizontalTail.controlSurface).toBe(0);expect(checked.verticalTail.controlSurface).toBe(0.3);
   expect(legacy.birdman).toBeUndefined();expect(legacy.verticalTail.controlSurface).toBeUndefined();
   expect(checked.engine.count).toBe(0);expect(checked.fuelTank.capacity).toBe(0);
   expect(legacy.engine).toBeUndefined();expect(legacy.fuelTank).toBeUndefined();
@@ -162,13 +185,63 @@ describe('参数化几何与信任边界',()=>{
   for(const value of [0,0.201,NaN,Infinity]){const invalid=clone(d);invalid.controls.lateralTravel=value;expect(()=>validateAircraft(invalid)).toThrow();}
   for(const value of [0.01,0.2]){const valid=clone(d);valid.controls.lateralTravel=value;expect(validateAircraft(valid).controls.lateralTravel).toBe(value);}
  });
- it('单双发固定侧距和自动支撑共用尺寸，油箱体积对应升容量',()=>{
+ it('单双发默认贴机身且自动支撑共用尺寸，油箱体积对应升容量',()=>{
   const d=clone(defaultAircraft);d.birdman=false;d.engine={type:'jet-01',count:2,x:-0.5,y:0};
   const mounts=engineMounts(validateAircraft(d)),offset=engineLateralOffset(d);
   expect(offset).toBeCloseTo(0.63);expect(mounts.map(m=>m.z)).toEqual([-offset,offset]);expect(mounts.map(m=>m.y)).toEqual([0,0]);
   for(const mount of mounts){expect(mount.supportLength).toBeGreaterThan(0);expect(mount.supportMass).toBeGreaterThan(0);}
   d.engine.count=1;d.engine.x=-2;d.engine.y=-0.5;expect(engineMounts(validateAircraft(d))[0]).toMatchObject({z:0,y:-0.5});
   const shape=fuelTankDimensions(12);expect(4*Math.PI*shape.radius**3).toBeCloseTo(0.012,12);expect(shape.length).toBe(6*shape.radius);
+ });
+ it('双发横向偏移由机身净空和主翼水平翼展限制，缩翼及上反角变化自动夹紧',()=>{
+  const d=clone(presets.find(plane=>plane.engine.count===2)!);
+  d.mainWing.points[1].y=d.mainWing.points[2].y=3;
+  d.mainWing.dihedral=0;
+  const radius=engineCatalog[d.engine.type].radius,limits=engineLateralOffsetLimits(d);
+  expect(limits.min-radius).toBeCloseTo(BODY_GEOMETRY.shell.zRadius+0.03);
+  expect(limits.max+radius).toBeCloseTo(3);
+  for(const value of [0,limits.min,1.5,12]){
+   d.engine.lateralOffset=value;
+   const checked=validateAircraft(d),offset=Math.max(limits.min,Math.min(limits.max,value));
+   expect(checked.engine.lateralOffset).toBe(offset);
+   expect(engineMounts(checked).map(mount=>mount.z)).toEqual([-offset,offset]);
+   expect(Math.abs(engineMounts(checked)[1].z)+radius).toBeLessThanOrEqual(3+1e-8);
+  }
+  d.engine.lateralOffset=2.5;
+  editWingPoint(d,'mainWing',1,d.mainWing.points[1].x,1);
+  expect(d.engine.lateralOffset).toBe(engineLateralOffsetLimits(d).max);
+  expect(d.engine.lateralOffset).toBeCloseTo(0.86);
+  d.mainWing.dihedral=25;normalizeAircraftGeometry(d);
+  expect(d.engine.lateralOffset).toBe(engineLateralOffsetLimits(d).max);
+  expect(d.engine.lateralOffset!+radius).toBeLessThanOrEqual(Math.cos(25*DEG)+1e-8);
+  editWingPoint(d,'mainWing',2,d.mainWing.points[2].x,0.25);
+  const narrow=engineLateralOffsetLimits(d);
+  expect(narrow.max).toBe(narrow.min);expect(d.engine.lateralOffset).toBe(narrow.min);
+  expect(()=>validateAircraft(d)).not.toThrow();
+  expect(engineMounts(d)[1].z-radius).toBeCloseTo(BODY_GEOMETRY.shell.zRadius+0.03);
+ });
+ it('横向偏移保留导出导入和撤销重做，旧设计默认贴机身且不复活旧侧距',()=>{
+  const legacy:any=clone(presets.find(plane=>plane.engine.count===2)!);
+  delete legacy.engine.lateralOffset;legacy.engine.z=3;
+  const migrated=validateAircraft(legacy),minimum=engineLateralOffsetLimits(migrated).min;
+  expect(migrated.engine).not.toHaveProperty('lateralOffset');
+  expect(engineLateralOffset(migrated)).toBe(minimum);
+  expect(migrated.engine).not.toHaveProperty('z');expect(legacy.engine.lateralOffset).toBeUndefined();
+  const history=new History(migrated),edited=clone(migrated);
+  edited.engine.lateralOffset=1.5;normalizeAircraftGeometry(edited);history.push(edited);
+  expect(importAircraft(exportAircraft(edited))).toEqual(edited);
+  const restored=history.undo();
+  expect(restored.engine).not.toHaveProperty('lateralOffset');
+  expect(engineLateralOffset(restored)).toBe(minimum);
+  expect(history.redo().engine.lateralOffset).toBe(1.5);
+  edited.engine.count=1;normalizeAircraftGeometry(edited);
+  expect(engineMounts(edited)[0].z).toBe(0);expect(edited.engine.lateralOffset).toBe(1.5);
+  edited.engine.count=2;normalizeAircraftGeometry(edited);
+  expect(engineMounts(edited).map(mount=>mount.z)).toEqual([-1.5,1.5]);
+  for(const value of [-0.01,12.01,NaN,Infinity,-Infinity,null,'1']){
+   const invalid:any=clone(edited);invalid.engine.lateralOffset=value;
+   expect(()=>validateAircraft(invalid)).toThrow();
+  }
  });
  it('单发高度跳过座舱、座舱盖及鼻锥，不存在的下方区不接受负高度',()=>{
   const d=clone(defaultAircraft);d.birdman=false;d.engine.count=1;

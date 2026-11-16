@@ -24,7 +24,7 @@ it('settles under sustained full rudder at a fixed high-load flight condition', 
   for (let step = 0; step < 360; step++) {
     sim.position.set(100, 5000, 0); sim.quaternion.identity(); sim.velocity.set(35, 0, 0); sim.omega.set(0, 0, 0);
     sim.step({ weight: 0, rudder: 1, elevator: 0, aileron: 0, adaptiveControls: true });
-    if (step >= 300) tail.push(sim.telemetry.controlInputs.rudder);
+    if (step >= 300) tail.push(Math.max(...sim.structure.sections.filter(section => section.wingKey === 'verticalTail' && section.bodyId === 0).map(section => Math.abs(section.surface.controlCommand))));
   }
   expect(sim.structure.fractureCount).toBe(0);
   expect(Math.min(...tail)).toBeGreaterThan(0.05);
