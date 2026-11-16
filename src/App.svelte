@@ -647,7 +647,6 @@ window.addEventListener('pointermove',mouse);
  <button class="toggle-switch" role="switch" aria-label={t("智能混控（U）")} aria-checked={hud.smartMixing??false} disabled><span>{t("智能混控")}</span></button>
  </section>{/if}
  {#if lastChallenge!=='wind-tunnel'}<section class="stick-panel" aria-label={t("杆量与配平")}>
- <div class="stick-heading"><strong>{t("杆量与配平")}</strong>{#if isReplay}<span>{t("飞行重放")}</span>{:else}<span>{t("自定义映射见输入设置")}</span>{/if}</div>
  <div class="control-console">
  {@render engineData()}
  <div class="stick-main">

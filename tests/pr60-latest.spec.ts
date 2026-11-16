@@ -129,6 +129,11 @@ test('动力操纵台横向合并，油量相对起飞满油显示，双发偏�
  await page.getByLabel('导入飞机文件',{exact:true}).setInputFiles({name:'short-flight.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(tinyTank))});
  await page.getByRole('button',{name:'试飞',exact:true}).click();
  const consolePanel=page.locator('.stick-panel');
+ const trims=consolePanel.getByRole('slider',{name:'升降舵配平',exact:true});
+ const trimBounds=(await trims.boundingBox())!,trimWidth=trimBounds.width;
+ expect(trimWidth).toBeGreaterThan(120);expect(trimWidth).toBeLessThan(180);
+ await page.mouse.click(trimBounds.x+trimWidth*0.6,trimBounds.y+trimBounds.height/2);
+ expect(Number(await trims.inputValue())).toBeGreaterThan(55);
  const engine=await consolePanel.locator('.engine-hud').boundingBox(),stick=await consolePanel.locator('.stick-main').boundingBox(),assists=await consolePanel.locator('.flight-assists').boundingBox();
  expect(engine!.x+engine!.width).toBeLessThanOrEqual(stick!.x);
  expect(stick!.x+stick!.width).toBeLessThanOrEqual(assists!.x);

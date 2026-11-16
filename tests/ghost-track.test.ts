@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { createLegacyReplay } from './fixtures/legacy-replay';
 import { clone, defaultAircraft, wing } from '../src/model';
 import { FlightSimulation } from '../src/physics';
 import * as physics from '../src/physics';
@@ -31,7 +31,7 @@ it('imports a dense ghost without restoring keyframes or stepping physics, prese
  await expect(importReplay(JSON.stringify(data),'ghost')).resolves.toBeDefined();
 });
 it('imports pre-track files from their recorded keyframes with zero physics steps',async()=>{
- const text=readFileSync(new URL('./fixtures/pr60-compatible-replay.json',import.meta.url),'utf8');
+ const text=await createLegacyReplay();
  const step=vi.spyOn(FlightSimulation.prototype,'step');const ghost=await importReplay(text,'ghost');
  expect(step).not.toHaveBeenCalled();expect(ghost.recording.ghostFrames!.length).toBe(ghost.recording.keyframes!.length);
  expect(ghost.recording.ghostFrames!.at(-1)!.done).toBe(true);

@@ -67,16 +67,18 @@ it('scales each surface using chord/normal dynamic pressure including local angu
  const orientation = new Quaternion(), velocity = new Vector3(20, 0, 0), omega = new Vector3();
  sim.mixControls(input, velocity, omega, orientation);
  const reference = sim.surfaces.map((s: any) => s.controlCandidate);
+ sim.mixControls(input, velocity.clone().multiplyScalar(1.5), omega, orientation);
+ expect(sim.surfaces.map((s: { controlCandidate: number }) => s.controlCandidate)).toEqual(reference);
  sim.mixControls(input, velocity.clone().multiplyScalar(2), omega, orientation);
  sim.surfaces.forEach((s: any, i: number) => {
   const local = new Vector3(40, 0, 0), q = local.dot(s.chordDirection) ** 2 + local.dot(s.normal) ** 2;
-  expect(s.controlCandidate).toBeCloseTo(reference[i] * Math.min(1, 400 / q), 8);
+  expect(s.controlCandidate).toBeCloseTo(reference[i] * Math.min(1, 900 / q), 8);
  });
  omega.set(0, 2, 1); sim.mixControls(input, velocity, omega, orientation);
  sim.surfaces.forEach((s: any, i: number) => {
   const local = s.point.clone().sub(sim.cg).crossVectors(omega, s.point.clone().sub(sim.cg)).add(velocity);
   const q = local.dot(s.chordDirection) ** 2 + local.dot(s.normal) ** 2;
-  expect(s.controlCandidate).toBeCloseTo(reference[i] * Math.min(1, 400 / Math.max(400, q)), 8);
+  expect(s.controlCandidate).toBeCloseTo(reference[i] * Math.min(1, 900 / Math.max(900, q)), 8);
  });
  sim.effective.adaptiveControls = false; sim.mixControls(input, new Vector3(80, 0, 0), omega, orientation);
  expect(sim.surfaces.map((s: any) => s.controlCandidate)).toEqual(reference);
@@ -84,6 +86,6 @@ it('scales each surface using chord/normal dynamic pressure including local angu
 
 it('rejects previous-physics replays in normal and ghost imports', async () => {
  const old = JSON.parse(readFileSync(new URL('./fixtures/pr60-compatible-replay.json', import.meta.url), 'utf8'));
- old.physicsVersion = 'exposed-airframe-v24';
+ old.physicsVersion = 'surface-pressure-v25';
  for (const purpose of ['replay','ghost'] as const) await expect(importReplay(JSON.stringify(old), purpose)).rejects.toThrow('物理版本');
 });

@@ -2169,8 +2169,8 @@ export class FlightSimulation {
       this.arm.subVectors(surface.point, this.aircraft.cg);
       this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
       const chord = this.localVelocity.dot(surface.chordDirection), normal = this.localVelocity.dot(surface.normal);
-      // Preserve full low-speed travel; above 20 m/s hold reference dynamic-pressure authority.
-      surface.controlCandidate *= Math.min(1, 400 / Math.max(400, chord * chord + normal * normal));
+      // Preserve full low-speed travel; above 30 m/s hold reference dynamic-pressure authority.
+      surface.controlCandidate *= Math.min(1, 900 / Math.max(900, chord * chord + normal * normal));
     }
   }
 
