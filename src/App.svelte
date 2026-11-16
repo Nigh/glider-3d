@@ -28,7 +28,9 @@
  import { FixedGameClock } from './game-clock';
  import { GhostPlayer } from './ghost-player';
  import { energyCostScale } from './flight-chart';
- import { exportReplay, importReplay, MAX_REPLAY_BYTES, type Replay } from './replay';
+ import { exportReplay, importReplay, replayFilename, MAX_REPLAY_BYTES, type Replay } from './replay';
+ import { stickPosition, STICK_DEADZONE } from './stick';
+ import { structureLoadColor } from './structure-display';
  import { summarizeWingStructure } from './structure';
  import { language, setLanguage, t as translate, type Language, type TranslationParams } from './i18n';
  const t=$derived.by(()=>{const locale=$language;return (source:string,params?:TranslationParams)=>translate(source,params,locale);});
@@ -83,6 +85,9 @@
  let inputSettingsOpen=$state(false);
  const controls:FlightControls={weight:0,lateral:0,rudder:0,elevator:0,aileron:0};
  const structureWings=summarizeWingStructure([]);
+ let structureExpanded=$state(false),structureLayer=$state(false);
+ let stickVisualX=$state(0),stickVisualY=$state(0);let joystick=$state<HTMLDivElement>();
+ function setStick(x:number,y:number){const position=stickPosition(x,y);stickX=position.roll;stickY=position.pitch;stickVisualX=position.x;stickVisualY=position.y;}
  let trimPitch=$state(0),trimRoll=$state(0),autoTrim=$state(false),smartMixing=$state(false),adaptiveControls=$state(false);
  let stickPointer:number|null=null,yawPointer:number|null=null,yawInput=0;
  let pitchTrimLocked=$derived(isReplay?hud.autoTrim??false:autoTrim);
@@ -221,7 +226,7 @@
  }catch(e){notify(t('导入失败：{error}',{error:t((e as Error).message)}));}
  input.value='';
  }
- function clearControls(){stick=false;stickPointer=yawPointer=null;stickX=stickY=yawInput=0;input.clear();controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
+ function clearControls(){stick=false;stickPointer=yawPointer=null;stickVisualX=stickVisualY=stickX=stickY=yawInput=0;input.clear();controls.weight=controls.lateral=controls.rudder=controls.elevator=controls.aileron=0;}
  function syncWindDesign(){if(simulation?.challenge!=='wind-tunnel')return;const actual=simulation.definition;if(aircraft.assembly.mainIncidence===actual.assembly.mainIncidence&&aircraft.assembly.tailIncidence===actual.assembly.tailIncidence)return;aircraft=clone(actual);selectedId='';commit();}
  function enterWindTunnel(){if(screen==='design'&&!showLibrary)start(false,undefined,'wind-tunnel');}
  function start(replay=false,imported?:Replay,mode?:ChallengeMode){
@@ -233,7 +238,7 @@
    if(replay&&(imported?.recording??recording))next.loadReplay(imported?.recording??recording!);
    if(selectedChallenge==='wind-tunnel'){windSettings={...windSettings,mainIncidence:definition.assembly.mainIncidence,tailIncidence:definition.assembly.tailIncidence};next.setWindTunnel(windSettings);windSettings={...next.windTunnelTarget};}
    simulation=next;if(!replay&&!isLaboratory(selectedChallenge))cacheFlight(next);
-   lastDefinition=clone(definition);lastChallenge=selectedChallenge;
+   lastDefinition=clone(definition);lastChallenge=selectedChallenge;structureExpanded=selectedChallenge==='wind-tunnel';
    if(imported)recording=imported.recording;else if(isLaboratory(selectedChallenge))recording=null;
    samples=[];trajectory=[];lastSampleTime=-Infinity;flightElapsed=0;refreshHud();isReplay=replay;if(!replay&&!flightViews.includes(flightCamera))flightCamera='追尾';showLibrary=false;screen='flight';result=null;paused=false;flightReady=selectedChallenge==='wind-tunnel';clearControls();
    scene.setEditor(null,d=>change(out=>Object.assign(out,d)),commit);scene.setFlight(simulation);
@@ -254,9 +259,11 @@
   replayBusy=true;
   try{
    const selectedChallenge=lastChallenge;
+   const score=selectedChallenge==='birdman'?result?.distance:selectedChallenge==='downhill'?result?.time:result?.score;
+   const filename=replayFilename(t(challengeDefinitions[selectedChallenge].name),result?.completed||selectedChallenge==='birdman'?score??0:t('未完赛'));
    const text=await exportReplay({definition:lastDefinition,challenge:selectedChallenge,recording});
    const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
-   const a=document.createElement('a');a.href=url;a.download=`${selectedChallenge}-replay.json`;a.click();
+   const a=document.createElement('a');a.href=url;a.download=filename;a.click();
    setTimeout(()=>URL.revokeObjectURL(url),1000);
   }catch(e){notify((e as Error).message);}finally{replayBusy=false;}
  }
@@ -285,9 +292,9 @@
  function toggleSmartMixing(){if(screen==='flight'&&!isReplay)smartMixing=!smartMixing;}
  function toggleAdaptiveControls(){if(screen==='flight'&&!isReplay)adaptiveControls=!adaptiveControls;}
  function setPitchTrim(value:number){if(!pitchTrimLocked)trimPitch=value;}
- function moveStick(e:PointerEvent){const bounds=e.currentTarget instanceof HTMLElement?e.currentTarget.getBoundingClientRect():null;if(!bounds)return;const radius=Math.min(bounds.width,bounds.height)/2,x=(e.clientX-bounds.left-bounds.width/2)/radius,y=(bounds.top+bounds.height/2-e.clientY)/radius,length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;}
+ function moveStick(e:PointerEvent){const bounds=(e.currentTarget as HTMLElement).getBoundingClientRect(),radius=Math.min(bounds.width,bounds.height)/2;setStick((e.clientX-bounds.left-bounds.width/2)/radius,(bounds.top+bounds.height/2-e.clientY)/radius);}
  function beginStick(e:PointerEvent){if(flightInputDisabled)return;e.preventDefault();stickPointer=e.pointerId;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);moveStick(e);}
- function releaseStick(e:PointerEvent){if(stickPointer!==e.pointerId)return;stickPointer=null;stickX=stickY=0;}
+ function releaseStick(e:PointerEvent){if(stickPointer!==e.pointerId)return;stickPointer=null;setStick(0,0);}
  function beginYaw(e:PointerEvent,value:number){if(flightInputDisabled)return;e.preventDefault();yawPointer=e.pointerId;yawInput=value;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);}
  function releaseYaw(e:PointerEvent){if(yawPointer===e.pointerId){yawPointer=null;yawInput=0;}}
  function keyboard(e:KeyboardEvent,down:boolean){
@@ -322,7 +329,7 @@
   if(input.pressed('trimRollRight'))trimRoll=trimStep(trimRoll,1);
   if(input.pressed('trimRollLeft'))trimRoll=trimStep(trimRoll,-1);
   const mouseStick=input.value('mouseStick')>0;
-  if(stick&&!mouseStick&&stickPointer===null)stickX=stickY=0;
+  if(stick&&!mouseStick&&stickPointer===null)setStick(0,0);
   stick=mouseStick;
  }
 onMount(()=>{
@@ -380,7 +387,7 @@ const tick=(now:number)=>{
   request=requestAnimationFrame(tick);
 };
 request=requestAnimationFrame(tick);
-const mouse=(e:PointerEvent)=>{if(!stick||stickPointer!==null)return;const radius=innerHeight*0.3;let x=(e.clientX-innerWidth/2)/radius,y=(innerHeight/2-e.clientY)/radius;const length=Math.hypot(x,y),scale=length>0.05?Math.min(1,(length-0.05)/0.95)/length:0;stickX=x*scale;stickY=y*scale;};
+const mouse=(e:PointerEvent)=>{if(!stick||stickPointer!==null||!joystick)return;const bounds=joystick.getBoundingClientRect(),radius=joystick.clientWidth/2;setStick((e.clientX-bounds.left-bounds.width/2)/radius,(bounds.top+bounds.height/2-e.clientY)/radius);};
 window.addEventListener('pointermove',mouse);
  const down=(e:KeyboardEvent)=>keyboard(e,true),up=(e:KeyboardEvent)=>keyboard(e,false);
  const blur=()=>{clearControls();input.suspended=true;},focus=()=>{input.suspended=inputSettingsOpen||document.hidden;};
@@ -441,7 +448,7 @@ window.addEventListener('pointermove',mouse);
  </div>
 {/snippet}
 {#snippet structureData()}
-<details class="advanced-hud" open={lastChallenge==='wind-tunnel'}><summary>{t("姿态与结构 ·")} {(hud.fractureCount??0)>0?t("已断裂 {p0} 次",{p0:hud.fractureCount}):t("结构完整")} {t("· 极限")} {((hud.maxStressRatio??0)*100).toFixed(0)}%</summary><div class="structure-status" aria-label={t("结构载荷与断裂状态")}><p>{t("结构极限利用率")} <output aria-label={t("结构极限利用率")}>{((hud.maxStressRatio??0)*100).toFixed(1)}%</output> {t("· 弹性限利用率")} {((hud.maxYieldRatio??0)*100).toFixed(1)}%</p>{#each hud.wings??[] as wing}<p class="wing-structure" data-wing={wing.key}><strong>{t(wing.name)}</strong> · {t('结构极限')} <output aria-label={t('{name}结构极限利用率',{name:t(wing.name)})}>{(wing.stress*100).toFixed(1)}%</output> · {t('弹性限')} {(wing.yieldRatio*100).toFixed(1)}% · {t('连接 {attached} 段 / 脱离 {detached} 段',{attached:wing.attached,detached:wing.detached})}</p>{/each}<p>{t("最大形变")} <output aria-label={t("最大结构形变")}>{((hud.maxDeflection??0)*1000).toFixed(1)}</output> {t("mm · 独立断片")} <output aria-label={t("独立断片数量")}>{hud.fragmentCount??0}</output> {t("片")}</p>{#if (hud.fractureCount??0)>0}<p role="status"><strong>{t("承力梁已断裂")} {hud.fractureCount} {t("次。")}</strong>{t(lastChallenge==='wind-tunnel'?"主体由夹具固定，断片随气流运动；测试继续。":"主体继续飞行；断片独立运动，断片落地不结束主体。")}</p>{:else if (hud.maxStressRatio??0)>=0.8}<p role="status"><strong>{t("接近结构极限，减小载荷。")}</strong></p>{/if}{#if (hud.maxYieldRatio??0)>1}<p>{t("超过等效弹性限。当前仍为线弹性近似，不模拟塑性或真实颤振。")}</p>{/if}</div></details>
+<details class="advanced-hud" bind:open={structureExpanded}><summary>{t("姿态与结构 ·")} {(hud.fractureCount??0)>0?t("已断裂 {p0} 次",{p0:hud.fractureCount}):t("结构完整")} {t("· 极限")} {((hud.maxStressRatio??0)*100).toFixed(0)}%</summary><div class="structure-status" aria-label={t("结构载荷与断裂状态")}><p>{t("结构极限利用率")} <output aria-label={t("结构极限利用率")}>{((hud.maxStressRatio??0)*100).toFixed(1)}%</output> {t("· 弹性限利用率")} {((hud.maxYieldRatio??0)*100).toFixed(1)}%</p>{#each hud.wings??[] as wing}<div class="wing-load" role="meter" aria-label={t('{name}结构极限利用率',{name:t(wing.name)})} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100,Math.max(0,wing.stress*100))} aria-valuetext={`${(wing.stress*100).toFixed(1)}%`}><span style:width={`${Math.min(100,Math.max(0,wing.stress*100))}%`} style:background-color={`#${structureLoadColor(wing.stress).toString(16).padStart(6,'0')}`}></span></div><p class="wing-structure" data-wing={wing.key}><strong>{t(wing.name)}</strong> · {t('结构极限')} <output aria-label={t('{name}结构极限利用率',{name:t(wing.name)})}>{(wing.stress*100).toFixed(1)}%</output> · {t('弹性限')} {(wing.yieldRatio*100).toFixed(1)}% · {t('连接 {attached} 段 / 脱离 {detached} 段',{attached:wing.attached,detached:wing.detached})}</p>{/each}<p>{t("最大形变")} <output aria-label={t("最大结构形变")}>{((hud.maxDeflection??0)*1000).toFixed(1)}</output> {t("mm · 独立断片")} <output aria-label={t("独立断片数量")}>{hud.fragmentCount??0}</output> {t("片")}</p>{#if (hud.fractureCount??0)>0}<p role="status"><strong>{t("承力梁已断裂")} {hud.fractureCount} {t("次。")}</strong>{t(lastChallenge==='wind-tunnel'?"主体由夹具固定，断片随气流运动；测试继续。":"主体继续飞行；断片独立运动，断片落地不结束主体。")}</p>{:else if (hud.maxStressRatio??0)>=0.8}<p role="status"><strong>{t("接近结构极限，减小载荷。")}</strong></p>{/if}{#if (hud.maxYieldRatio??0)>1}<p>{t("超过等效弹性限。当前仍为线弹性近似，不模拟塑性或真实颤振。")}</p>{/if}</div></details>
 {/snippet}
 {#snippet aeroWindow()}
 {#if aero&&hud.aerodynamics}<aside class="aero-live" aria-label={t("实时气动数据")}><h2>{t("实时气动数据")}</h2><dl>
@@ -483,6 +490,7 @@ window.addEventListener('pointermove',mouse);
    <AudioSettings {audio} error={audioError}/>
    <InputSettings {input} error={inputError} onOpenChange={open=>{inputSettingsOpen=open;clearControls();}}/>
    <label class="quality-label">{t("画质")} <select aria-label={t("画质")} bind:value={quality} onchange={()=>scene?.setQuality(quality)}><option value="Auto">{t(qualityNames.Auto)}</option><option value="High">{t(qualityNames.High)}</option><option value="Medium">{t(qualityNames.Medium)}</option><option value="Low">{t(qualityNames.Low)}</option></select></label>
+   <button class="text-button toggle-switch" role="switch" aria-checked={structureLayer} onclick={()=>{structureLayer=!structureLayer;scene?.setStructureLayer(structureLayer);}}>{t("结构图层")}</button>
    <button class="text-button toggle-switch" role="switch" aria-checked={aero} onclick={()=>{aero=!aero;scene?.setDebug(aero);}}>{t("气动图层")}</button>
    <button class="text-button toggle-switch" role="switch" aria-checked={debug} onclick={()=>{debug=!debug;}}>{t("性能")}</button>
   </div>
@@ -665,6 +673,6 @@ window.addEventListener('pointermove',mouse);
  {#if message}<div class="toast" role="status">{t(message)}<button aria-label={t("关闭提示")} onclick={()=>message=''}>{t("关闭")}</button></div>{/if}
 </div>
 
-{#if stick&&screen==='flight'}<div class="joystick" aria-label={t("虚拟操纵杆")}><div class="stick-deadzone"></div><div class="stick-knob" style:left={`${50+stickX*50}%`} style:top={`${50-stickY*50}%`}></div></div>{/if}
+{#if stick&&screen==='flight'}<div class="joystick" bind:this={joystick} aria-label={t("虚拟操纵杆")}><div class="stick-deadzone"></div><div class="stick-knob" class:inactive={Math.hypot(stickVisualX,stickVisualY)<=STICK_DEADZONE} style:left={`${50+stickVisualX*50}%`} style:top={`${50-stickVisualY*50}%`}></div></div>{/if}
 
 <dialog class="replay-import-dialog" bind:this={importDialog} oncancel={e=>e.preventDefault()} aria-label={t("正在导入回放…")} aria-busy="true" tabindex="-1"><div role="status"><span class="import-spinner" aria-hidden="true"></span><strong>{t("正在导入回放…")}</strong></div></dialog>

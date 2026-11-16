@@ -2,6 +2,7 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "结构图层": ["Structure layer", "構造レイヤー"],
  "正在计算 Ghost 秒差…": ["Calculating ghost splits…", "ゴーストとの時間差を計算中…"],
  "Ghost 回放状态无效": ["Invalid ghost replay state", "ゴーストの状態が無効です"],
  "有效计时": ["Race time", "有効タイム"],

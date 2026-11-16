@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { structureLoadColor } from './structure-display';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
@@ -133,6 +134,9 @@ export class SceneView {
   private renderBlend = 1;
   private readonly hingeLines: THREE.LineSegments[] = [];
   private readonly surfaceParameters = new Float64Array(3).fill(NaN);
+  private structureLayer = false;
+  private readonly wingOriginalColors: Float32Array[] = [];
+  private readonly structureColor = new THREE.Color();
   private readonly wingBaseColor = new THREE.Color(0xf4f0dc);
   private readonly wingTipColor = new THREE.Color(0xd97343);
   private beam!: THREE.Mesh;
@@ -563,6 +567,11 @@ export class SceneView {
         fullWorld: position(this.fuelCgFull.position), emptyWorld: position(this.fuelCgEmpty.position),
         labels: ['满油圆点', '空油菱形'],
       },
+      structureLayer: this.structureLayer,
+      structureColors: this.wingSections.map((sections,index) => sections.map(section => {
+        const colors=this.wingMeshes[index].geometry.getAttribute('color');
+        return {load:section.physics?.stressRatio??0,r:colors.getX(section.vertexStart),g:colors.getY(section.vertexStart),b:colors.getZ(section.vertexStart)};
+      })),
       controlSurfaces: this.wingMeshes.map((_mesh, index) => ({ fraction: this.surfaceParameters[index], angle: this.wingAngles[index], hingeVisible: this.hingeLines[index].visible })),
       centers: { cg: position(this.cg.position), lift: position(this.liftCenter.position), drag: position(this.dragCenter.position), thrust: position(this.thrustCenter.position) },
       centerVisibility: { cg: this.cg.visible, lift: this.liftCenter.visible, drag: this.dragCenter.visible, thrust: this.thrustCenter.visible },
@@ -1642,6 +1651,7 @@ export class SceneView {
         (orange ? this.wingTipColor : this.wingBaseColor).toArray(colors, vertex * 3);
       }
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      this.wingOriginalColors[i] = colors.slice();
       this.metrics.memory += (this.geometryBytes(geometry) - this.geometryBytes(this.wingMeshes[i].geometry)) / 1048576;
       this.wingMeshes[i].geometry.dispose();
       this.wingMeshes[i].geometry = geometry;
@@ -2622,6 +2632,7 @@ export class SceneView {
       this.hingeLines[index].geometry.boundingBox = geometry.boundingBox;
       this.hingeLines[index].geometry.boundingSphere = geometry.boundingSphere;
     }
+    if (this.structureLayer) this.updateStructureColors();
     if (topologyChanged) {
       if (!this.aircraftOnly) this.clearWingTrail();
       for (let index = 0; index < 3; index++) this.writeWingIndices(index, 0, this.wingMeshes[index].geometry, this.hingeLines[index].geometry);
@@ -2633,6 +2644,31 @@ export class SceneView {
       fragment.hinge.geometry.boundingBox = fragment.mesh.geometry.boundingBox;
       fragment.hinge.geometry.boundingSphere = fragment.mesh.geometry.boundingSphere;
       fragment.hinge.visible = this.hingeLines[fragment.wingIndex].visible;
+    }
+  }
+
+  setStructureLayer(enabled: boolean): void {
+    this.structureLayer = enabled;
+    this.updateStructureColors();
+  }
+
+  private updateStructureColors(): void {
+    for (let index = 0; index < this.wingMeshes.length; index++) {
+      const colors = this.wingMeshes[index].geometry.getAttribute('color') as THREE.BufferAttribute;
+      const original = this.wingOriginalColors[index];
+      if (!original || !colors) continue;
+      (colors.array as Float32Array).set(original);
+      if (this.structureLayer) for (const section of this.wingSections[index]) {
+        const ratio = section.physics?.stressRatio ?? 0;
+        if (ratio <= 0.5) continue;
+        this.structureColor.setHex(structureLoadColor(ratio));
+        const count = (section.rows + 1) * 32;
+        for (let local = 0; local < count + 64; local++) {
+          const vertex = local < count ? section.vertexStart + local : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
+          colors.setXYZ(vertex, this.structureColor.r, this.structureColor.g, this.structureColor.b);
+        }
+      }
+      colors.needsUpdate = true;
     }
   }
 

@@ -161,3 +161,9 @@ export async function importReplay(text: string, purpose: 'replay' | 'ghost' = '
   await prepareReplay(replay);
   return replay;
 }
+
+export function replayFilename(challengeName: string, score: number | string, date = new Date()): string {
+ const day = `${date.getFullYear()}${String(date.getMonth()+1).padStart(2,'0')}${String(date.getDate()).padStart(2,'0')}`;
+ const result = typeof score === 'number' ? score.toFixed(2).replaceAll('.', '_') : score;
+ return `replay-${challengeName}-${result}-${day}.json`;
+}
