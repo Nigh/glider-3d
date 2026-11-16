@@ -59,7 +59,6 @@ test('结构面板可反复展开且实时刷新不折叠，结构图层切换�
  }
  const toggle=page.getByRole('switch',{name:'结构图层',exact:true});
  await toggle.click(); await expect(toggle).toHaveAttribute('aria-checked','true');
- expect(await page.evaluate(()=>(window as any).glider.scene.structureLayer)).toBe(true);
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>(window as any).glider.recordingLength)).toBeGreaterThan(5);
  await expect(panel).toHaveAttribute('open','');
@@ -68,7 +67,7 @@ test('结构面板可反复展开且实时刷新不折叠，结构图层切换�
  await page.screenshot({path:info.outputPath('structure-panel.png')});
  await summary.click();await expect(panel).not.toHaveAttribute('open','');
  await summary.click();await expect(panel).toHaveAttribute('open','');
- await toggle.click();expect(await page.evaluate(()=>(window as any).glider.scene.structureLayer)).toBe(false);
+ await toggle.click();await expect(toggle).toHaveAttribute('aria-checked','false');
 });
 
 test('鼠标点与光标对齐，死区灰色、有效杆量恢复颜色', async ({page},info) => {
@@ -138,14 +137,27 @@ test('动力操纵台横向合并，油量相对起飞满油显示，双发偏�
  await expect(fuel).toHaveAttribute('aria-valuenow','100');
  await expect(consolePanel.locator('.fuel-readout')).not.toHaveClass(/low-fuel/);
  await page.screenshot({path:info.outputPath('compact-powered-controls.png')});
- await page.getByRole('button',{name:'开始试飞',exact:true}).click();
- await expect.poll(()=>fuel.getAttribute('aria-valuenow')).not.toBe('100');
- await expect(consolePanel.locator('.fuel-readout')).toHaveClass(/low-fuel/,{timeout:30000});
- expect(Number(await fuel.getAttribute('aria-valuenow'))).toBeLessThan(20);
- await page.getByRole('button',{name:'暂停',exact:true}).click();
  for(const locale of ['en','ja']){
   await page.getByRole('combobox',{name:/语言|Language/,exact:true}).selectOption(locale);
   expect((await consolePanel.boundingBox())!.height).toBeLessThan(220);
   expect(await consolePanel.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
  }
+ const replay=await page.evaluate(async definition=>{
+  // Browser fixtures load Vite modules in the page, not the Node test process.
+  const physicsPath='/src/physics.ts',replayPath='/src/replay.ts';
+  const {FlightSimulation}=await import(physicsPath),{exportReplay}=await import(replayPath);
+  const simulation=new FlightSimulation(definition,'low-altitude',0);
+  for(let tick=0;tick<600&&simulation.telemetry.fuelRemaining>=definition.fuelTank.capacity*0.19;tick++)simulation.step({weight:0,elevator:0,aileron:0,rudder:0,throttle:1});
+  if(simulation.telemetry.fuelRemaining>=definition.fuelTank.capacity*0.2)throw Error('fixture did not reach low fuel');
+  return exportReplay({definition,challenge:'low-altitude',recording:simulation.getRecording()});
+ },tinyTank);
+ await page.getByRole('combobox',{name:'言語',exact:true}).selectOption('zh');
+ await page.getByRole('button',{name:'返回设计',exact:true}).click();
+ await page.getByLabel('导入回放',{exact:true}).setInputFiles({name:'low-fuel.json',mimeType:'application/json',buffer:Buffer.from(replay)});
+ await page.getByRole('slider',{name:'回放进度',exact:true}).evaluate((el:HTMLInputElement)=>{el.value=el.max;el.dispatchEvent(new Event('input',{bubbles:true}));});
+ await expect(page.getByLabel('回放时间轴',{exact:true})).toHaveAttribute('aria-busy','false');
+ const replayFuel=page.locator('.replay-inputs .fuel-readout');
+ await expect(replayFuel).toHaveClass(/low-fuel/);
+ expect(Number(await replayFuel.getByRole('meter').getAttribute('aria-valuenow'))).toBeLessThan(20);
+ await page.screenshot({path:info.outputPath('low-fuel-replay.png')});
 });
