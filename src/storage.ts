@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 辅助翼多实例与镜像改变气动及结构拓扑，旧物理版本成绩/回放不再混用。
-export const PHYSICS_VERSION = 'auxiliary-wings-v27';
+// 控制面扫掠裁剪与闭合支撑改变气动、接触及惯量，旧版本成绩/回放不再混用。
+export const PHYSICS_VERSION = 'control-clearance-v28';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

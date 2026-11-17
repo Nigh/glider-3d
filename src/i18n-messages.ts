@@ -1844,7 +1844,7 @@ export const messages: Record<string, readonly [string, string]> = {
   "エンジンの上下位置"
  ],
  "引擎横向偏移": ["Engine lateral offset", "エンジンの左右間隔"],
- "最小贴近机身，最大保持在主翼翼展内；缩小翼展时自动调整。": ["Minimum keeps engines beside the body; maximum keeps them within the main-wing span. Reducing span adjusts the offset automatically.", "最小値は胴体のすぐ外側、最大値は主翼の翼幅内です。翼幅を縮めると自動で調整します。"],
+ "最小时两台引擎相互紧靠，最大保持在主翼翼展内；缩小翼展时自动调整。": ["At minimum, the two engines touch each other; maximum keeps them within the main-wing span. Reducing span adjusts the offset automatically.", "最小値で左右のエンジンが互いに接し、最大値は主翼の翼幅内です。翼幅を縮めると自動で調整します。"],
  "油箱容量": [
   "Tank capacity",
   "タンク容量"

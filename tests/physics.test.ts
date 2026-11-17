@@ -4,7 +4,7 @@ import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
 import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, type AerodynamicSurface } from '../src/physics';
 import { AirframeExposure } from '../src/exposure';
-import { aircraftWings, wingInstancePoint, wingSupports } from '../src/model';
+import { aircraftWings, controlSurfaceRegions, wingControlAxis, wingControlHinge, wingInstancePoint, wingSupports } from '../src/model';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
@@ -758,5 +758,68 @@ describe('多辅助翼真实物理',()=>{
     }
     expect(s.telemetry.aerodynamics.wings[1].area).toBeGreaterThan(planform(s.definition.horizontalTail).area);
     expect(s.telemetry.aerodynamics.wings[2].area).toBeGreaterThan(2*planform(s.definition.verticalTail,false).area);
+  });
+  it('支撑质量、完整惯量及接触来自同一封闭几何',()=>{
+    const d=multipleWings(),s=new FlightSimulation(d,'birdman',0);
+    const parts=Reflect.get(s,'parts') as {mass:number;x:number;y:number;z:number;ix:number;iy:number;iz:number;ixy?:number;ixz?:number;iyz?:number}[];
+    const samples=contacts(s);
+    for(const support of wingSupports(s.definition)){
+      const part=parts.find(part=>Math.abs(part.mass-support.mass)<1e-10&&Math.abs(part.x-support.center.x)<1e-10&&Math.abs(part.z-support.center.z)<1e-10)!;
+      expect(part).toBeDefined();
+      for(const axis of ['ix','iy','iz','ixy','ixz','iyz'] as const)expect(part[axis]).toBeCloseTo(support.inertia[axis],10);
+      for(const point of support.points)expect(samples.some(sample=>sample.distanceTo(new Vector3(point.x,point.y,point.z))<1e-10)).toBe(true);
+    }
+  });
+  it('固定段没有真实操纵效能或接触旋转，可动段接触绕共享铰链运动',()=>{
+    const d=definition(d=>{
+      d.birdman=false;d.assembly.tailOnFin=false;
+      d.mainWing={...wing(8,1,1),controlSurface:0.3};d.assembly.mainWing=0.5;d.assembly.mainWingHeight=1;d.assembly.mainIncidence=0;
+      d.assembly.horizontalTail=-2.5;d.assembly.verticalTail=-2.5;
+    });
+    const s=new FlightSimulation(d,'test-space',0);s.structure.reset();
+    const regions=controlSurfaceRegions(s.definition),samples=contacts(s);
+    for(const surface of s.surfaces){
+      const region=regions.find(region=>region.wingInstance===surface.wingInstance&&region.side===surface.side&&Math.abs(region.spanStart-surface.spanStart)<1e-8)!;
+      expect(surface.controlEffectiveness>0).toBe(region.movable);
+      surface.controlCommand=1;
+    }
+    (Reflect.get(s,'updateControlDeflections') as ()=>void).call(s);
+    (Reflect.get(s,'syncContacts') as ()=>void).call(s);
+    for(const section of s.structure.sections.filter(section=>section.wingInstance===0)){
+      const point=samples.find(point=>Reflect.get(point,'sectionId')===section.id&&Reflect.get(point,'u')===1)!;
+      const reference=Reflect.get(point,'reference') as Vector3;
+      if(section.spanStart===0){
+        expect(section.controlDeflection).toBe(0);expect(point.distanceTo(reference)).toBeLessThan(1e-12);
+      }else{
+        expect(section.controlDeflection).not.toBe(0);
+        const span=Reflect.get(point,'span') as number;
+        const pivot=wingControlHinge(s.definition,0,section.side,span,new Vector3());
+        const axis=wingControlAxis(s.definition,0,section.side,new Vector3());
+        const expected=reference.clone().sub(pivot).applyAxisAngle(axis,section.controlDeflection).add(pivot);
+        expect(point.distanceTo(expected)).toBeLessThan(1e-12);expect(point.distanceTo(reference)).toBeGreaterThan(0.05);
+      }
+    }
+  });
+  it('风洞安装角变化刷新全部翼的可动区，接触与气动对象保持复用',()=>{
+    const d=definition(d=>{
+      d.birdman=false;d.assembly.tailOnFin=false;
+      d.mainWing={...wing(8,1,1),airfoil:'naca0012',controlSurface:0.3};
+      d.assembly.mainWing=0.5;d.assembly.mainWingHeight=0.2;d.assembly.mainIncidence=0;
+      d.assembly.horizontalTail=-2.5;d.assembly.verticalTail=-2.5;
+      d.auxiliaryWings=[{kind:'horizontalTail',wing:{...wing(8,1,1),airfoil:'naca0012',controlSurface:0},position:0,incidence:0}];
+    });
+    const s=new FlightSimulation(d,'wind-tunnel',0),surfaces=s.surfaces.slice(),samples=contacts(s).slice();
+    const before=s.surfaces.filter(surface=>surface.wingInstance===0&&surface.spanStart>=0.8);
+    expect(before.every(surface=>surface.controlEffectiveness>0)).toBe(true);
+    s.windTunnel.mainIncidence=18;
+    (Reflect.get(s,'syncWindTunnelIncidence') as ()=>void).call(s);
+    const regions=controlSurfaceRegions(s.definition);
+    expect(before.some(surface=>surface.controlEffectiveness===0)).toBe(true);
+    for(let i=0;i<s.surfaces.length;i++){
+      const surface=s.surfaces[i],blocked=regions.some(region=>region.wingInstance===surface.wingInstance&&region.side===surface.side&&!region.movable
+        &&region.spanStart<surface.spanEnd&&region.spanEnd>surface.spanStart);
+      expect(surface).toBe(surfaces[i]);expect(surface.controlEffectiveness>0).toBe(!blocked);
+    }
+    expect(contacts(s).every((point,index)=>point===samples[index])).toBe(true);
   });
 });

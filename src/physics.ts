@@ -1,5 +1,5 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, BODY_GEOMETRY, aircraftWings, finThickness, wingInstanceAirfoil, wingInstanceDirection, wingInstancePoint, wingSupports, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, SUPPORT_AREAL_DENSITY, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
+import { AIRFRAME_MASS, BODY_GEOMETRY, aircraftWings, controlSurfaceRegions, finThickness, wingControlAxis, wingControlHinge, wingInstanceAirfoil, wingInstanceDirection, wingInstancePoint, wingInstanceWing, wingSupports, WING_CONTROL_LIMIT, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, SUPPORT_AREAL_DENSITY, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
 import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
@@ -56,7 +56,6 @@ const RUNWAY_BOXES = [[new Vector3(-LOW_RUNWAY.length, -LOW_RUNWAY.thickness, -L
   new Vector3(0, 0, LOW_RUNWAY.width / 2)]];
 /** 整段助跑逐渐施加的滚转扰动上限（rad）。 */
 export const LAUNCH_ROLL_LIMIT = DEG;
-export const SURFACE_STEP = 0.8;
 
 const SPAN_EFFICIENCY = 0.9;
 /** 尾梁等未解析机体阻力面积；驾驶舱壳体和座舱罩另按可见尺寸计算。 */
@@ -91,7 +90,7 @@ export const SECTION_QUARTER_CHORD_CM = -0.12711943970034684;
 export const MAX_FRAMES = 36_000;
 export const FRAME_WIDTH = 12;
 const ZERO_CONTROLS: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0, throttle: 0 };
-const AILERON_LIMIT = 18 * DEG, HORIZONTAL_LIMIT = 22 * DEG, RUDDER_LIMIT = 15 * DEG;
+const AILERON_LIMIT = 18 * DEG, HORIZONTAL_LIMIT = WING_CONTROL_LIMIT.horizontal, RUDDER_LIMIT = WING_CONTROL_LIMIT.vertical;
 /** 标准化舵量每秒最多变化1.25，减少高载荷下结构/操纵反馈的激励。 */
 export const CONTROL_SURFACE_RATE = 1.25;
 const CONTROL_AXES = ['aileron', 'elevator', 'rudder'] as const;
@@ -129,7 +128,7 @@ export interface AircraftProperties {
   aerodynamics: AerodynamicReference;
 }
 interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; ixy?: number; ixz?: number; iyz?: number; sectionId?: number; moving?: boolean; fuel?: boolean; wingSupport?: boolean; wingKey?: WingKey }
-interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3; span?: number; u?: number; normal?: number }
+interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3; span?: number; u?: number; normal?: number; controlHinge?: Vector3; controlAxis?: Vector3 }
 interface Polar { cl: number; cd: number; inducedCd: number; profileCd: number; separatedCd: number; cm: number }
 export interface WingAerodynamics {
   kind: AerodynamicSurface['kind'];
@@ -347,19 +346,9 @@ function massLayout(d: AircraftDefinition): MassPart[] {
     parts.push({ mass: support.mass, x: support.x, y: support.y, z: 0, wingSupport: true,
       ix: support.mass * vy, iy: support.mass * vx, iz: support.mass * (vx + vy) });
   }
-  for (const support of wingSupports(d)) for (let i = 1; i < 3; i++) {
-    const vertices = [support.points[0], support.points[i], support.points[i + 1]].map(p => new Vector3(p.x,p.y,p.z));
-    const normal = new Vector3().subVectors(vertices[1],vertices[0]).cross(new Vector3().subVectors(vertices[2],vertices[0]));
-    const mass = normal.length() / 2 * SUPPORT_AREAL_DENSITY;
-    if (mass === 0) continue;
-    normal.normalize();
-    const center = vertices[0].clone().add(vertices[1]).add(vertices[2]).multiplyScalar(1/3), covariance = new Matrix3().set(0,0,0,0,0,0,0,0,0);
-    for (const vertex of vertices) vertex.sub(center);
-    for (let row=0;row<3;row++) for (let col=0;col<3;col++) {
-      covariance.elements[col*3+row] = mass/12 * (vertices.reduce((sum,v)=>sum+v.getComponent(row)*v.getComponent(col),0)+0.06**2*normal.getComponent(row)*normal.getComponent(col));
-    }
-    const c=covariance.elements,trace=c[0]+c[4]+c[8];
-    parts.push({mass,x:center.x,y:center.y,z:center.z,ix:trace-c[0],iy:trace-c[4],iz:trace-c[8],ixy:-c[3],ixz:-c[6],iyz:-c[7],wingKey:'verticalTail'});
+  for (const support of wingSupports(d)) {
+    const { mass,center,inertia }=support;
+    parts.push({mass,x:center.x,y:center.y,z:center.z,...inertia,wingKey:'verticalTail'});
   }
   const engine = engineCatalog[d.engine.type];
   for (const mount of engineMounts(d)) {
@@ -534,25 +523,25 @@ function groundEffectFactor(clearance: number, span: number) {
   return 1 - 1 / (1 + ratio * ratio);
 }
 
+/** Thin-airfoil trailing-edge flap effectiveness. */
+function controlEffectiveness(fraction: number) {
+  if (fraction === 0 || fraction === 1) return fraction;
+  const hingeAngle = Math.acos(2 * fraction - 1);
+  return (Math.PI - hingeAngle + Math.sin(hingeAngle)) / Math.PI;
+}
 function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
-  // 薄翼理论的后缘襟翼效能；全弦为1，零面积不产生控制力。
-  const effectiveness = (fraction: number) => {
-    if (fraction === 0 || fraction === 1) return fraction;
-    const hingeAngle = Math.acos(2 * fraction - 1);
-    return (Math.PI - hingeAngle + Math.sin(hingeAngle)) / Math.PI;
-  };
+  const regions=controlSurfaceRegions(d);
   const surfaces: AerodynamicSurface[] = [];
   for (const instance of aircraftWings(d)) {
     const { key, id, wing: w } = instance, vertical = key === 'verticalTail', p = planform(w, !vertical);
     const halfSpan = Math.abs(w.points[1].y), incidence = instance.incidence * DEG;
-    for (let start = 0; start < halfSpan - 1e-10; start += SURFACE_STEP) {
-      const end = Math.min(start + SURFACE_STEP, halfSpan), width = end - start;
+    for (const region of regions) {
+      if (region.wingInstance !== id) continue;
+      const { spanStart: start, spanEnd: end, side } = region, width = end - start;
       const root = p.root + (p.tip - p.root) * start / halfSpan;
       const tip = p.root + (p.tip - p.root) * end / halfSpan;
       const center = start + width * (root + 2 * tip) / (3 * (root + tip));
       const airfoil = wingInstanceAirfoil(d, id);
-      for (let side = -1; side <= 1; side += 2) {
-        if (vertical && side === -1 && !w.mirrored) continue;
         const point = wingInstancePoint(d, id, side, center, 0.25, 0, new Vector3());
         surfaces.push({ bodyId: 0, wingInstance: id, name: `${vertical ? '垂直辅助翼' : key === 'mainWing' ? '主翼' : '水平辅助翼'}${side < 0 ? '左' : '右'} ${start.toFixed(1)}–${end.toFixed(1)} m`,
           point, airfoil: vertical ? 'dae11' : airfoil,
@@ -566,13 +555,12 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
           sweep: sweepAngle(w), clearance: Infinity, groundEffect: 1, inducedDrag: 0, profileDrag: 0, separatedDrag: 0, spanwiseDrag: 0, waterDrag: 0,
           inducedFlow: new Vector3(), localFlow: new Vector3(), localOmega: new Vector3(), airFraction: 1, circulation: 0, nextCirculation: 0,
           incidence,
-          controlEffectiveness: effectiveness(w.controlSurface),
+          controlEffectiveness: region.movable ? controlEffectiveness(w.controlSurface) : 0,
           controlAxes: w.controlAxes ?? { roll: !vertical, pitch: !vertical, yaw: vertical },
           controlResponse: w.controlResponse ?? 1, controlReversed: w.controlReversed ?? false,
           controlProjection: new Vector3(), controlMoment: new Vector3(), controlCommand: 0, controlCandidate: 0,
           kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
           force: new Vector3(), drag: new Vector3(), moment: new Vector3() });
-      }
     }
   }
   return surfaces;
@@ -1086,7 +1074,11 @@ function makeContacts(d: AircraftDefinition, structure?: WingStructure): Contact
           for (const face of [-1, 1]) {
             const y = vertical ? face * thickness : chord * airfoilY(wingInstanceAirfoil(d, id), u, face);
             const point: ContactPoint = wingInstancePoint(d, id, side, span, u, y, new Vector3());
-            if (row.section) { point.sectionId = row.section.id; point.tip = row.tip; point.reference = point.clone(); point.span = span; point.u = u; point.normal = y; }
+            if (row.section) {
+              point.sectionId = row.section.id; point.tip = row.tip; point.reference = point.clone(); point.span = span; point.u = u; point.normal = y;
+              point.controlHinge=wingControlHinge(d,id,side,span,new Vector3());
+              point.controlAxis=wingControlAxis(d,id,side,new Vector3());
+            }
             points.push(point);
           }
         }
@@ -1098,11 +1090,7 @@ function makeContacts(d: AircraftDefinition, structure?: WingStructure): Contact
     points.push(new Vector3(support.frontX, support.frontY, 0), new Vector3(support.backX, support.backY, 0),
       new Vector3(support.frontX, support.frontY - support.height, 0), new Vector3(support.backX, support.backY - support.height, 0));
   }
-  for (const support of wingSupports(d)) for (let i=1;i<3;i++) {
-    const vertices=[support.points[0],support.points[i],support.points[i+1]].map(p=>new Vector3(p.x,p.y,p.z));
-    const normal=new Vector3().subVectors(vertices[1],vertices[0]).cross(new Vector3().subVectors(vertices[2],vertices[0])).normalize();
-    for (const vertex of vertices) for (const side of [-1,1]) points.push(vertex.clone().addScaledVector(normal,side*0.03));
-  }
+  for (const support of wingSupports(d)) for (const point of support.points) points.push(new Vector3(point.x,point.y,point.z));
   const engine = engineCatalog[d.engine.type];
   for (const mount of engineMounts(d)) {
     for (const end of [-1, 1]) for (let ring = 0; ring < 16; ring++) {
@@ -1247,6 +1235,7 @@ export class FlightSimulation {
   private waterPower = 0;
   private readonly waterBody: { point: Vector3; radius: number; area: number; volume: number }[];
   private readonly nosePoint = new Vector3();
+  private readonly mixingSurfaces: AerodynamicSurface[];
   private readonly contacts: ContactPoint[];
   /** Impulses until an accepted step converts them to average structural loads. */
   private readonly wingContactLoads: SectionContactLoad[];
@@ -1347,6 +1336,9 @@ export class FlightSimulation {
     this.neutral = this.aircraft.neutralPoint;
     this.chord = planform(this.definition.mainWing).chord;
     this.surfaces = makeSurfaces(this.definition);
+    // Coordinate descent must visit the same physical actuators after wing-role swaps.
+    this.mixingSurfaces = this.surfaces.slice().sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y
+      || a.point.z - b.point.z || a.spanStart - b.spanStart || a.spanEnd - b.spanEnd);
     this.structure = new WingStructure(this.definition, this.surfaces);
     this.aerodynamics = new AerodynamicSummary(this.surfaces, this.definition);
     this.contacts = makeContacts(this.definition, this.structure);
@@ -1602,8 +1594,10 @@ export class FlightSimulation {
           c * s * (xx - yy) + (c * c - s * s) * xy, c * xz - s * yz, s * xz + c * yz);
         section.surface.incidence = value * DEG;
         for (const index of this.sectionContacts[section.id]) {
-          const reference = this.contacts[index].reference;
+          const point=this.contacts[index],reference = point.reference;
           if (reference) reference.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+          point.controlHinge?.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+          point.controlAxis?.applyQuaternion(this.incidenceRotation);
         }
       }
     }
@@ -1613,9 +1607,20 @@ export class FlightSimulation {
         const section = point.sectionId === undefined ? undefined : this.structure.sections[point.sectionId];
         if (section?.wingInstance === 2 && section.bodyId === 0 && point.reference) {
           wingInstancePoint(this.definition, 2, section.side, point.span!, point.u!, point.normal!, point.reference);
+          if(point.controlHinge)wingControlHinge(this.definition,2,section.side,point.span!,point.controlHinge);
+          if(point.controlAxis)wingControlAxis(this.definition,2,section.side,point.controlAxis);
         }
       }
     }
+    // Live clearance changes never replace existing structural joints.
+    const regions=controlSurfaceRegions(this.definition);
+    for(const surface of this.surfaces)if(surface.bodyId===0){
+      const movable=!regions.some(region=>region.wingInstance===surface.wingInstance&&region.side===surface.side&&!region.movable
+        &&region.spanStart<surface.spanEnd&&region.spanEnd>surface.spanStart);
+      surface.controlEffectiveness=movable?controlEffectiveness(wingInstanceWing(this.definition,surface.wingInstance).controlSurface):0;
+      if(!movable)surface.controlCommand=0;
+    }
+    for(const section of this.structure.sections)if(section.bodyId===0&&section.surface.controlEffectiveness===0)section.controlDeflection=0;
     this.structure.updateGeometry(0);
     for (const part of this.parts) {
       if (part.sectionId !== undefined) {
@@ -2032,7 +2037,7 @@ export class FlightSimulation {
       const surface = section.surface as AerodynamicSurface;
       // Rotation axes point outboard on horizontal wings and along signed fin height.
       const incidence = surface.controlCommand * (surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT);
-      section.controlDeflection = incidence * (surface.kind === 'vertical' ? -surface.side * Math.sign(surface.spanDirection.y) : surface.side);
+      section.controlDeflection = surface.controlEffectiveness===0 ? 0 : incidence * (surface.kind === 'vertical' ? -surface.side * Math.sign(surface.spanDirection.y) : surface.side);
     }
   }
 
@@ -2177,7 +2182,7 @@ export class FlightSimulation {
   }
 
   private mixControls(controls: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion): void {
-    mixControlSurfaces(this.surfaces, controls, this.effective.smartMixing === true);
+    mixControlSurfaces(this.mixingSurfaces, controls, this.effective.smartMixing === true);
     if (!this.effective.adaptiveControls) return;
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
@@ -2619,7 +2624,12 @@ export class FlightSimulation {
   private syncContact(point: ContactPoint) {
     if (point.sectionId === undefined || !point.reference) return;
     const section = this.structure.sections[point.sectionId], node = point.tip ? section.tip : section.root;
-    point.copy(point.reference).sub(point.tip ? section.referenceTip : section.referenceRoot).applyQuaternion(node.quaternion).add(node.position);
+    const wing=wingInstanceWing(this.definition,section.wingInstance);
+    point.copy(point.reference);
+    if((section.surface as AerodynamicSurface).controlEffectiveness>0&&point.u!>=1-wing.controlSurface&&section.controlDeflection!==0){
+      point.sub(point.controlHinge!).applyAxisAngle(point.controlAxis!,section.controlDeflection).add(point.controlHinge!);
+    }
+    point.sub(point.tip ? section.referenceTip : section.referenceRoot).applyQuaternion(node.quaternion).add(node.position);
   }
 
   private blockedWingGeometry(key: WingKey, side: number, wingInstance: number) {
@@ -3430,7 +3440,7 @@ export class FlightSimulation {
 
 // Snapshots are deltas against a trusted constructor graph. Static geometry and
 // untouched scratch buffers cost no file space; aliases and every changed value survive.
-const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformFriction', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount', 'sectionContacts', 'branchContacts', 'structuralExternal', 'structuralCorrections', 'structuralResidualForce', 'structuralResidualMoment', 'structuralForce', 'structuralMoment', 'structuralBodies', 'structuralSeparated'];
+const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformFriction', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount', 'mixingSurfaces', 'sectionContacts', 'branchContacts', 'structuralExternal', 'structuralCorrections', 'structuralResidualForce', 'structuralResidualMoment', 'structuralForce', 'structuralMoment', 'structuralBodies', 'structuralSeparated'];
 const structureSnapshotOmitted = ['curvature', 'branchRoot', 'geometryScale', 'frozenBudget', 'elasticBudget', 'budgetRotation'];
 function omitSnapshotField(sim: FlightSimulation, object: unknown, key: string) {
   return object === sim && snapshotOmitted.includes(key)

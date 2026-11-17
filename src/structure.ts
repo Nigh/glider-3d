@@ -12,6 +12,7 @@ export interface StructuralSurface {
   kind: 'main' | 'tail' | 'vertical'; side: number; spanStart: number; spanEnd: number;
   wingInstance: number;
   area: number; chord: number; incidence: number; bodyId: number;
+  controlEffectiveness: number;
 }
 export interface StructureNode { span: number; position: Vector3; quaternion: Quaternion }
 export interface StructureSection {

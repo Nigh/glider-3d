@@ -1,7 +1,7 @@
-import { BODY_GEOMETRY, cockpitGeometry, finThickness, fuselageEnds, planform, wingInstanceWing, type AircraftDefinition, type BodyEllipsoid } from './model';
+import { BODY_GEOMETRY, cockpitGeometry, DEG, finThickness, fuselageEnds, planform, wingInstanceDirection, wingInstancePoint, wingInstanceWing, type AircraftDefinition, type BodyEllipsoid } from './model';
 import { airfoilY } from './airfoils';
 import type { AerodynamicSurface } from './physics';
-import type { Vector3 } from 'three';
+import { Vector3 } from 'three';
 
 type Patch = { x: number; y: number; z: number; nx: number; ny: number; nz: number; area: number; exposed: boolean };
 type Volume = { patches: Patch[]; contains: (x: number, y: number, z: number) => boolean; bounds: number[] };
@@ -66,11 +66,19 @@ export class AirframeExposure {
    const center=surface.spanStart+(surface.spanEnd-surface.spanStart)*(root+2*tip)/(3*(root+tip));
    const slope=(p.tip-p.root)/half, quarterSlope=(w.points[1].x-w.points[0].x+(p.tip-p.root)/4)/half;
    const samples:number[]=[];
+   // Local quadrature belongs to the design frame, not a checkpoint's deformed pose.
+   const point=new Vector3(),origin=wingInstancePoint(d,surface.wingInstance,surface.side,center,.25,0,new Vector3());
+   const chordDirection=wingInstanceDirection(d,surface.wingInstance,surface.side,1,0,0,new Vector3());
+   const normal=wingInstanceDirection(d,surface.wingInstance,surface.side,0,1,0,new Vector3());
+   const spanDirection=wingInstanceDirection(d,surface.wingInstance,surface.side,0,0,1,new Vector3());
    for(let i=0;i<12;i++)for(let j=0;j<24;j++){
-    const span=surface.spanStart+(i+.5)*(surface.spanEnd-surface.spanStart)/12, offset=span-center, chord=p.root+slope*span, u=(j+.5)/24;
-    for(const face of [-1,1])samples.push(-quarterSlope*offset+(.25-u)*chord,sectionY(surface,u,face)*chord,offset,chord/(12*24*(root+tip)));
+    const span=surface.spanStart+(i+.5)*(surface.spanEnd-surface.spanStart)/12, chord=p.root+slope*span, u=(j+.5)/24;
+    for(const face of [-1,1]){
+     wingInstancePoint(d,surface.wingInstance,surface.side,span,u,sectionY(surface,u,face)*chord,point).sub(origin);
+     samples.push(point.dot(chordDirection),point.dot(normal),point.dot(spanDirection),chord/(12*24*(root+tip)));
+    }
    }
-   return {surface,center,slope,root:p.root,quarterSlope,samples,radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
+   return {surface,center,slope,root:p.root,quarterSlope,samples,half,miter:surface.kind==='vertical'?0:Math.tan(w.dihedral*DEG),radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
   });
   this.poses=new Float64Array(surfaces.length*13).fill(NaN);
   this.update();
@@ -107,9 +115,11 @@ export class AirframeExposure {
     const s=strip.surface;if(s.bodyId!==0)return false;
     const x=p.x-s.point.x,y=p.y-s.point.y,z=p.z-s.point.z;
     if(x*x+y*y+z*z>strip.radius**2)return false;
-    const offset=x*s.spanDirection.x+y*s.spanDirection.y+z*s.spanDirection.z, span=strip.center+offset;
+    const normalDistance=x*s.normal.x+y*s.normal.y+z*s.normal.z;
+    const offset=x*s.spanDirection.x+y*s.spanDirection.y+z*s.spanDirection.z;
+    const span=(strip.center+offset-normalDistance*strip.miter)/(1-normalDistance*strip.miter/strip.half);
     if(span<s.spanStart||span>s.spanEnd)return false;
-    const chord=strip.root+strip.slope*span, u=.25-(x*s.chordDirection.x+y*s.chordDirection.y+z*s.chordDirection.z+strip.quarterSlope*offset)/chord;
+    const chord=strip.root+strip.slope*span, u=.25-(x*s.chordDirection.x+y*s.chordDirection.y+z*s.chordDirection.z+strip.quarterSlope*(span-strip.center))/chord;
     if(u<=0||u>=1)return false;
     const normal=(x*s.normal.x+y*s.normal.y+z*s.normal.z)/chord;
     return normal>sectionY(s,u,-1)&&normal<sectionY(s,u,1);

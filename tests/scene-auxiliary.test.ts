@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { BufferGeometry, Group, Mesh, MeshBasicMaterial, OrthographicCamera, Quaternion, Scene, Vector3 } from 'three';
-import { aircraftWings, clone, defaultAircraft, wingInstancePoint, wingSupports } from '../src/model';
+import { describe, expect, it, vi } from 'vitest';
+import { BufferGeometry, Color, DoubleSide, FrontSide, Group, Mesh, MeshBasicMaterial, OrthographicCamera, Quaternion, Raycaster, Scene, Vector3 } from 'three';
+import { aircraftWings, clone, controlSurfaceRegions, defaultAircraft, wing, wingInstancePoint, wingSupports, type AircraftDefinition } from '../src/model';
 import { FlightSimulation } from '../src/physics';
 import { SceneView } from '../src/scene';
 import { t } from '../src/i18n';
 
-function auxiliaryScene() {
+function auxiliaryScene(configure?: (definition: AircraftDefinition) => void) {
   const definition = clone(defaultAircraft);
   definition.birdman = false;
   definition.assembly.tailOnFin = false;
@@ -14,6 +14,7 @@ function auxiliaryScene() {
     { kind: 'horizontalTail', wing: clone(definition.horizontalTail), position: 1.5, incidence: 9 },
     { kind: 'verticalTail', wing: clone(definition.verticalTail), position: -1.5, incidence: 8 },
   ];
+  configure?.(definition);
   const simulation = new FlightSimulation(definition, 'wind-tunnel', 0);
   const view = Object.assign(Object.create(SceneView.prototype), {
     definition: simulation.definition, simulation, scene: new Scene(), body: new Group(),
@@ -59,6 +60,152 @@ function disposeScene(view: SceneResources) {
   view.aircraftMaterials.main.dispose();
   view.aircraftMaterials.ivory.dispose();
 }
+
+it('非均匀遮蔽边界按真实展向位置插值弹性形变', () => {
+  const view = auxiliaryScene(definition => {
+    definition.auxiliaryWings = [];
+    definition.engine.count = 0; definition.fuelTank.capacity = 0;
+    definition.mainWing = wing(6, 1.2, 0.6, 0.2);
+    definition.mainWing.controlSurface = 0.3;
+    definition.horizontalTail = wing(2.4, 0.8, 0.4, 0.1);
+    definition.horizontalTail.controlSurface = 0.3;
+    definition.verticalTail.mirrored = false;
+    definition.assembly.mainWingHeight = 0.5;
+    definition.assembly.horizontalTail = -2.5;
+  });
+  try {
+    const index = 1, coordinates = view.wingCoordinates[index];
+    const section = view.wingSections[index].find((candidate: { rows: number; vertexStart: number; spanStart: number; spanEnd: number }) => {
+      if (candidate.rows < 2) return false;
+      const span = coordinates[(candidate.vertexStart + 32) * 4];
+      return Math.abs((span - candidate.spanStart) / (candidate.spanEnd - candidate.spanStart) - 1 / candidate.rows) > 0.001;
+    });
+    expect(section).toBeDefined();
+    const physical = section!.physics;
+    physical.root.position.copy(physical.referenceRoot);
+    physical.tip.position.copy(physical.referenceTip).add(new Vector3(0, 0.12, 0));
+    physical.root.quaternion.identity(); physical.tip.quaternion.identity();
+    physical.controlDeflection = 0;
+    view.updateControlSurfaces();
+    const positions = view.wingMeshes[index].geometry.getAttribute('position');
+    for (let row = 0; row <= section!.rows; row++) {
+      const vertex = section!.vertexStart + row * 32;
+      const span = coordinates[vertex * 4];
+      const t = Math.max(0, Math.min(1, (span - section!.spanStart) / (section!.spanEnd - section!.spanStart)));
+      const expected = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
+      expected.y += 0.12 * t * t * (3 - 2 * t);
+      expect(new Vector3().fromBufferAttribute(positions, vertex).distanceTo(expected)).toBeLessThan(1e-6);
+    }
+  } finally { disposeScene(view); }
+});
+
+it('引擎开口壳体从内外均命中，尾部封口朝外，独立材质只释放一次', () => {
+  const materials = Object.fromEntries(['engine', 'intake', 'graphite', 'orange', 'exhaust', 'exhaustInner', 'exhaustCore']
+    .map(name => [name, new MeshBasicMaterial()]));
+  const view = Object.assign(Object.create(SceneView.prototype), {
+    aircraftMaterials: materials, body: new Group(), engines: [], engineSupports: [], exhausts: [], fuelTank: new Group(),
+  });
+  view.buildPropulsion();
+  view.body.updateMatrixWorld(true);
+  const [housing, nozzle, back] = view.engines[0].children as Mesh<BufferGeometry, MeshBasicMaterial>[];
+  const ray = new Raycaster();
+  const shells = [housing, nozzle];
+  const dispose = shells.map(shell => vi.spyOn(shell.material, 'dispose'));
+  try {
+    for (const [index, shell] of shells.entries()) {
+      const x = index === 0 ? 0.1 : -0.4;
+      ray.set(new Vector3(x, 0, 0), new Vector3(0, 1, 0));
+      expect(ray.intersectObject(shell)).not.toHaveLength(0);
+      ray.set(new Vector3(x, 2, 0), new Vector3(0, -1, 0));
+      expect(ray.intersectObject(shell)).not.toHaveLength(0);
+      expect(shell.material.side).toBe(DoubleSide);
+    }
+    ray.set(new Vector3(-1, 0.3, 0), new Vector3(1, 0, 0));
+    expect(ray.intersectObject(back)).not.toHaveLength(0);
+    expect(materials.engine.side).toBe(FrontSide);
+    expect(materials.graphite.side).toBe(FrontSide);
+    expect(shells[0].material).toBe((view.engines[1].children[0] as Mesh).material);
+  } finally {
+    view.release(view.body);
+  }
+  for (const spy of dispose) expect(spy).toHaveBeenCalledTimes(1);
+});
+
+it.each([-25, 25])('主翼上反角%d°在反向横滚和结构弯曲时仍共用封闭中央接缝', dihedral => {
+  const view = auxiliaryScene(definition => {
+    definition.mainWing.dihedral = dihedral;
+    definition.mainWing.controlSurface = 0.3;
+    definition.assembly.mainIncidence = 12;
+  });
+  try {
+    for (const section of view.wingSections[0]) {
+      section.physics.controlDeflection = section.side * 0.3;
+      if (!section.previous) {
+        section.physics.root.position.copy(section.physics.referenceRoot);
+        section.physics.root.quaternion.identity();
+        section.physics.tip.position.y += 0.05;
+        section.physics.tip.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), section.side * 0.08);
+      }
+    }
+    view.updateControlSurfaces();
+    const roots = view.wingSections[0].filter((section: { previous: unknown }) => !section.previous);
+    const positions = view.wingMeshes[0].geometry.getAttribute('position');
+    for (let k = 0; k < 32; k++) {
+      const left = roots[0].vertexStart + k, right = roots[1].vertexStart + k;
+      expect(view.wingMovable[0][left]).toBe(0);
+      expect(view.wingMovable[0][right]).toBe(0);
+      expect(positions.getZ(left)).toBeCloseTo(0, 7);
+      expect(new Vector3().fromBufferAttribute(positions, left).distanceTo(new Vector3().fromBufferAttribute(positions, right))).toBeLessThan(1e-6);
+    }
+  } finally { disposeScene(view); }
+});
+
+it('跨翼位置变化重建遮蔽，固定段保留翼色、无旋转、无铰链，恢复后重新可动', () => {
+  const view = auxiliaryScene(definition => {
+    definition.mainWing = wing(6, 1, 1);
+    definition.horizontalTail = wing(6, 1, 1);
+    definition.horizontalTail.controlSurface = 0.3;
+    definition.verticalTail = { ...wing(2, 1, 1), mirrored: true, lateralOffset: 1, cant: 0, controlSurface: 0.3 };
+    Object.assign(definition.assembly, { mainWing: 1, mainWingHeight: 1, mainIncidence: 0, horizontalTail: -2, tailIncidence: 0, verticalTail: -2 });
+    definition.auxiliaryWings = [];
+  });
+  Object.assign(view, {
+    simulation: null, aircraftPending: true, wingShapeKeys: [], wingParameters: [], surfaceParameters: [], wingOriginalColors: [],
+    wingBaseColor: new Color(0xf4f0dc), wingTipColor: new Color(0xd97343), metrics: { memory: 0 },
+    designCG: new Vector3(), fuelCgFullPosition: new Vector3(), fuelCgEmptyPosition: new Vector3(),
+    designLiftCenter: new Vector3(), designDragCenter: new Vector3(), designLiftDirection: new Vector3(), designDragDirection: new Vector3(),
+    support: new Group(), beam: new Group(), nose: new Group(), pilot: new Group(), cockpit: new Group(),
+    aircraft: new Group(), driver: new Group(), cg: new Group(), updateCockpitShell() {}, updatePropulsionGeometry() {},
+    positionAtLaunch() {}, updateCenters() {},
+  });
+  try {
+    view.applyAircraft();
+    const original = view.wingMeshes[1].geometry;
+    const before = view.wingSections[1].reduce((span: number, section: { movable: boolean; spanStart: number; spanEnd: number }) => span + (section.movable ? section.spanEnd - section.spanStart : 0), 0);
+    const regions = controlSurfaceRegions(view.definition);
+    const hinges = view.hingeLines[1].geometry;
+    const lineVertices = Array.from(hinges.index.array).slice(0, hinges.drawRange.count);
+    const colors = original.getAttribute('color');
+    const positions = original.getAttribute('position');
+    for (const section of view.wingSections[1]) {
+      expect(section.movable).toBe(regions.find(region => region.wingInstance === 1 && region.side === section.side && region.spanStart === section.spanStart)!.movable);
+      if (section.movable) continue;
+      for (let vertex = section.vertexStart; vertex < section.vertexStart + (section.rows + 1) * 32; vertex++) {
+        expect(view.wingMovable[1][vertex]).toBe(0);
+        expect(lineVertices).not.toContain(vertex);
+        expect(new Vector3().fromBufferAttribute(colors, vertex).distanceTo(new Vector3(view.wingBaseColor.r, view.wingBaseColor.g, view.wingBaseColor.b))).toBeLessThan(1e-6);
+        expect(new Vector3().fromBufferAttribute(positions, vertex).distanceTo(new Vector3().fromArray(view.wingNeutral[1], vertex * 3))).toBeLessThan(1e-6);
+      }
+    }
+    view.definition.assembly.verticalTail = 2;
+    view.aircraftPending = true;
+    view.applyAircraft();
+    expect(view.wingMeshes[1].geometry).not.toBe(original);
+    const after = view.wingSections[1].reduce((span: number, section: { movable: boolean; spanStart: number; spanEnd: number }) => span + (section.movable ? section.spanEnd - section.spanStart : 0), 0);
+    expect(after).toBeGreaterThan(before);
+    expect(view.hingeLines[1].geometry.drawRange.count).toBeGreaterThan(0);
+  } finally { disposeScene(view); }
+});
 
 describe('辅助翼实例场景', () => {
   it('镜像两侧蒙皮、手柄、结构参考及铰链使用真实变换，没有中央垂翼', () => {
@@ -106,12 +253,26 @@ describe('辅助翼实例场景', () => {
         const neutral = new Vector3().fromArray(view.wingNeutral[index], vertex * 3);
         const hinge = new Vector3().fromArray(view.wingHinges[index], vertex * 3);
         const axis = view.wingAxes[index][section.side < 0 ? 0 : 1];
-        const expected = neutral.sub(hinge).applyAxisAngle(axis, 0.18).add(hinge);
+        const expected = neutral.sub(hinge).applyAxisAngle(axis, section.movable ? 0.18 : 0).add(hinge);
         const physical = section.physics;
         expected.sub(physical.referenceRoot).applyQuaternion(physical.root.quaternion).add(physical.root.position);
         const actual = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
         expect(actual.distanceTo(expected)).toBeLessThan(1e-6);
       }
+      const section = view.wingSections.flat().find((part: { movable: boolean }) => part.movable)!;
+      const index = section.wingIndex, vertex = section.vertexStart + 16;
+      const effectiveness = section.physics.surface.controlEffectiveness;
+      const geometry = view.wingMeshes[index].geometry;
+      section.physics.surface.controlEffectiveness = 0;
+      view.updateControlSurfaces();
+      expect(section.movable).toBe(false);
+      expect(view.wingMovable[index][vertex]).toBe(0);
+      const lines = view.hingeLines[index].geometry;
+      expect(Array.from(lines.index.array).slice(0, lines.drawRange.count)).not.toContain(section.vertexStart + 12);
+      section.physics.surface.controlEffectiveness = effectiveness;
+      view.updateControlSurfaces();
+      expect(view.wingMovable[index][vertex]).toBe(1);
+      expect(view.wingMeshes[index].geometry).toBe(geometry);
       const fragment = { id: 71, position: new Vector3(10, 20, 30), quaternion: new Quaternion(), cg: new Vector3() };
       view.simulation.fragments.push(fragment);
       for (const section of view.simulation.structure.sections) {
@@ -134,19 +295,17 @@ describe('辅助翼实例场景', () => {
       expect(view.auxiliarySupports).toHaveLength(4);
       for (const support of view.auxiliarySupports) {
         expect(support.mesh.material).toBe(view.aircraftMaterials.ivory);
-        expect(support.mesh.geometry.index.count).toBe(48);
-        const points = support.mesh.geometry.getAttribute('position');
         const shared = wingSupports(view.definition).find(web => web.wingInstance === support.wingIndex && web.side === support.side)!;
-        for (const [triangle, corners] of [[0, 1, 2], [0, 2, 3]].entries()) {
-          const a = new Vector3().copy(shared.points[corners[0]]), b = new Vector3().copy(shared.points[corners[1]]);
-          const c = new Vector3().copy(shared.points[corners[2]]);
-          const thickness = b.sub(a).cross(c.sub(a)).normalize().multiplyScalar(0.06);
-          for (let corner = 0; corner < 3; corner++) {
-            const lower = new Vector3().fromBufferAttribute(points, triangle * 6 + corner);
-            const upper = new Vector3().fromBufferAttribute(points, triangle * 6 + corner + 3);
-            expect(upper.clone().sub(lower).distanceTo(thickness)).toBeLessThan(1e-6);
-            expect(lower.add(upper).multiplyScalar(0.5).distanceTo(shared.points[corners[corner]])).toBeLessThan(1e-6);
-          }
+        expect(Array.from(support.mesh.geometry.index.array)).toEqual(shared.indices);
+        const points = support.mesh.geometry.getAttribute('position');
+        const normals = support.mesh.geometry.getAttribute('normal');
+        const section = view.wingSections[support.wingIndex].find((part: { side: number; previous: unknown }) => part.side === support.side && !part.previous);
+        for (let vertex = 0; vertex < shared.points.length; vertex++) {
+          const expected = new Vector3().copy(shared.points[vertex]);
+          view.deformPoint(section, expected, 0);
+          expected.lerp(shared.points[vertex], 1 - shared.vertexWeights[vertex]);
+          expect(new Vector3().fromBufferAttribute(points, vertex).distanceTo(expected)).toBeLessThan(1e-6);
+          expect(Number.isFinite(normals.getX(vertex) + normals.getY(vertex) + normals.getZ(vertex))).toBe(true);
         }
       }
       view.editorTarget = 'horizontalTail'; view.editDefinition = clone(view.definition);

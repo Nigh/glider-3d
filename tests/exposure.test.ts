@@ -81,6 +81,10 @@ it('recomputes exposure after live incidence changes and restoring the intact ai
 it('rebuilds the derived exposure cache for independent physics checkpoints',()=>{
  const sim=new FlightSimulation(normal(),'low-altitude',0);
  for(let i=0;i<20;i++)sim.step(neutral);
+ internal(sim).aerodynamics.updateExposure();
+ const exposed=sim.surfaces.map(surface=>surface.exposedFraction);
+ new AirframeExposure(sim.definition,sim.surfaces);
+ expect(sim.surfaces.map(surface=>surface.exposedFraction)).toEqual(exposed);
  const copy=sim.checkpoint();
  for(let i=0;i<10;i++){sim.step(neutral);copy.step(neutral);}
  expect(copy.position.toArray()).toEqual(sim.position.toArray());
