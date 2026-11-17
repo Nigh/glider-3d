@@ -125,7 +125,7 @@ test('工坊每个翼面保留响应轴，支持撤销与重置',async({page})=>
  await page.getByRole('button',{name:'高山速降',exact:false}).click();
  await page.getByRole('button',{name:'重置设计',exact:true}).click();
  const axes=page.getByRole('group',{name:'舵面响应轴',exact:true});
- for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['副翼',true,true,false],['垂直尾翼',false,false,true]] as const){
+ for(const [part,roll,pitch,yaw] of [['主翼',true,true,false],['水平辅助翼',true,true,false],['垂直辅助翼',false,false,true]] as const){
   await page.getByRole('tab',{name:part,exact:true}).click();
   for(const [axis,enabled] of [['滚转',roll],['俯仰',pitch],['偏航',yaw]] as const)await expect(axes.getByRole('switch',{name:`${axis}响应`,exact:true})).toHaveAttribute('aria-checked',String(enabled));
  }
@@ -134,7 +134,7 @@ test('工坊每个翼面保留响应轴，支持撤销与重置',async({page})=>
  await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','false');
  await page.getByRole('button',{name:'重做',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','true');
  await page.getByRole('tab',{name:'主翼',exact:true}).click();
- await page.getByRole('tab',{name:'垂直尾翼',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','true');
+ await page.getByRole('tab',{name:'垂直辅助翼',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','true');
  expect(await page.evaluate(()=>window.glider.aircraft.verticalTail.controlAxes)).toEqual({roll:true,pitch:false,yaw:true});
  await page.getByRole('button',{name:'重置设计',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','false');
 });

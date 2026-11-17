@@ -47,7 +47,7 @@ test('结构面板可反复展开且实时刷新不折叠，结构图层切换�
  await expect(panel).not.toHaveAttribute('open','');
  await summary.click();
  await expect(panel).toHaveAttribute('open','');
- for(const name of ['主翼','副翼','垂直尾翼']) await expect(page.getByRole('meter',{name:`${name}结构极限利用率`,exact:true})).toBeVisible();
+ for(const name of ['主翼','水平辅助翼','垂直辅助翼']) await expect(page.getByRole('meter',{name:`${name}结构极限利用率`,exact:true})).toBeVisible();
  await expect(page.locator('.flight-hud .advanced-hud')).toHaveCount(0);
  await expect(page.locator('.flight-status')).toHaveCount(0);
  await expect(panel.locator('.wing-structure')).toHaveCount(3);

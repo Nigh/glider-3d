@@ -5,6 +5,7 @@ import { beamSection, defaultStructures, materialCatalog, type MaterialId } from
 import { derive, FlightSimulation } from '../src/physics';
 import { engineCatalog } from '../src/engines';
 import { exportAircraft, importAircraft, History } from '../src/storage';
+import { aircraftWings, finPairMinimumOffset, finThickness, hasMirroredFin, wingInstancePoint, wingSupports } from '../src/model';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
@@ -415,5 +416,81 @@ describe('材料目录与独立梁截面',()=>{
   const input:any=clone(defaultAircraft);input.fragments=[{id:1}];input.structure={fractureCount:4};input.mainWing.deformation=[1];input.mainWing.structure.runtime=1;
   const checked:any=validateAircraft(input);
   expect(checked).toEqual(defaultAircraft);expect(input.fragments).toHaveLength(1);expect(input.mainWing.deformation).toEqual([1]);
+ });
+});
+
+describe('多辅助翼与镜像垂翼边界',()=>{
+ it('旧存档保持首翼字段，多实例及镜像参数完整导入导出',()=>{
+  const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+  d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0};
+  d.auxiliaryWings=[
+   {kind:'horizontalTail',wing:clone(d.horizontalTail),position:0.7,incidence:-4},
+   {kind:'verticalTail',wing:{...clone(d.verticalTail),cant:0,lateralOffset:1},position:-1,incidence:2},
+   {kind:'horizontalTail',wing:clone(d.horizontalTail),position:-0.8,incidence:5},
+   {kind:'verticalTail',wing:{...clone(d.verticalTail),cant:45,lateralOffset:0.01},position:-1.5,incidence:0},
+  ];
+  const checked=validateAircraft(d),restored=importAircraft(exportAircraft(d));
+  expect(restored).toEqual(checked);
+  expect(restored.auxiliaryWings).toHaveLength(4);
+  expect(aircraftWings(restored).map(instance=>instance.id)).toEqual([0,1,2,3,4,5,6]);
+  expect(validateAircraft(defaultAircraft)).toEqual(defaultAircraft);
+  expect(defaultAircraft.auxiliaryWings).toBeUndefined();
+ });
+ it('45度及1米边界有效，越界、非有限值和错误字段被拒绝',()=>{
+  for(const cant of [-45,0,45]){
+   const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+   d.verticalTail={...wing(0.6,0.5,0.3),mirrored:true,cant,lateralOffset:1};
+   expect(validateAircraft(d).verticalTail.cant).toBe(cant);
+  }
+  for(const [field,values] of [['cant',[-45.001,45.001,NaN,Infinity]],['lateralOffset',[-0.001,1.001,NaN,Infinity]],['mirrored',[1,'true',null]]] as const)for(const value of values){
+   const d:any=clone(defaultAircraft);d.verticalTail[field]=value;
+   expect(()=>validateAircraft(d)).toThrow();
+  }
+  for(const malformed of [null,{},[null],[{kind:'mainWing'}],[{kind:'verticalTail',position:0,incidence:Infinity}]]){
+   const d:any=clone(defaultAircraft);d.auxiliaryWings=malformed;
+   expect(()=>validateAircraft(d)).toThrow();
+  }
+ });
+ it('有限厚度平行翼和向下内倾翼必须留足间距',()=>{
+  for(const height of [0.5,-0.5])for(const cant of [0,-45]){
+   const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+   d.verticalTail={...wing(1,0.8,0.6),mirrored:true,cant,lateralOffset:1};
+   d.verticalTail.points[1].y=d.verticalTail.points[2].y=height;
+   const minimum=finPairMinimumOffset(d.verticalTail);
+   expect(minimum).toBeGreaterThan(0);
+   d.verticalTail.lateralOffset=minimum-1e-5;
+   expect(()=>validateAircraft(d)).toThrow('镜像垂直辅助翼不得相交');
+   d.verticalTail.lateralOffset=minimum;
+   expect(()=>validateAircraft(d)).not.toThrow();
+  }
+ });
+ it('V翼根斜接及微小偏移不产生跨过对称面的实体顶点',()=>{
+  for(const height of [0.5,-0.5])for(const offset of [0,0.01]){
+   const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+   d.verticalTail={...wing(1,1.5,0.6),mirrored:true,cant:30,lateralOffset:offset};
+   d.verticalTail.points[1].y=d.verticalTail.points[2].y=height;
+   expect(finPairMinimumOffset(d.verticalTail)).toBe(0);
+   expect(()=>validateAircraft(d)).not.toThrow();
+   for(const span of [0,0.01,0.25,0.5])for(const u of [0,0.1,0.3,0.7,1])for(const face of [-1,1]){
+    const chord=1.5+(0.6-1.5)*span/0.5,normal=face*finThickness(u)*chord;
+    const left=wingInstancePoint(d,2,-1,span,u,normal,new Vector3()),right=wingInstancePoint(d,2,1,span,u,normal,new Vector3());
+    expect(right.z).toBeGreaterThanOrEqual(0);expect(left.z).toBeLessThanOrEqual(0);
+    expect(left.x).toBe(right.x);expect(left.y).toBe(right.y);expect(left.z).toBe(-right.z);
+   }
+  }
+ });
+ it('任意镜像垂翼禁止顶置水平翼，关闭镜像恢复单片居中直立',()=>{
+  const d=clone(defaultAircraft);d.assembly.tailOnFin=true;
+  d.auxiliaryWings=[{kind:'verticalTail',wing:{...wing(1,0.5,0.3),mirrored:true,cant:30,lateralOffset:0},position:-1,incidence:0}];
+  expect(hasMirroredFin(d)).toBe(true);
+  expect(()=>validateAircraft(d)).toThrow('镜像垂直辅助翼不能顶置水平辅助翼');
+  d.auxiliaryWings=[];d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0};
+  expect(()=>validateAircraft(d)).toThrow('镜像垂直辅助翼不能顶置水平辅助翼');
+  d.verticalTail.mirrored=false;d.verticalTail.lateralOffset=1;
+  expect(()=>validateAircraft(d)).not.toThrow();
+  d.assembly.tailOnFin=false;
+  const checked=validateAircraft(d),point=wingInstancePoint(checked,2,1,0.2,0.25,0,new Vector3());
+  expect(hasMirroredFin(checked)).toBe(false);expect(point.z).toBe(0);expect(point.y).toBeCloseTo(0.2);
+  expect(wingSupports(checked)).toHaveLength(0);
  });
 });

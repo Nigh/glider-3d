@@ -10,13 +10,14 @@ import singleJet from './aircraft/基础单发型.json';
 export type Point = { x: number; y: number };
 // Body coordinates: +X forward, +Y up, +Z right. Distances metres, angles degrees.
 // Planform points: root leading, tip leading, tip trailing, root trailing; x aft, y outboard.
-export interface Wing { points: [Point, Point, Point, Point]; airfoil?: AirfoilId; rootReference?: number; dihedral: number; controlSurface: number; controlAxes?: { roll: boolean; pitch: boolean; yaw: boolean }; controlResponse?: number; controlReversed?: boolean; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
+export interface Wing { points: [Point, Point, Point, Point]; airfoil?: AirfoilId; rootReference?: number; mirrored?: boolean; cant?: number; lateralOffset?: number; dihedral: number; controlSurface: number; controlAxes?: { roll: boolean; pitch: boolean; yaw: boolean }; controlResponse?: number; controlReversed?: boolean; materialId: MaterialId; materialAmount: number; structure: BeamStructure }
 export interface AircraftDefinition {
  name: string;
  birdman: boolean;
  fuselage: { length: number; center: number };
  cockpit: { position: number; rearLength?: number };
  mainWing: Wing; horizontalTail: Wing; verticalTail: Wing;
+ auxiliaryWings?: { kind: 'horizontalTail' | 'verticalTail'; wing: Wing; position: number; incidence: number }[];
  assembly: { mainWing: number; mainWingHeight: number; horizontalTail: number; verticalTail: number; mainIncidence: number; tailIncidence: number; tailOnFin?: boolean };
  pilot: { mass: number }; controls: { travel: number; lateralTravel: number };
  engine: { type: EngineType; count: 0 | 1 | 2; x: number; y: number; lateralOffset?: number };
@@ -176,6 +177,87 @@ export function wingLocalPoint<T extends { x: number; y: number; z: number }>(wi
  out.z = side * (span * cd - y * sd);
  return out;
 }
+export interface WingInstance { id: number; key: WingKey; wing: Wing; position: number; incidence: number }
+export function wingInstance(d: AircraftDefinition, id: number): WingInstance {
+ if (id >= 3) {
+  const entry = d.auxiliaryWings![id - 3];
+  return { id, key: entry.kind, wing: entry.wing, position: entry.position, incidence: entry.incidence };
+ }
+ const key = (['mainWing', 'horizontalTail', 'verticalTail'] as const)[id];
+ return { id, key, wing: d[key], position: d.assembly[key],
+  incidence: id === 0 ? d.assembly.mainIncidence : id === 1 ? d.assembly.tailIncidence : 0 };
+}
+export function aircraftWings(d: AircraftDefinition): WingInstance[] {
+ return Array.from({ length: 3 + (d.auxiliaryWings?.length ?? 0) }, (_, id) => wingInstance(d, id));
+}
+export function hasMirroredFin(d: AircraftDefinition): boolean {
+ return !!d.verticalTail.mirrored || !!d.auxiliaryWings?.some(entry => entry.kind === 'verticalTail' && entry.wing.mirrored);
+}
+export function wingInstanceWing(d: AircraftDefinition, id: number): Wing {
+ return id >= 3 ? d.auxiliaryWings![id - 3].wing : id === 0 ? d.mainWing : id === 1 ? d.horizontalTail : d.verticalTail;
+}
+export function wingInstanceAirfoil(d: AircraftDefinition, id: number): AirfoilId {
+ return d.birdman ? 'dae11' : wingInstanceWing(d, id).airfoil ?? 'dae11';
+}
+/** Vertical normals and span axes mirror together; positive cant points outboard. */
+export function wingInstanceDirection<T extends { x: number; y: number; z: number }>(d: AircraftDefinition, id: number, side: number, x: number, normal: number, span: number, out: T): T {
+ const w = wingInstanceWing(d, id), vertical = id === 2 || (id >= 3 && d.auxiliaryWings![id - 3].kind === 'verticalTail');
+ const incidence = (id >= 3 ? d.auxiliaryWings![id - 3].incidence : id === 0 ? d.assembly.mainIncidence : id === 1 ? d.assembly.tailIncidence : 0) * DEG;
+ if (!vertical) return wingLocalPoint(w, incidence, side, x, normal, span, out);
+ const angle = (w.mirrored ? w.cant ?? 0 : 0) * DEG, c = Math.cos(angle), s = Math.sin(angle), direction = Math.sign(w.points[1].y);
+ const chord = x * Math.cos(incidence) - normal * Math.sin(incidence), thickness = x * Math.sin(incidence) + normal * Math.cos(incidence);
+ out.x = chord; out.y = direction * (span * c - thickness * s); out.z = side * (span * s + thickness * c);
+ return out;
+}
+export function wingInstancePoint<T extends { x: number; y: number; z: number }>(d: AircraftDefinition, id: number, side: number, span: number, u: number, normal: number, out: T): T {
+ if (id === 2) return finPoint(d, span, u, normal, out, d.assembly.tailIncidence, side);
+ const w = wingInstanceWing(d, id), entry = id >= 3 ? d.auxiliaryWings![id - 3] : undefined;
+ const vertical = entry?.kind === 'verticalTail', incidence = entry?.incidence ?? (id === 0 ? d.assembly.mainIncidence : d.assembly.tailIncidence);
+ const fraction = span / Math.abs(w.points[1].y), leading = w.points[0].x + (w.points[1].x - w.points[0].x) * fraction;
+ const chord = w.points[3].x - w.points[0].x + (w.points[2].x - w.points[1].x - w.points[3].x + w.points[0].x) * fraction;
+ const middle = w.rootReference ?? (w.points[0].x + w.points[3].x) / 2;
+ wingInstanceDirection(d, id, side, vertical ? middle - leading - u * chord : -leading - u * chord, normal, span, out);
+ if (vertical) {
+  out.x += entry!.position; out.z += side * (w.mirrored ? w.lateralOffset ?? 0 : 0);
+  if (w.mirrored && (w.cant ?? 0) > 0 && incidence === 0) out.z = side * Math.max(0, side * out.z);
+ } else if (id >= 3) {
+  out.x += entry!.position + middle * Math.cos(incidence * DEG); out.y += middle * Math.sin(incidence * DEG);
+ } else {
+  out.x += id === 0 ? d.assembly.mainWing : d.assembly.tailOnFin ? d.assembly.verticalTail + (d.verticalTail.rootReference ?? (d.verticalTail.points[0].x + d.verticalTail.points[3].x) / 2) : d.assembly.horizontalTail + middle * Math.cos(incidence * DEG);
+  out.y += id === 0 ? d.assembly.mainWingHeight : d.assembly.tailOnFin ? d.verticalTail.points[1].y : 0;
+  if (id === 0 || !d.assembly.tailOnFin) out.y += middle * Math.sin(incidence * DEG);
+ }
+ return out;
+}
+/** Reject mirrored solid overlap, including inward cant and finite airfoil thickness. */
+export function validateFinPair(w: Wing, incidence = 0): void {
+ if (!w.mirrored) return;
+ if (!(w.lateralOffset ?? 0) && (w.cant ?? 0) > 0 && incidence === 0) return;
+ if ((w.lateralOffset ?? 0) + 1e-9 < finPairMinimumOffset(w, incidence) || (!(w.lateralOffset ?? 0) && !(w.cant ?? 0))) throw Error('镜像垂直辅助翼不得相交');
+}
+export function finPairMinimumOffset(w: Wing, incidence = 0): number {
+ if ((w.cant ?? 0) > 0 && incidence === 0) return 0;
+ const cant = (w.cant ?? 0) * DEG, angle = incidence * DEG, half = Math.abs(w.points[1].y);
+ let minimum = 0;
+ for (const span of [0, half]) {
+  const f = span / half, leading = w.points[0].x + (w.points[1].x - w.points[0].x) * f;
+  const chord = w.points[3].x - w.points[0].x + (w.points[2].x - w.points[1].x - w.points[3].x + w.points[0].x) * f;
+  const middle = w.rootReference ?? (w.points[0].x + w.points[3].x) / 2;
+  // The thickness profile is concave. Its tilted lower envelope has one minimum.
+  let low = 0, high = 1;
+  for (let i = 0; i < 55; i++) {
+   const u = (low + high) / 2;
+   const derivative = 5 * 0.105 * (0.2969 / (2 * Math.sqrt(u)) - 0.126 - 0.7032 * u + 0.8529 * u ** 2 - 0.4144 * u ** 3);
+   if (-Math.sin(angle) - derivative * Math.cos(angle) < 0) low = u; else high = u;
+  }
+  const u = (low + high) / 2, local = (middle - leading - u * chord) * Math.sin(angle) - finThickness(u) * chord * Math.cos(angle);
+  minimum = Math.max(minimum, -span * Math.sin(cant) - local * Math.cos(cant));
+ }
+ return minimum;
+}
+export function finThickness(u: number): number {
+ return 5 * 0.105 * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u ** 2 + 0.2843 * u ** 3 - 0.1036 * u ** 4);
+}
 /** Every root endpoint, rather than only its midpoint, stays on the body. */
 export function wingMountLimits(d: AircraftDefinition, key: WingKey) {
  const ends = fuselageEnds(d), w = d[key];
@@ -201,6 +283,12 @@ export function normalizeAircraftGeometry(d: AircraftDefinition): void {
   const mount = wingMountLimits(d, key);
   if (mount.min > mount.max) throw Error(key === 'mainWing' ? '主翼翼根无法安装到当前机身，请调整机身或翼根' : '尾翼翼根无法安装到当前机身');
   d.assembly[key] = clamp(d.assembly[key], mount.min, mount.max);
+ }
+ for (const entry of d.auxiliaryWings ?? []) {
+  const w = entry.wing, middle = w.rootReference ?? (w.points[0].x + w.points[3].x) / 2, c = Math.cos(entry.incidence * DEG), ends = fuselageEnds(d);
+  const min = ends.tail + (w.points[3].x - middle) * c, max = ends.nose + (w.points[0].x - middle) * c;
+  if (min > max) throw Error('机身必须支撑辅助翼安装点');
+  entry.position = clamp(entry.position, min, max);
  }
  if (d.engine.count > 0) {
   const limits = engineMountLimits(d);
@@ -236,7 +324,7 @@ export function wingAirfoil(d: AircraftDefinition, key: WingKey): AirfoilId { re
 /** Only the last fin strip forms the crown. Its cap follows the mounted tail's
  * upper section, including incidence/camber; root and planform edits stay put.
  * Shared by render skin, contacts, aerodynamic points and beam references. */
-export function finPoint<T extends { x: number; y: number; z: number }>(d: AircraftDefinition, span: number, u: number, normal: number, out: T, incidence = d.assembly.tailIncidence): T {
+export function finPoint<T extends { x: number; y: number; z: number }>(d: AircraftDefinition, span: number, u: number, normal: number, out: T, incidence = d.assembly.tailIncidence, side = 1): T {
  const w = d.verticalTail, half = Math.abs(w.points[1].y), t = span / half;
  const originX = d.assembly.verticalTail + (w.rootReference ?? (w.points[0].x + w.points[3].x) / 2);
  const lead = w.points[0].x + (w.points[1].x - w.points[0].x) * t;
@@ -262,6 +350,11 @@ export function finPoint<T extends { x: number; y: number; z: number }>(d: Aircr
   out.x += weight * (x * Math.cos(angle) - y * Math.sin(angle) - baseX);
   out.y += weight * (x * Math.sin(angle) + y * Math.cos(angle));
  }
+ const angle = (w.mirrored ? w.cant ?? 0 : 0) * DEG, c = Math.cos(angle), s = Math.sin(angle), direction = Math.sign(w.points[1].y);
+ const height = out.y * direction;
+ out.y = direction * (height * c - normal * s);
+ out.z = side * ((w.mirrored ? w.lateralOffset ?? 0 : 0) + height * s + normal * c);
+ if (w.mirrored && (w.cant ?? 0) > 0) out.z = side * Math.max(0, side * out.z);
  return out;
 }
 export function mainWingSupport(d: AircraftDefinition) {
@@ -272,6 +365,25 @@ export function mainWingSupport(d: AircraftDefinition) {
   x: origin.x - (w.points[0].x + w.points[3].x) / 2 * Math.cos(angle), y: height / 2,
   frontX: origin.x - w.points[0].x * Math.cos(angle), backX: origin.x - w.points[3].x * Math.cos(angle),
   frontY: origin.y - w.points[0].x * Math.sin(angle), backY: origin.y - w.points[3].x * Math.sin(angle) };
+}
+export interface WingSupport { wingInstance: number; side: number; points: { x: number; y: number; z: number }[]; area: number; mass: number }
+/** Offset-fin root webs share their four corners with render, contact and mass geometry. */
+export function wingSupports(d: AircraftDefinition): WingSupport[] {
+ const supports: WingSupport[] = [];
+ for (const { id, key, wing } of aircraftWings(d)) {
+  if (key !== 'verticalTail' || !wing.mirrored || !(wing.lateralOffset ?? 0)) continue;
+  for (const side of wing.mirrored ? [-1, 1] : [1]) {
+   const front = wingInstancePoint(d,id,side,0,0,0,{x:0,y:0,z:0}), back = wingInstancePoint(d,id,side,0,1,0,{x:0,y:0,z:0});
+   const points = [{x:front.x,y:0,z:0},{x:back.x,y:0,z:0},back,front];
+   let area = 0;
+   for (let i=1;i<3;i++) {
+    const a=points[0],b=points[i],c=points[i+1],ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z,vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
+    area += Math.hypot(uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx)/2;
+   }
+   supports.push({wingInstance:id,side,points,area,mass:area*SUPPORT_AREAL_DENSITY});
+  }
+ }
+ return supports;
 }
 export function fuselageEnds(d: AircraftDefinition) {
  return { nose: d.fuselage.center + d.fuselage.length / 2, tail: d.fuselage.center - d.fuselage.length / 2 };
@@ -286,6 +398,10 @@ export function fuselageEndLimits(d: AircraftDefinition, end: 'nose' | 'tail') {
   if (key === 'horizontalTail' && d.assembly.tailOnFin) continue;
   const origin = wingOrigin(d, key), c = Math.cos((key === 'mainWing' ? d.assembly.mainIncidence : key === 'horizontalTail' ? d.assembly.tailIncidence : 0) * DEG);
   occupied.push(origin.x - d[key].points[0].x * c, origin.x - d[key].points[3].x * c);
+ }
+ for (const { id } of aircraftWings(d).slice(3)) {
+  const front=wingInstancePoint(d,id,1,0,0,0,{x:0,y:0,z:0}),back=wingInstancePoint(d,id,1,0,1,0,{x:0,y:0,z:0});
+  occupied.push(front.x,back.x);
  }
  if (d.engine.count > 0) {
   const halfWidth = engineCatalog[d.engine.type].length * 0.3;
@@ -347,7 +463,16 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  if (d.fuselage.center === undefined) d.fuselage.center = 0;
  finite(d.fuselage.center,-12,12);
  d.pilot.mass = PILOT_MASS;
- for(const key of ['mainWing','horizontalTail','verticalTail'] as const){const w=d[key];if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p.x,-3,6);finite(p.y,key==='verticalTail'?-0.5:0,12);} finite(w.dihedral,-25,25);
+ if (d.auxiliaryWings !== undefined && !Array.isArray(d.auxiliaryWings)) throw Error('辅助翼数据必须是数组');
+ for (const entry of d.auxiliaryWings ?? []) {
+  if (!entry || !['horizontalTail', 'verticalTail'].includes(entry.kind)) throw Error('未知辅助翼类型');
+  finite(entry.position,-24,24); finite(entry.incidence,-12,12);
+ }
+ for(const instance of aircraftWings(d)){const {key,id}=instance,w=instance.wing;if(!w||!Array.isArray(w.points)||w.points.length!==4)throw Error('翼面必须有四个顶点');for(const p of w.points){finite(p?.x,-3,6);finite(p?.y,key==='verticalTail'?-0.5:0,12);} finite(w.dihedral,-25,25);
+ if (w.mirrored !== undefined && typeof w.mirrored !== 'boolean') throw Error('镜像开关必须是布尔值');
+ if (w.cant !== undefined) finite(w.cant,-45,45);
+ if (w.lateralOffset !== undefined) finite(w.lateralOffset,0,1);
+ if (key !== 'verticalTail' && (w.mirrored || w.cant || w.lateralOffset)) throw Error('仅垂直辅助翼支持镜像、偏转与横向偏移');
  if(w.controlSurface===undefined)w.controlSurface=d.birdman&&key!=='verticalTail'?0:0.3;
  finite(w.controlSurface,0,1);
  if(w.controlAxes===undefined)w.controlAxes={roll:key!=='verticalTail',pitch:key!=='verticalTail',yaw:key==='verticalTail'};
@@ -371,12 +496,15 @@ export function validateAircraft(value:unknown):AircraftDefinition {
  if(2*w.structure.wallThickness>=Math.min(w.structure.width,w.structure.height))throw Error('梁管壁厚的两倍必须小于宽度和高度');
  w.structure={width:w.structure.width,height:w.structure.height,wallThickness:w.structure.wallThickness};
  // Design snapshots contain geometry and material only; runtime deformation never persists.
- d[key]={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.airfoil===undefined?{}:{airfoil:w.airfoil}),...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),dihedral:w.dihedral,controlSurface:w.controlSurface,controlAxes:w.controlAxes,controlResponse:w.controlResponse,controlReversed:w.controlReversed,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
+ const checked:Wing={points:w.points.map(p=>({x:p.x,y:p.y})) as Wing['points'],...(w.airfoil===undefined?{}:{airfoil:w.airfoil}),...(w.rootReference===undefined?{}:{rootReference:w.rootReference}),...(w.mirrored===undefined?{}:{mirrored:w.mirrored}),...(w.cant===undefined?{}:{cant:w.cant}),...(w.lateralOffset===undefined?{}:{lateralOffset:w.lateralOffset}),dihedral:w.dihedral,controlSurface:w.controlSurface,controlAxes:w.controlAxes,controlResponse:w.controlResponse,controlReversed:w.controlReversed,materialId:w.materialId,materialAmount:w.materialAmount,structure:w.structure};
+ if (id < 3) d[key] = checked; else d.auxiliaryWings![id - 3] = { kind:key as 'horizontalTail'|'verticalTail', wing:checked, position:instance.position, incidence:instance.incidence };
  if(key!=='verticalTail'&&d.birdman&&w.controlSurface!==0)throw Error('鸟人间设计只允许垂尾操纵，主翼和副翼不能安装控制面');
  const p=w.points;if(p[0].y!==0||p[3].y!==0||Math.abs(p[1].y-p[2].y)>0.001||Math.abs(p[1].y)<0.25||p[3].x-p[0].x<0.15||p[2].x-p[1].x<0.15)throw Error('翼面不得自交，根弦与梢弦至少 0.15 m');
+ if (key === 'verticalTail') validateFinPair(w, instance.incidence);
  }
  for(const key of ['mainWing','horizontalTail','verticalTail'] as const)finite(d.assembly?.[key],-24,24);
  if(d.assembly.tailOnFin!==undefined&&typeof d.assembly.tailOnFin!=='boolean')throw Error('副翼垂尾安装开关必须是布尔值');
+ if (hasMirroredFin(d) && d.assembly.tailOnFin) throw Error('镜像垂直辅助翼不能顶置水平辅助翼');
  finite(d.assembly?.mainWingHeight,-0.5,1);finite(d.assembly?.mainIncidence,-10,18);finite(d.assembly?.tailIncidence,-12,12);
  const ends = fuselageEnds(d), epsilon = 1e-8;
  if (ends.nose < 0.1 - epsilon || ends.tail > -0.1 + epsilon) throw Error('机头须至少为 0.1 m，机尾须不高于 -0.1 m');
@@ -389,11 +517,12 @@ export function validateAircraft(value:unknown):AircraftDefinition {
   if (key === 'horizontalTail' && d.assembly.tailOnFin) continue;
   if (d.assembly[key] < ends.tail - epsilon || d.assembly[key] > ends.nose + epsilon) throw Error('机身必须支撑尾翼安装点');
  }
+ for (const entry of d.auxiliaryWings ?? []) if (entry.position < ends.tail - epsilon || entry.position > ends.nose + epsilon) throw Error('机身必须支撑辅助翼安装点');
  if(d.engine.count>0&&(d.engine.x<ends.tail||d.engine.x>ends.nose))throw Error('机身必须支撑发动机安装点');
  normalizeAircraftGeometry(d);
  return {name:d.name,birdman:d.birdman,
   fuselage:{length:d.fuselage.length,center:d.fuselage.center},cockpit:{position:d.cockpit.position,...(d.cockpit.rearLength===undefined?{}:{rearLength:d.cockpit.rearLength})},
-  mainWing:d.mainWing,horizontalTail:d.horizontalTail,verticalTail:d.verticalTail,
+  mainWing:d.mainWing,horizontalTail:d.horizontalTail,verticalTail:d.verticalTail,...(d.auxiliaryWings===undefined?{}:{auxiliaryWings:d.auxiliaryWings}),
   assembly:{mainWing:d.assembly.mainWing,mainWingHeight:d.assembly.mainWingHeight,horizontalTail:d.assembly.horizontalTail,verticalTail:d.assembly.verticalTail,mainIncidence:d.assembly.mainIncidence,tailIncidence:d.assembly.tailIncidence,...(d.assembly.tailOnFin===undefined?{}:{tailOnFin:d.assembly.tailOnFin})},
   pilot:{mass:d.pilot.mass},controls:{travel:d.controls.travel,lateralTravel:d.controls.lateralTravel},engine:d.engine,fuelTank:d.fuelTank};
 }

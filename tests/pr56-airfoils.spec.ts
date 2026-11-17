@@ -13,13 +13,13 @@ test('翼型独立选择、简洁设置、T尾安装角和鸟人风速上限通�
  await selector.selectOption('naca0012');
  await expect(page.locator('.airfoil-settings input,.airfoil-settings p,.airfoil-settings output')).toHaveCount(0);
  expect((await page.evaluate(()=>window.glider.aircraft)).mainWing.airfoil).toBe('naca0012');
- await page.getByRole('tab',{name:'副翼',exact:true}).click();
+ await page.getByRole('tab',{name:'水平辅助翼',exact:true}).click();
  await expect(selector).toHaveValue('dae11'); await selector.selectOption('naca0012');
- await page.getByRole('switch',{name:'副翼安装至垂尾顶端',exact:true}).click();
- await expect(page.getByText('副翼安装角',{exact:true}).first()).toBeVisible();
+ await page.getByRole('switch',{name:'水平辅助翼安装至垂尾顶端',exact:true}).click();
+ await expect(page.getByText('水平辅助翼安装角',{exact:true}).first()).toBeVisible();
  await page.screenshot({path:info.outputPath('airfoil-workshop.png')});
  await page.getByRole('heading',{name:'飞机工坊',exact:true}).click(); await page.keyboard.press('w');
- const tail=page.getByRole('spinbutton',{name:'副翼安装角数值',exact:true}); await tail.fill('12');
+ const tail=page.getByRole('spinbutton',{name:'水平辅助翼安装角数值',exact:true}); await tail.fill('12');
  await expect.poll(()=>page.evaluate(()=>window.glider.laboratory?.wind.tailIncidence)).toBe(12);
  await expect(page.getByRole('spinbutton',{name:'气流速度数值',exact:true})).toHaveAttribute('max','200');
  await page.getByRole('spinbutton',{name:'气流速度数值',exact:true}).fill('200');

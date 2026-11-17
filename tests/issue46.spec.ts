@@ -20,8 +20,8 @@ test('安装参数归属各部件，负上反角可编辑，菜单与场景选�
  await dihedral.fill('-12'); await dihedral.press('Tab');
  await expect.poll(() => page.evaluate(() => window.glider.aircraft.mainWing.dihedral)).toBe(-12);
  for (const [label, target, fields] of [
-  ['副翼', 'horizontalTail', ['副翼位置精确值', '副翼安装角精确值']],
-  ['垂直尾翼', 'verticalTail', ['垂直尾翼位置精确值']],
+  ['水平辅助翼', 'horizontalTail', ['水平辅助翼位置精确值', '水平辅助翼安装角精确值']],
+  ['垂直辅助翼', 'verticalTail', ['垂直辅助翼位置精确值']],
   ['机身', 'fuselage', ['机头端点精确值', '机尾端点精确值', '驾驶舱位置精确值']],
  ] as const) {
   await page.getByRole('tab', { name: label, exact: true }).click();
@@ -39,7 +39,7 @@ test('默认自由视角，切换部件不改视角，旋转等角视角同步�
  await cameras.getByRole('button', { name: '俯视', exact: true }).click();
  await expect(cameras.getByRole('button', { name: '俯视', exact: true })).toHaveAttribute('aria-pressed', 'true');
  await expect.poll(() => page.evaluate(() => window.glider.scene.orthographic)).toBe(true);
- await page.getByRole('tab', { name: '垂直尾翼', exact: true }).click();
+ await page.getByRole('tab', { name: '垂直辅助翼', exact: true }).click();
  await expect(cameras.getByRole('button', { name: '俯视', exact: true })).toHaveAttribute('aria-pressed', 'true');
  const bounds = await page.locator('.scene canvas').boundingBox();
  if (!bounds) throw Error('Scene canvas missing');
@@ -181,7 +181,7 @@ test('真实部件拾取显示悬停反馈并同步侧栏，拖动空白不误�
  await page.mouse.move(canvas.x + part.x, canvas.y + part.y);
  await expect.poll(() => page.evaluate(() => window.glider.scene.editor.hover)).toBe('horizontalTail');
  await page.mouse.click(canvas.x + part.x, canvas.y + part.y);
- await expect(page.getByRole('tab', { name: '副翼', exact: true })).toHaveAttribute('aria-selected', 'true');
+ await expect(page.getByRole('tab', { name: '水平辅助翼', exact: true })).toHaveAttribute('aria-selected', 'true');
  await expect.poll(() => page.evaluate(() => window.glider.scene.editor.target)).toBe('horizontalTail');
  await page.getByRole('tab', { name: '主翼', exact: true }).click();
  await expect.poll(() => page.evaluate(() => window.glider.scene.editor.target)).toBe('mainWing');

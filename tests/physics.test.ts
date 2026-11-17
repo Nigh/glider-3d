@@ -4,6 +4,7 @@ import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, cockpitGeometry, cockpitMass, defaultAircraft, DEG, fuelCapacityLimit, fuelTankPosition, fuselageEnds, mainWingSupport, PILOT_MASS, planform, presets, resizeFuselage, wing, wingOrigin, wingLocalPoint, type AircraftDefinition, type Controls } from '../src/model';
 import { AIR_DENSITY, coefficients, derive, FlightSimulation, fuelCgRange, LAUNCH, LAUNCH_ROLL_LIMIT, launchHeight, PLATFORM, runwayHeight, type AerodynamicSurface } from '../src/physics';
 import { AirframeExposure } from '../src/exposure';
+import { aircraftWings, wingInstancePoint, wingSupports } from '../src/model';
 
 const neutral: Controls = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const axisX = new Vector3(1, 0, 0), axisY = new Vector3(0, 1, 0);
@@ -694,5 +695,68 @@ describe('驾驶舱与尾翼几何的物理消费者', () => {
     expect(tailContacts.length).toBeGreaterThan(0); expect(tailContacts.every(point => point.y > 1.8)).toBe(true);
     expect(b.definition.horizontalTail.points[0].x).toBe(b.definition.verticalTail.points[1].x);
     expect(b.definition.horizontalTail.points[3].x).toBe(b.definition.verticalTail.points[2].x);
+  });
+});
+
+describe('多辅助翼真实物理',()=>{
+  function multipleWings() {
+    const d=definition();d.assembly.tailOnFin=false;
+    d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0.4};
+    d.auxiliaryWings=[
+      {kind:'horizontalTail' as const,wing:{...wing(1.6,0.6,0.4),dihedral:12},position:0.8,incidence:4},
+      {kind:'verticalTail' as const,wing:{...wing(1.2,0.6,0.4),mirrored:true,cant:-20,lateralOffset:0.7},position:-0.8,incidence:3},
+    ];
+    return d;
+  }
+  it('每个实例使用自身翼型、条带、参考几何、质量和完整惯量',()=>{
+    const d=multipleWings(),s=new FlightSimulation(d,'birdman',0);s.structure.reset();
+    for(const {id,key,wing:w} of aircraftWings(s.definition)){
+      const sections=s.structure.sections.filter(section=>section.wingInstance===id),surfaces=s.surfaces.filter(surface=>surface.wingInstance===id);
+      const expected=planform(w,key!=='verticalTail').area*(key==='verticalTail'&&w.mirrored?2:1);
+      expect(surfaces.reduce((sum,panel)=>sum+panel.area,0)).toBeCloseTo(expected,12);
+      expect(sections.length).toBe(surfaces.length);
+      for(const section of sections){
+        expect(section.referenceRoot.distanceTo(wingInstancePoint(s.definition,id,section.side,section.spanStart,0.25,0,new Vector3()))).toBeLessThan(1e-12);
+        expect(section.referenceTip.distanceTo(wingInstancePoint(s.definition,id,section.side,section.spanEnd,0.25,0,new Vector3()))).toBeLessThan(1e-12);
+        expect(section.mass).toBeGreaterThan(0);
+        expect(section.inertia.elements.every(Number.isFinite)).toBe(true);
+      }
+    }
+    const baseline=derive({...d,auxiliaryWings:[]}),extraMass=s.structure.sections.filter(section=>section.wingInstance>=3).reduce((sum,section)=>sum+section.mass,0);
+    const extraSupports=wingSupports(d).filter(support=>support.wingInstance>=3).reduce((sum,support)=>sum+support.mass,0);
+    const complete=derive(d);
+    expect(complete.mass-baseline.mass).toBeCloseTo(extraMass+extraSupports,10);
+    expect(complete.inertiaTensor.elements).not.toEqual(baseline.inertiaTensor.elements);
+    expect(complete.neutralPoint).not.toBe(baseline.neutralPoint);
+  });
+  it('镜像倍增翼面质量及气动面积，偏移支撑另计质量且保持横向对称',()=>{
+    const d=definition();d.assembly.tailOnFin=false;
+    const single=new FlightSimulation(d,'birdman',0),singleMass=derive(d).mass;
+    const finMass=single.structure.sections.filter(section=>section.wingInstance===2).reduce((sum,section)=>sum+section.mass,0);
+    d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0.5};
+    const mirrored=derive(d),supportMass=wingSupports(d).reduce((sum,support)=>sum+support.mass,0);
+    expect(mirrored.mass-singleMass).toBeCloseTo(finMass+supportMass,10);
+    expect(mirrored.aerodynamics.wings[2].area).toBeCloseTo(2*planform(d.verticalTail,false).area,12);
+    expect(mirrored.cg.z).toBeCloseTo(0,12);
+    expect(mirrored.inertiaTensor.elements[6]).toBeCloseTo(0,10);
+    expect(mirrored.inertiaTensor.elements[7]).toBeCloseTo(0,10);
+  });
+  it('额外实例参与真实气动力、异翼尾迹及厚度接触',()=>{
+    const s=new FlightSimulation(multipleWings(),'birdman',0);
+    s.launching=false;s.structure.reset();s.position.set(30,100,0);s.quaternion.identity();s.velocity.set(15,-1,2);s.omega.set(0,0,0);
+    s.step(neutral,1e-6);
+    const allContacts=contacts(s);
+    for(const id of [3,4]){
+      const surfaces=s.surfaces.filter(surface=>surface.wingInstance===id);
+      expect(surfaces.some(surface=>surface.force.length()>0)).toBe(true);
+      expect(surfaces.some(surface=>surface.inducedFlow.length()>0)).toBe(true);
+      const section=s.structure.sections.find(section=>section.wingInstance===id)!;
+      const samples=allContacts.filter(point=>Reflect.get(point,'sectionId')===section.id);
+      expect(samples.length).toBeGreaterThan(0);
+      const normals=samples.map(point=>Reflect.get(point,'normal') as number);
+      expect(Math.max(...normals)).toBeGreaterThan(0);expect(Math.min(...normals)).toBeLessThan(0);
+    }
+    expect(s.telemetry.aerodynamics.wings[1].area).toBeGreaterThan(planform(s.definition.horizontalTail).area);
+    expect(s.telemetry.aerodynamics.wings[2].area).toBeGreaterThan(2*planform(s.definition.verticalTail,false).area);
   });
 });

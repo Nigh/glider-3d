@@ -1,4 +1,4 @@
-import { BODY_GEOMETRY, cockpitGeometry, fuselageEnds, planform, type AircraftDefinition, type BodyEllipsoid } from './model';
+import { BODY_GEOMETRY, cockpitGeometry, finThickness, fuselageEnds, planform, wingInstanceWing, type AircraftDefinition, type BodyEllipsoid } from './model';
 import { airfoilY } from './airfoils';
 import type { AerodynamicSurface } from './physics';
 import type { Vector3 } from 'three';
@@ -40,7 +40,7 @@ function beam(d: AircraftDefinition): Volume {
   contains:(x,y,z)=>x>tail&&x<nose&&y*y+z*z<(.05+(x-tail)*slope)**2-1e-9};
 }
 const sectionY=(surface:AerodynamicSurface,u:number,face:number)=>surface.kind==='vertical'
- ? face*5*.105*(.2969*Math.sqrt(u)-.126*u-.3516*u*u+.2843*u**3-.1036*u**4)
+ ? face*finThickness(u)
  : airfoilY(surface.airfoil,u,face);
 
 /** Clip physical intersections, not the screen-space silhouettes of separate wings.
@@ -61,7 +61,7 @@ export class AirframeExposure {
    !this.volumes.slice(bodyCount).some(other=>other!==volume&&other.contains(p.x,p.y,p.z))));
   this.bodies=this.volumes.map(volume=>volume.patches.filter(p=>!this.volumes.some(other=>other!==volume&&other.contains(p.x,p.y,p.z))));
   this.strips=surfaces.map(surface=>{
-   const w=d[surface.kind==='main'?'mainWing':surface.kind==='tail'?'horizontalTail':'verticalTail'], p=planform(w,surface.kind!=='vertical');
+   const w=wingInstanceWing(d,surface.wingInstance), p=planform(w,surface.kind!=='vertical');
    const half=Math.abs(w.points[1].y), root=p.root+(p.tip-p.root)*surface.spanStart/half, tip=p.root+(p.tip-p.root)*surface.spanEnd/half;
    const center=surface.spanStart+(surface.spanEnd-surface.spanStart)*(root+2*tip)/(3*(root+tip));
    const slope=(p.tip-p.root)/half, quarterSlope=(w.points[1].x-w.points[0].x+(p.tip-p.root)/4)/half;

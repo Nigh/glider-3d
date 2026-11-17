@@ -39,7 +39,7 @@ test('起飞前保留油门与配平设置，自动配平禁止鼠标与键盘�
 
 test('精确尾翼端点编辑保持其他端点位置且支持向下垂尾', async ({ page }) => {
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
- await page.getByRole('tab', { name: '垂直尾翼', exact: true }).click();
+ await page.getByRole('tab', { name: '垂直辅助翼', exact: true }).click();
  await page.getByText('精确编辑四个顶点', { exact: true }).click();
  const before = await page.evaluate(() => window.glider.aircraft.verticalTail.points);
  const root = page.getByRole('spinbutton', { name: '顶点1后向坐标', exact: true });
@@ -57,9 +57,11 @@ test('精确尾翼端点编辑保持其他端点位置且支持向下垂尾', as
 
 test('副翼开关控制安装位置，吸附手柄固定在垂尾顶端并支持撤销重做', async ({ page }) => {
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
- await page.getByRole('tab', { name: '副翼', exact: true }).click();
+ await page.getByRole('tab', { name: '水平辅助翼', exact: true }).click();
+ const incidence = page.getByRole('spinbutton', { name: '水平辅助翼安装角精确值', exact: true });
+ await incidence.fill('0'); await incidence.press('Tab');
  await page.locator('.viewport-tools').getByRole('button', { name: '侧视', exact: true }).click();
- const toggle = page.getByRole('switch', { name: '副翼安装至垂尾顶端', exact: true });
+ const toggle = page.getByRole('switch', { name: '水平辅助翼安装至垂尾顶端', exact: true });
  await expect(toggle).toHaveAttribute('aria-checked', 'false');
  await toggle.click();
  await expect(toggle).toHaveAttribute('aria-checked', 'true');
@@ -68,7 +70,7 @@ test('副翼开关控制安装位置，吸附手柄固定在垂尾顶端并支�
   const mount = (window.glider.scene.editor.handles as { handle: number; x: number; y: number; ax: number; ay: number }[]).find(h => h.handle === 6)!;
   return Math.hypot(mount.x - mount.ax, mount.y - mount.ay);
  })).toBe(0);
- await expect(page.getByRole('spinbutton', { name: '副翼位置精确值', exact: true })).toBeDisabled();
+ await expect(page.getByRole('spinbutton', { name: '水平辅助翼位置精确值', exact: true })).toBeDisabled();
  await page.getByRole('button', { name: '撤销', exact: true }).click();
  await expect(toggle).toHaveAttribute('aria-checked', 'false');
  await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(0, 6);
@@ -77,14 +79,16 @@ test('副翼开关控制安装位置，吸附手柄固定在垂尾顶端并支�
  await toggle.click();
  await expect(toggle).toHaveAttribute('aria-checked', 'false');
  await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(0, 6);
- await expect(page.getByRole('spinbutton', { name: '副翼位置精确值', exact: true })).toBeEnabled();
+ await expect(page.getByRole('spinbutton', { name: '水平辅助翼位置精确值', exact: true })).toBeEnabled();
 });
 
 test('真实拖动在垂尾顶端外侧二十厘米仍吸附至准确顶端', async ({ page }) => {
  await page.getByRole('button', { name: '鸟人间挑战' }).click();
- await page.getByRole('tab', { name: '副翼', exact: true }).click();
+ await page.getByRole('tab', { name: '水平辅助翼', exact: true }).click();
+ const incidence = page.getByRole('spinbutton', { name: '水平辅助翼安装角精确值', exact: true });
+ await incidence.fill('0'); await incidence.press('Tab');
  await page.locator('.viewport-tools').getByRole('button', { name: '侧视', exact: true }).click();
- const toggle = page.getByRole('switch', { name: '副翼安装至垂尾顶端', exact: true });
+ const toggle = page.getByRole('switch', { name: '水平辅助翼安装至垂尾顶端', exact: true });
  await toggle.click();
  await expect.poll(() => page.evaluate(() => window.glider.scene.wingRoots.horizontalTail.leading.y)).toBeCloseTo(1.5, 6);
  const mounted = await page.evaluate(() => (window.glider.scene.editor.handles as { handle: number; x: number; y: number; ax: number; ay: number }[]).find(h => h.handle === 6)!);
