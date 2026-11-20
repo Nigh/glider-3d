@@ -470,26 +470,31 @@ export function wingControlAxis<T extends GeometryPoint>(d:AircraftDefinition,id
 
 type GeometryBox = { center:Vector3; axes:Vector3[]; half:number[] };
 type GeometrySweepPoint = { base:Vector3; cosine:Vector3; sine:Vector3 };
-type GeometryWingCell = { id:number; side:number; box:GeometryBox; skin:Vector3[]; sweep:GeometrySweepPoint[]; axes:Vector3[]; limit:number };
+type GeometryWingCell = { id:number; side:number; box:GeometryBox; skin:Vector3[]; sweep:GeometrySweepPoint[]; axes:Vector3[]; travel:GeometryTravel };
+type GeometryTravel = { cos:number; sin:number; tan:number };
+
+function extendSweepRange(point:GeometrySweepPoint,axis:Vector3,travel:GeometryTravel,range:number[],index:number):void {
+ const offset=point.base.dot(axis),cosine=point.cosine.dot(axis),sine=point.sine.dot(axis);
+ const center=offset+cosine*travel.cos,edge=Math.abs(sine)*travel.sin;
+ range[index]=Math.min(range[index],center-edge);
+ range[index+1]=Math.max(range[index+1],center+edge);
+ if(Math.abs(sine)<=Math.abs(cosine)*travel.tan){
+  if(cosine>0)range[index+1]=Math.max(range[index+1],offset+Math.hypot(cosine,sine));
+  if(cosine<0)range[index]=Math.min(range[index],offset-Math.hypot(cosine,sine));
+ }
+}
 
 // A separating plane proves that the full swept vertex trajectories cannot meet.
 // The extrema are analytic, so this does not sample or skip actuator angles.
 function geometrySweepSeparated(a:GeometryWingCell,b:GeometryWingCell,movingB:boolean):boolean {
  const range=(cell:GeometryWingCell,axis:Vector3,moving:boolean):[number,number]=>{
-  let min=Infinity,max=-Infinity;
+  const bounds:[number,number]=[Infinity,-Infinity];
   if(!moving){
-   for(const p of cell.skin){const value=p.dot(axis);min=Math.min(min,value);max=Math.max(max,value);}
+   for(const p of cell.skin){const value=p.dot(axis);bounds[0]=Math.min(bounds[0],value);bounds[1]=Math.max(bounds[1],value);}
   }else {
-   const c=Math.cos(cell.limit),s=Math.sin(cell.limit),t=Math.tan(cell.limit);
-   for(const p of cell.sweep){
-    const offset=p.base.dot(axis),cosine=p.cosine.dot(axis),sine=p.sine.dot(axis);
-    const center=offset+cosine*c,edge=Math.abs(sine)*s;
-    min=Math.min(min,center-edge);max=Math.max(max,center+edge);
-    if(cosine>0&&Math.abs(sine)<=cosine*t)max=Math.max(max,offset+Math.hypot(cosine,sine));
-    if(cosine<0&&Math.abs(sine)<=-cosine*t)min=Math.min(min,offset-Math.hypot(cosine,sine));
-   }
+   for(const p of cell.sweep)extendSweepRange(p,axis,cell.travel,bounds,0);
   }
-  return [min,max];
+  return bounds;
  };
  for(const axis of [...a.axes,...b.axes]){
   const [amin,amax]=range(a,axis,true),[bmin,bmax]=range(b,axis,movingB);
@@ -546,8 +551,9 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
   const axis=wingControlAxis(d,id,side,new Vector3()),chord=wingInstanceDirection(d,id,side,1,0,0,new Vector3());
   chord.addScaledVector(axis,-chord.dot(axis)).normalize();
   const axes=[chord,new Vector3().crossVectors(axis,chord).normalize(),axis],limit=vertical?WING_CONTROL_LIMIT.vertical:WING_CONTROL_LIMIT.horizontal;
+  const travel={cos:Math.cos(limit),sin:Math.sin(limit),tan:Math.tan(limit)};
   const skin:Vector3[]=[],moving:GeometrySweepPoint[]=[], profileNormals:Vector3[]=[];
-    const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+    const bounds=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];
     // Bound every render/contact vertex. Rotated triangle interiors are convex
     // combinations of these vertices, so angular extrema cover the whole mesh.
     const rows=Math.max(1,Math.ceil((end-start)/0.2));
@@ -577,20 +583,21 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
       if(w.controlSurface===0||u<hinge-1e-9)continue;
       const relative=point.clone().sub(pivot),parallel=axis.clone().multiplyScalar(relative.dot(axis));
       const cosine=relative.clone().sub(parallel),sine=new Vector3().crossVectors(axis,relative),base=pivot.clone().add(parallel);
-      for(let i=0;i<3;i++){
-       const a=cosine.dot(axes[i]),b=sine.dot(axes[i]),offset=base.dot(axes[i]);
-       const angles=[-limit,limit,0],extreme=Math.atan2(b,a);
-       for(const angle of [extreme,extreme-Math.PI,extreme+Math.PI])if(angle>=-limit&&angle<=limit)angles.push(angle);
-       for(const angle of angles){const value=offset+a*Math.cos(angle)+b*Math.sin(angle);min[i]=Math.min(min[i],value);max[i]=Math.max(max[i],value);}
-      }
-      moving.push({base,cosine,sine});
+      const swept={base,cosine,sine};
+      for(let i=0;i<3;i++)extendSweepRange(swept,axes[i],travel,bounds,i*2);
+      moving.push(swept);
      }
     }
     const padding=1e-6,solid=geometryBox(skin,axes);
     for(let i=0;i<3;i++)solid.half[i]+=padding;
-    solids.push({id,side,box:solid,skin,sweep:moving,axes:profileNormals,limit});
-    const center=new Vector3();for(let i=0;i<3;i++)center.addScaledVector(axes[i],(min[i]+max[i])/2);
-    sweeps.push(moving.length?{center,axes,half:min.map((value,i)=>(max[i]-value)/2+padding)}:solid);
+    solids.push({id,side,box:solid,skin,sweep:moving,axes:profileNormals,travel});
+    const center=new Vector3();
+    const halfExtents=axes.map((direction,i)=>{
+     const min=bounds[2*i],max=bounds[2*i+1];
+     center.addScaledVector(direction,(min+max)/2);
+     return (max-min)/2+padding;
+    });
+    sweeps.push(moving.length?{center,axes,half:halfExtents}:solid);
     regions.push({wingInstance:id,side,spanStart:start,spanEnd:end,movable:w.controlSurface>0});
  };
  for(const {id,key,wing:w} of aircraftWings(d)){
