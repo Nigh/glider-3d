@@ -1,14 +1,15 @@
-import { Matrix3, Quaternion, Vector3 } from 'three';
+import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, wingInstanceAirfoil, wingInstancePoint, wingInstanceWing, planform, type AircraftDefinition, type WingKey } from './model';
 import { airfoilDepthScale, airfoilSkinScale } from './airfoils';
 import { beamSection, materialCatalog } from './materials';
+import type { CompiledAttachmentSpan } from './compiled-geometry-cache';
 
 /** Small-rotation model limit, not a material failure angle. */
 export const MAX_ELASTIC_ROTATION = 0.25;
 
 export interface StructuralSurface {
   point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3; moment: Vector3;
-  chordDirection: Vector3; crossflowDirection: Vector3;
+  chordDirection: Vector3; crossflowDirection: Vector3; controlPoint: Vector3;
   kind: 'main' | 'tail' | 'vertical'; side: number; spanStart: number; spanEnd: number;
   wingInstance: number;
   area: number; chord: number; incidence: number; bodyId: number;
@@ -30,7 +31,11 @@ export interface StructureSection {
   /** 基准在首次脱离后保留当时弯曲形状；自由断片没有虚构的机身夹持端。 */
   baseRoot: Vector3; baseTip: Vector3; baseRootRotation: Quaternion; baseTipRotation: Quaternion;
   referencePoint: Vector3; referenceNormal: Vector3; referenceSpan: Vector3;
-  referenceChord: Vector3; referenceCrossflow: Vector3;
+  referenceChord: Vector3; referenceCrossflow: Vector3; referenceControlPoint: Vector3;
+  attachmentBodyStart: number; attachmentBodyEnd: number;
+  attachmentJointStart: number; attachmentJointEnd: number; attachmentAnchorId: number;
+  /** A severed installation keeps its release frame in its own rigid body's coordinates. */
+  attachmentFrozen: boolean; attachmentReference: Vector3; attachmentPosition: Vector3; attachmentRotation: Quaternion;
   chordAxis: Vector3; normalAxis: Vector3; beamAxis: Vector3;
   bendingStiffness: number; lateralStiffness: number; torsionalStiffness: number;
   normalStrength: number; shearStrength: number; elasticLimit: number;
@@ -43,7 +48,13 @@ export interface StructuralBody {
 }
 /** Body-coordinate external force and its moment about the aircraft design origin. */
 export interface SectionContactLoad { force: Vector3; moment: Vector3 }
-interface SectionGeometry { root: Vector3; tip: Vector3; rootRotation: Quaternion; tipRotation: Quaternion }
+export interface SectionGeometry { root: Vector3; tip: Vector3; rootRotation: Quaternion; tipRotation: Quaternion }
+const deformationPointMatrix = new Matrix4(), deformationUnitScale = new Vector3(1, 1, 1);
+function attachmentWeight(span: number, start: number, end: number): number {
+  if (start < 0) return 0;
+  const distance = Math.max(start - span, span - end, 0), weight = Math.max(0, 1 - distance / 0.8);
+  return weight * weight * (3 - 2 * weight);
+}
 export interface WingFragment extends StructuralBody {
   landed: boolean; force: Vector3; torque: Vector3; drag: Vector3; aeroPower: number;
   midpointVelocity: Vector3; midpointOmega: Vector3; midpointPosition: Vector3; midpointQuaternion: Quaternion;
@@ -108,6 +119,16 @@ export class WingStructure {
   private readonly frozenBudget: Float64Array;
   private readonly elasticBudget: Float64Array;
   private readonly budgetRotation = new Quaternion();
+  private readonly shapeRotation = new Quaternion();
+  private readonly shapeReference = new Vector3();
+  private readonly shapeRootTangent = new Vector3();
+  private readonly shapeTipTangent = new Vector3();
+  private readonly shapeCenter = new Vector3();
+  private readonly shapeTranslation = new Vector3();
+  private readonly shapeAnchorReference = new Vector3();
+  private readonly shapeAnchorPosition = new Vector3();
+  private readonly shapeAnchorRotation = new Quaternion();
+  private readonly shapeAnchorCenter = new Vector3();
 
   constructor(readonly definition: AircraftDefinition, surfaces: StructuralSurface[]) {
     this.sections = surfaces.map((surface, id) => {
@@ -144,7 +165,9 @@ export class WingStructure {
         moment: new Vector3(), load: new Vector3(), surface, controlDeflection: 0,
         baseRoot: referenceRoot.clone(), baseTip: referenceTip.clone(), baseRootRotation: new Quaternion(), baseTipRotation: new Quaternion(),
         referencePoint: surface.point.clone(), referenceNormal: surface.normal.clone(), referenceSpan: surface.spanDirection.clone(),
-        referenceChord: surface.chordDirection.clone(), referenceCrossflow: surface.crossflowDirection.clone(),
+        referenceChord: surface.chordDirection.clone(), referenceCrossflow: surface.crossflowDirection.clone(), referenceControlPoint: surface.controlPoint.clone(),
+        attachmentBodyStart: -1, attachmentBodyEnd: -1, attachmentJointStart: -1, attachmentJointEnd: -1, attachmentAnchorId: -1,
+        attachmentFrozen: false, attachmentReference: new Vector3(), attachmentPosition: new Vector3(), attachmentRotation: new Quaternion(),
         chordAxis, normalAxis, beamAxis,
         bendingStiffness: material.youngModulus * section.secondMoment,
         lateralStiffness: material.youngModulus * section.lateralSecondMoment,
@@ -172,6 +195,67 @@ export class WingStructure {
     this.geometryScale = new Float64Array(this.sections.length);
     this.frozenBudget = new Float64Array(this.sections.length);
     this.elasticBudget = new Float64Array(this.sections.length);
+  }
+
+  setAttachmentSpans(spans: readonly CompiledAttachmentSpan[]) {
+    for (const s of this.sections) if (s.bodyId === 0) {
+      s.attachmentBodyStart = s.attachmentBodyEnd = s.attachmentJointStart = s.attachmentJointEnd = s.attachmentAnchorId = -1;
+    }
+    for (const span of spans) {
+      const anchor = span.anchorWingInstance < 0 ? undefined : this.sections.find(section => section.wingInstance === span.anchorWingInstance
+        && section.side === span.anchorSide && Math.abs(section.spanEnd - span.anchorSpan) < 1e-7);
+      for (const s of this.sections) {
+        if (s.bodyId !== 0 || s.wingInstance !== span.wingInstance || s.side !== span.side) continue;
+        if (span.anchorWingInstance < 0) {
+          s.attachmentBodyStart = s.attachmentBodyStart < 0 ? span.spanStart : Math.min(s.attachmentBodyStart, span.spanStart);
+          s.attachmentBodyEnd = Math.max(s.attachmentBodyEnd, span.spanEnd);
+        } else {
+          s.attachmentAnchorId = anchor!.id;
+          s.attachmentJointStart = s.attachmentJointStart < 0 ? span.spanStart : Math.min(s.attachmentJointStart, span.spanStart);
+          s.attachmentJointEnd = Math.max(s.attachmentJointEnd, span.spanEnd);
+        }
+      }
+    }
+  }
+
+  /** -2 is a blended/free row; other IDs identify one exact common rigid map. */
+  attachmentAnchor(s: StructureSection, span: number): number {
+    if (attachmentWeight(span, s.attachmentBodyStart, s.attachmentBodyEnd) === 1) return -1;
+    return attachmentWeight(span, s.attachmentJointStart, s.attachmentJointEnd) === 1 ? s.attachmentAnchorId : -2;
+  }
+
+  attachmentFreeWeight(s: StructureSection, spanStart: number, spanEnd: number): number {
+    spanStart = Math.max(s.spanStart, Math.min(s.spanEnd, spanStart));
+    spanEnd = Math.max(s.spanStart, Math.min(s.spanEnd, spanEnd));
+    return 1 - Math.min(attachmentWeight(spanStart, s.attachmentBodyStart, s.attachmentBodyEnd),
+      attachmentWeight(spanEnd, s.attachmentBodyStart, s.attachmentBodyEnd));
+  }
+
+  private setAttachmentAnchorFrame(s: StructureSection, geometry?: readonly SectionGeometry[]) {
+    if (s.attachmentFrozen) {
+      this.shapeAnchorReference.copy(s.attachmentReference); this.shapeAnchorPosition.copy(s.attachmentPosition);
+      this.shapeAnchorRotation.copy(s.attachmentRotation); return;
+    }
+    const anchor = this.sections[s.attachmentAnchorId], frame = geometry?.[anchor.id];
+    this.shapeAnchorReference.copy(anchor.referenceTip);
+    this.shapeAnchorPosition.copy(frame?.tip ?? anchor.tip.position);
+    this.shapeAnchorRotation.copy(frame?.tipRotation ?? anchor.tip.quaternion);
+    // A short connector whose two fixed regions meet has no free skin between
+    // them. Its tip installation shares the body's frame rather than fighting it.
+    const bodyWeight = anchor.attachmentBodyStart >= 0 && anchor.attachmentJointStart <= anchor.attachmentBodyEnd
+      && anchor.attachmentJointStart >= 0 ? 1 : attachmentWeight(anchor.spanEnd, anchor.attachmentBodyStart, anchor.attachmentBodyEnd);
+    this.shapeAnchorPosition.lerp(this.shapeAnchorReference, bodyWeight); this.shapeAnchorRotation.slerp(this.identity, bodyWeight);
+  }
+
+  attachmentMotionBound(s: StructureSection, radius: number, bound: number, translation: Vector3): number {
+    if (s.attachmentBodyStart >= 0 && s.spanEnd >= s.attachmentBodyStart - 0.8 && s.spanStart <= s.attachmentBodyEnd + 0.8)
+      bound = Math.max(bound, translation.length());
+    if (s.attachmentAnchorId < 0 || s.spanEnd < s.attachmentJointStart - 0.8 || s.spanStart > s.attachmentJointEnd + 0.8) return bound;
+    this.setAttachmentAnchorFrame(s);
+    const q = this.shapeAnchorRotation, angle = 2 * Math.atan2(Math.hypot(q.x, q.y, q.z), Math.abs(q.w));
+    const centerRadius = Math.max(s.referenceRoot.distanceTo(this.shapeAnchorReference), s.referenceTip.distanceTo(this.shapeAnchorReference));
+    this.shapeAnchorCenter.copy(this.shapeAnchorPosition).sub(this.shapeAnchorReference).sub(translation);
+    return Math.max(bound, this.shapeAnchorCenter.length() + (centerRadius + radius) * angle);
   }
 
   syncFinGeometry() {
@@ -218,12 +302,14 @@ export class WingStructure {
     for (const s of this.sections) {
       s.bodyId = s.surface.bodyId = 0; s.stress = s.stressRatio = s.yieldRatio = s.controlDeflection = 0;
       s.fractureDamage = s.fractureDamageBase = s.fractureDamagePeak = s.fractureDamageTick = 0;
+      s.attachmentFrozen = false; s.attachmentReference.set(0, 0, 0); s.attachmentPosition.set(0, 0, 0); s.attachmentRotation.identity();
       s.moment.set(0, 0, 0); s.load.set(0, 0, 0);
       s.root.position.copy(s.referenceRoot); s.tip.position.copy(s.referenceTip);
       s.baseRoot.copy(s.referenceRoot); s.baseTip.copy(s.referenceTip);
       s.root.quaternion.identity(); s.tip.quaternion.identity(); s.baseRootRotation.identity(); s.baseTipRotation.identity();
       s.surface.point.copy(s.referencePoint); s.surface.normal.copy(s.referenceNormal); s.surface.spanDirection.copy(s.referenceSpan);
       s.surface.chordDirection.copy(s.referenceChord); s.surface.crossflowDirection.copy(s.referenceCrossflow);
+      s.surface.controlPoint.copy(s.referenceControlPoint);
     }
   }
 
@@ -402,14 +488,57 @@ export class WingStructure {
   }
 
   private syncSurface(s: StructureSection) {
-    this.rotation.copy(s.root.quaternion).slerp(s.tip.quaternion, 0.5);
-    this.arm.copy(s.referenceRoot).lerp(s.referenceTip, 0.5);
-    s.surface.point.copy(s.referencePoint).sub(this.arm).applyQuaternion(this.rotation);
-    s.surface.point.addScaledVector(s.root.position, 0.5).addScaledVector(s.tip.position, 0.5);
-    s.surface.normal.copy(s.referenceNormal).applyQuaternion(this.rotation);
-    s.surface.spanDirection.copy(s.referenceSpan).applyQuaternion(this.rotation);
-    s.surface.chordDirection.copy(s.referenceChord).applyQuaternion(this.rotation);
-    s.surface.crossflowDirection.copy(s.referenceCrossflow).applyQuaternion(this.rotation);
+    const root = s.referenceRoot, tip = s.referenceTip, axis = s.referenceSpan;
+    const length = (tip.x - root.x) * axis.x + (tip.y - root.y) * axis.y + (tip.z - root.z) * axis.z;
+    const point = s.referencePoint, offset = (point.x - root.x) * axis.x + (point.y - root.y) * axis.y + (point.z - root.z) * axis.z;
+    this.deformFrame(s, Math.max(0, Math.min(1, offset / length)), deformationPointMatrix);
+    s.surface.point.copy(point).applyMatrix4(deformationPointMatrix);
+    s.surface.normal.copy(s.referenceNormal).applyQuaternion(this.shapeRotation);
+    s.surface.spanDirection.copy(s.referenceSpan).applyQuaternion(this.shapeRotation);
+    s.surface.chordDirection.copy(s.referenceChord).applyQuaternion(this.shapeRotation);
+    s.surface.crossflowDirection.copy(s.referenceCrossflow).applyQuaternion(this.shapeRotation);
+    const control = s.referenceControlPoint, controlOffset = (control.x - root.x) * axis.x + (control.y - root.y) * axis.y + (control.z - root.z) * axis.z;
+    this.deformPoint(s, s.surface.controlPoint.copy(control), Math.max(0, Math.min(1, controlOffset / length)));
+  }
+
+  /** Shared skin map for physics, aerodynamics and interpolated rendering. */
+  deformFrame(s: StructureSection, t: number, out: Matrix4, geometry?: readonly SectionGeometry[]): void {
+    const frame = geometry?.[s.id], root = frame?.root ?? s.root.position, tip = frame?.tip ?? s.tip.position;
+    const rootRotation = frame?.rootRotation ?? s.root.quaternion, tipRotation = frame?.tipRotation ?? s.tip.quaternion;
+    this.shapeRotation.slerpQuaternions(rootRotation, tipRotation, t);
+    this.shapeReference.lerpVectors(s.referenceRoot, s.referenceTip, t);
+    this.shapeRootTangent.subVectors(s.referenceTip, s.referenceRoot).applyQuaternion(rootRotation);
+    this.shapeTipTangent.subVectors(s.referenceTip, s.referenceRoot).applyQuaternion(tipRotation);
+    const t2 = t * t, t3 = t2 * t;
+    this.shapeCenter.copy(root).multiplyScalar(2 * t3 - 3 * t2 + 1).addScaledVector(tip, -2 * t3 + 3 * t2)
+      .addScaledVector(this.shapeRootTangent, t3 - 2 * t2 + t).addScaledVector(this.shapeTipTangent, t3 - t2);
+    const span = s.spanStart + (s.spanEnd - s.spanStart) * t;
+    const bodyWeight = attachmentWeight(span, s.attachmentBodyStart, s.attachmentBodyEnd);
+    this.shapeRotation.slerp(this.identity, bodyWeight); this.shapeCenter.lerp(this.shapeReference, bodyWeight);
+    const jointWeight = attachmentWeight(span, s.attachmentJointStart, s.attachmentJointEnd);
+    const denominator = 1 - bodyWeight * jointWeight;
+    const jointBlend = denominator > 0 ? jointWeight * (1 - bodyWeight) / denominator : 0;
+    if (jointBlend > 0) {
+      this.setAttachmentAnchorFrame(s, geometry);
+      this.shapeAnchorCenter.copy(this.shapeReference).sub(this.shapeAnchorReference).applyQuaternion(this.shapeAnchorRotation).add(this.shapeAnchorPosition);
+      this.shapeRotation.slerp(this.shapeAnchorRotation, jointBlend); this.shapeCenter.lerp(this.shapeAnchorCenter, jointBlend);
+    }
+    this.shapeTranslation.copy(this.shapeReference).applyQuaternion(this.shapeRotation).negate().add(this.shapeCenter);
+    out.compose(this.shapeTranslation, this.shapeRotation, deformationUnitScale);
+  }
+
+  deformPoint(s: StructureSection, point: Vector3, t: number, geometry?: readonly SectionGeometry[]) {
+    this.deformFrame(s, t, deformationPointMatrix, geometry); point.applyMatrix4(deformationPointMatrix);
+  }
+
+  contactGeometryChanged(wingKey: WingKey, side: number, wingInstance: number): boolean {
+    for (const s of this.sections) {
+      if (s.bodyId !== 0 || !this.branchContains(s, wingKey, side, wingInstance)) continue;
+      const before = this.geometryBefore[s.id];
+      if (!s.root.position.equals(before.root) || !s.tip.position.equals(before.tip)
+        || !s.root.quaternion.equals(before.rootRotation) || !s.tip.quaternion.equals(before.tipRotation)) return true;
+    }
+    return false;
   }
 
   /** Restrict a massless elastic shape change at a solid boundary, retaining
@@ -423,7 +552,9 @@ export class WingStructure {
       s.tip.quaternion.copy(a.tipRotation).slerp(b.tipRotation, fraction);
       this.syncSurface(s);
     }
-    this.alignTailRoots(0);
+    // Endpoints are already coherent support-subtree snapshots. Re-mounting a
+    // rejected proposal must not change its previously certified zero endpoint.
+    if (fraction > 0 && fraction < 1) this.alignTailRoots(0);
   }
 
   branchContains(s: StructureSection, wingKey: WingKey, side: number, wingInstance?: number) {
@@ -486,6 +617,12 @@ export class WingStructure {
       s.baseRootRotation.copy(s.root.quaternion); s.baseTipRotation.copy(s.tip.quaternion);
     } else retained.push(s);
     this.owned[previous] = retained; this.owned[id] = detached;
+    for (const s of this.sections) {
+      if (s.attachmentAnchorId < 0 || s.attachmentFrozen || this.sections[s.attachmentAnchorId].bodyId === s.bodyId) continue;
+      this.setAttachmentAnchorFrame(s);
+      s.attachmentReference.copy(this.shapeAnchorReference); s.attachmentPosition.copy(this.shapeAnchorPosition);
+      s.attachmentRotation.copy(this.shapeAnchorRotation); s.attachmentFrozen = true;
+    }
     boundary.fractureDamage = boundary.fractureDamageBase = boundary.fractureDamagePeak = 0;
     this.fractureCount++;
   }

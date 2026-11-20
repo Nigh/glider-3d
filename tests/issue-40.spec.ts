@@ -30,7 +30,10 @@ test('test space configures the balloon platform before launch and keeps results
  await page.getByLabel('启用弹射', { exact: true }).uncheck();
  await expect(page.getByLabel('弹射末端速度数值', { exact: true })).toBeDisabled();
  const throttle = page.getByLabel('油门', { exact: true });
- await clickRangeEdge(throttle, 'min');
+ await expect(throttle).toBeVisible();
+ const throttleBox = await throttle.boundingBox(); if (!throttleBox) throw Error('Throttle is not visible');
+ await throttle.click({ position: { x: throttleBox.width / 2, y: throttleBox.height - 1 } });
+ await expect(throttle).toHaveValue('0');
  await page.screenshot({ path: info.outputPath('test-space-platform.png') });
  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
  await expect(height).toBeDisabled();
@@ -64,6 +67,11 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.getByRole('button', { name: '机库', exact: true }).click();
  await page.locator('[data-aircraft-id="system:基础双发型"]').getByRole('button', { name: '加载', exact: true }).click();
  await page.getByRole('button', { name: /前往风洞/ }).click();
+ await expect.poll(() => page.evaluate(() => {
+  // App owns these read-only browser diagnostics.
+  const app = window as Window & { readonly glider: { laboratory: { mode: string } | null } };
+  return app.glider.laboratory?.mode;
+ }), { timeout: 90000 }).toBe('wind-tunnel');
  await expect(page.getByRole('switch', { name: '气动图层', exact: true })).toHaveAttribute('aria-checked', 'true');
  await expect(page.getByRole('complementary', { name: '实时气动数据', exact: true })).toBeVisible();
  await expect(page.locator('.advanced-hud')).toHaveAttribute('open', '');

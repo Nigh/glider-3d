@@ -376,7 +376,7 @@ function checkCollisionFrame(sim: FlightSimulation, initialLedger: number, previ
     const owner = point.sectionId === undefined ? 0 : sim.structure.sections[point.sectionId].bodyId;
     const body = owner === 0 ? sim : sim.fragments.find(fragment => fragment.id === owner)!;
     const world = point.clone().sub(body.cg).applyQuaternion(body.quaternion).add(body.position);
-    expect(world.y - challenges.challengeTerrainHeight('low-altitude', world.x, world.z)).toBeGreaterThanOrEqual(-2e-6);
+    expect(world.y - challenges.challengeTerrainHeight('low-altitude', world.x, world.z)).toBeGreaterThanOrEqual(-1e-4);
   }
 }
 

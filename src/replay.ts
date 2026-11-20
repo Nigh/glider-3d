@@ -53,7 +53,7 @@ export async function exportReplay(replay: Replay): Promise<string> {
   let binary = '';
   for (let i = 0; i < encoded.length; i += 32768) binary += String.fromCharCode(...encoded.subarray(i, i + 32768));
   const ghostData=snapshot.recording.ghostFrames?await encodeGhostFrames(snapshot.recording.ghostFrames):undefined;
-  const data = { format: 'aero-formula-replay', version: 1, physicsVersion: PHYSICS_VERSION, challenge: snapshot.challenge, definition: snapshot.definition, recording: { length: snapshot.recording.length, launchRoll: snapshot.recording.launchRoll, frames: Array.from(snapshot.recording.frames), wingLoads: snapshot.recording.wingLoads ? Array.from(snapshot.recording.wingLoads) : undefined, keyframeEncoding: 'gzip-base64', keyframeData: btoa(binary), ghostEncoding:ghostData?'gzip-f64-v1':undefined,ghostData,checkpointTimes:snapshot.recording.checkpointTimes } };
+  const data = { format: 'aero-formula-replay', version: 1, physicsVersion: PHYSICS_VERSION, challenge: snapshot.challenge, definition: snapshot.definition, recording: { length: snapshot.recording.length, launchRoll: snapshot.recording.launchRoll, frames: Array.from(snapshot.recording.frames), wingLoads: snapshot.recording.wingLoads ? Array.from(snapshot.recording.wingLoads) : undefined, keyframeEncoding: 'gzip-base64', keyframeData: btoa(binary), ghostEncoding:ghostData?'gzip-f64-v2':undefined,ghostData,checkpointTimes:snapshot.recording.checkpointTimes } };
   const text = JSON.stringify({ ...data, mapHash: await mapHash(snapshot.challenge) });
   if (new TextEncoder().encode(text).length > MAX_REPLAY_BYTES) throw Error('回放文件超过 16 MB');
   return text;
@@ -122,7 +122,7 @@ async function decodeKeyframes(recording: Record<string, unknown>) {
   }
 }
 
-export async function importReplay(text: string, purpose: 'replay' | 'ghost' = 'replay', onGhostFrames?: (replay: Replay, frames: GhostFrame[]) => void): Promise<Replay> {
+export async function importReplay(text: string, purpose: 'replay' | 'ghost' = 'replay', onGhostFrames?: (replay: Replay, frames: GhostFrame[]) => void, prepareGeometry?: (definition: AircraftDefinition) => Promise<unknown>): Promise<Replay> {
   if (new TextEncoder().encode(text).length > MAX_REPLAY_BYTES) throw Error('回放文件超过 16 MB');
   let data: unknown;
   try { data = JSON.parse(text); } catch { throw Error('回放文件格式无效'); }
@@ -136,9 +136,10 @@ export async function importReplay(text: string, purpose: 'replay' | 'ghost' = '
   if (recording.wingLoads !== undefined && (!Array.isArray(recording.wingLoads) || !recording.wingLoads.every(value => typeof value === 'number'))) throw Error('飞行记录包含无效负载');
   if (typeof recording.length !== 'number' || typeof recording.launchRoll !== 'number') throw Error('飞行记录长度无效');
   const visual=recording.ghostData!==undefined;
-  if(visual?recording.ghostEncoding!=='gzip-f64-v1':recording.ghostEncoding!==undefined)throw Error('Ghost 回放状态无效');
+  if(visual?recording.ghostEncoding!=='gzip-f64-v2':recording.ghostEncoding!==undefined)throw Error('Ghost 回放状态无效');
   const replay = checkedReplay({ definition: validateAircraft(data.definition), challenge, recording: { length: recording.length, launchRoll: recording.launchRoll, frames: new Float64Array(recording.frames), wingLoads: recording.wingLoads === undefined ? undefined : new Float64Array(recording.wingLoads as number[]), keyframes: purpose==='ghost'&&visual?undefined:await decodeKeyframes(recording), checkpointTimes:recording.checkpointTimes as InputRecording['checkpointTimes'] } });
   if (data.mapHash !== await mapHash(replay.challenge)) throw Error('回放地图不匹配');
+  if (prepareGeometry) await prepareGeometry(replay.definition);
   if(visual){
     const sections=new FlightSimulation(replay.definition,challenge,replay.recording.launchRoll).structure.sections.length;
     replay.recording.ghostFrames=await decodeGhostFrames(recording.ghostData,replayDuration(replay.recording),sections,replay.recording.length);

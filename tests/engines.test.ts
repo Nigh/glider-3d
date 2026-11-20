@@ -85,7 +85,7 @@ describe('发动机独立加减速响应', () => {
 
   it('双发侧距同步质量、惯量、阻力、接触及角速度下的推力矩', () => {
     const definition = clone(presets.find(plane => plane.engine.count === 2)!);
-    definition.engine.y = 0;
+    definition.engine.y = 1; definition.assembly.mainWingHeight = 0;
     const flights = [engineLateralOffsetLimits(definition).min, 1.5].map(offset => {
       const d = clone(definition); d.engine.lateralOffset = offset;
       const s = new FlightSimulation(d, 'test-space', 0);
@@ -94,11 +94,29 @@ describe('发动机独立加减速响应', () => {
       expect((Reflect.get(s, 'enginePositions') as typeof mounts).map(mount => mount.z)).toEqual([-offset, offset]);
       expect(s.telemetry.aerodynamics.engines.map(engine => engine.point.z)).toEqual([-offset, offset]);
       const parts = Reflect.get(s, 'parts') as { mass: number; x: number; y: number; z: number }[];
-      const contacts = Reflect.get(s, 'contacts') as Vector3[];
-      for (const mount of mounts) {
+      const contacts = Reflect.get(s, 'contacts') as (Vector3 & { solidId: number; vertexIndex: number })[];
+      const tolerance = 1e-4;
+      for (const [engineIndex, mount] of mounts.entries()) {
         expect(parts.some(part => part.mass === spec.mass && part.x === mount.x && part.y === mount.y && part.z === mount.z)).toBe(true);
-        expect(contacts.some(point => Math.abs(point.x - mount.x - spec.length / 2) < 1e-8
-          && Math.abs(point.y - mount.y - spec.radius) < 1e-8 && Math.abs(point.z - mount.z) < 1e-8)).toBe(true);
+        const skin = contacts.filter(point => {
+          const partition = s.compiledGeometry.partitions[point.solidId];
+          return partition.kind === 'engine' && partition.engineIndex === engineIndex;
+        });
+        expect(skin.length).toBeGreaterThan(0);
+        let front = -Infinity, rear = Infinity, radius = 0;
+        for (const point of skin) {
+          const partition = s.compiledGeometry.partitions[point.solidId], index = point.vertexIndex * 3;
+          expect(point.x).toBe(partition.positions[index]);
+          expect(point.y).toBe(partition.positions[index + 1]);
+          expect(point.z).toBe(partition.positions[index + 2]);
+          front = Math.max(front, point.x); rear = Math.min(rear, point.x);
+          radius = Math.max(radius, Math.hypot(point.y - mount.y, point.z - mount.z));
+          expect(Math.abs(point.x - mount.x)).toBeLessThanOrEqual(spec.length / 2 + tolerance);
+          expect(Math.hypot(point.y - mount.y, point.z - mount.z)).toBeLessThanOrEqual(spec.radius + tolerance);
+        }
+        expect(Math.abs(front - mount.x - spec.length / 2)).toBeLessThan(tolerance);
+        expect(Math.abs(rear - mount.x + spec.length / 2)).toBeLessThan(tolerance);
+        expect(Math.abs(radius - spec.radius)).toBeLessThan(tolerance);
       }
       s.position.set(100, 1000, 0); s.velocity.set(40, 0, 0); s.omega.set(0, 1, 0); s.quaternion.identity();
       Reflect.set(s, 'seaLevelReference', true);

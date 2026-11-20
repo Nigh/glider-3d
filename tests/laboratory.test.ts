@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { setTimeout as yieldTurn } from 'node:timers/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { clone, defaultAircraft, presets } from '../src/model';
 import { FlightSimulation, GRAVITY } from '../src/physics';
@@ -8,6 +9,7 @@ import { exportReplay } from '../src/replay';
 import { readBest, writeBest } from '../src/storage';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0, throttle: 0 };
+afterEach(() => yieldTurn(0));
 const powered = () => clone(presets.find(p => p.name === '基础单发型')!);
 
 it('keeps both laboratories out of leaderboard storage even when storage is unavailable', () => {

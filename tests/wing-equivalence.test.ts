@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { AIRFRAME_MASS, clone, defaultAircraft, DEG, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
-import { derive, FlightSimulation, type AerodynamicSurface } from '../src/physics';
+import { AIR_DENSITY, derive, FlightSimulation, type AerodynamicSurface } from '../src/physics';
 import { airfoilDepthScale, airfoilSkinScale } from '../src/airfoils';
 import { beamSection, materialCatalog } from '../src/materials';
+import Module from 'manifold-3d';
+
+const manifold = await Module({ locateFile: () => new URL('../node_modules/manifold-3d/manifold.wasm', import.meta.url).href });
+manifold.setup();
+const geometryTolerance = 1e-4;
 
 const neutral: Controls = { weight: 0, lateral: 0, aileron: 0, elevator: 0, rudder: 0 };
 function definition() {
@@ -55,17 +60,23 @@ function evaluate(d: AircraftDefinition, velocity: Vector3, controls = neutral, 
   Reflect.get(s, 'evaluateForces').call(s, neutral, s.velocity, s.omega, s.quaternion, s.position, controls);
   return s;
 }
-function matchingPanels(s: FlightSimulation) {
-  return s.surfaces.filter(panel => panel.kind === 'main').map(main => [main,
-    s.surfaces.find(panel => panel.kind === 'tail' && panel.side === main.side && panel.spanStart === main.spanStart)!,
-  ] as const);
+function geometryBudget(a: AerodynamicSurface, b: AerodynamicSurface) {
+  const chord = Math.min(a.chordMin, b.chordMin), width = a.spanEnd - a.spanStart;
+  // Two 0.1 mm contours bound relative angle by 2ε/c and area by 2ε times perimeter.
+  const angle = Math.atan2(2 * geometryTolerance, chord);
+  const area = 4 * geometryTolerance * (width + Math.max(a.chordMax, b.chordMax));
+  const pressure = 0.5 * AIR_DENSITY * Math.max(a.localFlow.lengthSq(), b.localFlow.lengthSq());
+  const force = pressure * Math.max(a.area, b.area) * 2 * Math.PI * angle
+    + Math.max(a.force.length(), b.force.length()) * area / Math.min(a.area, b.area);
+  return { angle, force };
 }
 function expectEqual(main: AerodynamicSurface, tail: AerodynamicSurface) {
-  expect(main.point.distanceTo(tail.point)).toBeLessThan(1e-12);
-  expect(main.alpha).toBeCloseTo(tail.alpha, 12);
-  expect(main.force.distanceTo(tail.force)).toBeLessThan(1e-9);
-  expect(main.drag.distanceTo(tail.drag)).toBeLessThan(1e-9);
-  expect(main.inducedDrag).toBeCloseTo(tail.inducedDrag, 12);
+  const budget = geometryBudget(main, tail);
+  expect(main.point.distanceTo(tail.point)).toBeLessThan(2 * geometryTolerance);
+  expect(Math.abs(main.alpha - tail.alpha)).toBeLessThan(budget.angle);
+  expect(main.force.distanceTo(tail.force)).toBeLessThan(budget.force);
+  expect(main.drag.distanceTo(tail.drag)).toBeLessThan(budget.force);
+  expect(Math.abs(main.inducedDrag - tail.inducedDrag)).toBeLessThan(budget.force);
 }
 
 describe('主翼与副翼气动等效', () => {
@@ -78,21 +89,66 @@ describe('主翼与副翼气动等效', () => {
     expect(main.alpha).toBeCloseTo(tail.alpha, 12);
   });
 
-  it.each([0.8, 100])('真实受力路径在高度 %s m 使用相同局部来流、地效和极曲线', height => {
-    for (const alpha of [-8, 0, 6, 30]) {
-      const velocity = new Vector3(12 * Math.cos(alpha * DEG), -12 * Math.sin(alpha * DEG), 1.2);
-      const s = evaluate(definition(), velocity, neutral, false, height);
-      for (const [main, tail] of matchingPanels(s)) expectEqual(main, tail);
+  it('原始设计参考保留深入超过0.1mm的真实翼体遮蔽，不剔除同皮边界', () => {
+    const d = definition();
+    const coincident = Reflect.get(derive(d).aerodynamics, 'surfaces') as AerodynamicSurface[];
+    d.assembly.mainWingHeight = 10 * geometryTolerance;
+    const penetrating = Reflect.get(derive(d).aerodynamics, 'surfaces') as AerodynamicSurface[];
+    for (const panels of [coincident, penetrating]) {
+      for (const main of panels.filter(panel => panel.kind === 'main' && panel.spanStart >= 0.8)) {
+        const tail = panels.find(panel => panel.kind === 'tail' && panel.side === main.side && panel.spanStart === main.spanStart)!;
+        expect(main.exposedFraction).toBe(1);
+        if (panels === coincident) expect(tail.exposedFraction).toBe(main.exposedFraction);
+        else {
+          expect(tail.exposedFraction).toBeGreaterThan(0);
+          expect(tail.exposedFraction).toBeLessThan(main.exposedFraction);
+          expect(tail.force.length()).toBeLessThan(main.force.length());
+        }
+      }
     }
   });
 
-  it('同位相交控制翼保持固定，非零指令不产生舵面响应', () => {
-    const s = evaluate(definition(), new Vector3(12, -0.5, 0.3), { ...neutral, aileron: 0.3, elevator: -0.4 });
-    for (const [main, tail] of matchingPanels(s)) {
-      expect(main.controlEffectiveness).toBe(0); expect(tail.controlEffectiveness).toBe(0);
-      expect(main.controlCandidate).toBe(0); expect(tail.controlCandidate).toBe(0);
-      expectEqual(main, tail);
+  it.each([0.8, 100])('无交叠翼交换身份在高度 %s m 保留局部来流、地效和极曲线', height => {
+    const [d, swapped] = separatedDefinitions();
+    for (const alpha of [-8, 0, 6, 30]) {
+      const velocity = new Vector3(12 * Math.cos(alpha * DEG), -12 * Math.sin(alpha * DEG), 1.2);
+      const before = evaluate(d, velocity, neutral, false, height), after = evaluate(swapped, velocity, neutral, false, height);
+      for (const panel of before.surfaces.filter(panel => panel.kind !== 'vertical')) {
+        const other = after.surfaces.find(other => other.kind === (panel.kind === 'main' ? 'tail' : 'main')
+          && other.side === panel.side && other.spanStart === panel.spanStart)!;
+        expectEqual(panel, other);
+        expect(panel.groundEffect).toBeCloseTo(other.groundEffect, 12);
+      }
     }
+  });
+
+  it('同位相交翼只保留一份闭合外露体积，控制指令不驱动被冻结区域', () => {
+    const velocity = new Vector3(12, -0.5, 0.3), d = definition();
+    const s = evaluate(d, velocity, { ...neutral, aileron: 0.3, elevator: -0.4 }), base = evaluate(d, velocity);
+    const wingPanels = s.surfaces.filter(panel => panel.kind !== 'vertical');
+    for (const panel of wingPanels) {
+      expect(panel.controlEffectiveness).toBe(0); expect(Math.abs(panel.controlCandidate)).toBe(0);
+      const other = base.surfaces.find(other => other.wingInstance === panel.wingInstance
+        && other.side === panel.side && other.spanStart === panel.spanStart)!;
+      expectEqual(panel, other);
+    }
+    const retained = wingPanels.reduce((area, panel) => area + panel.area * panel.retainedAreaFraction!, 0);
+    expect(retained).toBeGreaterThan(0);
+    expect(retained).toBeLessThanOrEqual(s.aircraft.wingArea + 4 * geometryTolerance * (s.aircraft.span + d.mainWing.points[3].x));
+    const parts = s.compiledGeometry.partitions.filter(part => part.wingInstance === 0 || part.wingInstance === 1);
+    expect(parts.length).toBeGreaterThan(0);
+    const bodies = parts.map(part => new manifold.Manifold(new manifold.Mesh({
+      numProp: 3, vertProperties: part.positions, triVerts: part.indices,
+    })));
+    try {
+      for (const body of bodies) {
+        expect(body.status()).toBe('NoError'); expect(body.volume()).toBeGreaterThan(0);
+      }
+      for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+        const intersection = bodies[i].intersect(bodies[j]);
+        try { expect(intersection.volume()).toBeLessThan(1e-8); } finally { intersection.delete(); }
+      }
+    } finally { for (const body of bodies) body.delete(); }
   });
 
   it.each([false, true])('无交叠对称配置交换身份后保留非零操纵及力矩导数，智能混控%s', smart => {
@@ -102,15 +158,16 @@ describe('主翼与副翼气动等效', () => {
     expect(before.aircraft.mass).toBeCloseTo(after.aircraft.mass, 12);
     expect(before.aircraft.cg.distanceTo(after.aircraft.cg)).toBeLessThan(1e-12);
     for (let i = 0; i < 9; i++) expect(before.aircraft.inertiaTensor.elements[i]).toBeCloseTo(after.aircraft.inertiaTensor.elements[i], 12);
-    let movable = 0, fixed = 0;
+    let movable = 0;
     for (const panel of before.surfaces.filter(panel => panel.kind !== 'vertical')) {
       const other = after.surfaces.find(other => other.kind === (panel.kind === 'main' ? 'tail' : 'main')
         && other.side === panel.side && other.spanStart === panel.spanStart)!;
       expectEqual(panel, other);
-      expect(panel.controlCandidate).toBeCloseTo(other.controlCandidate, 10);
-      expect(panel.controlMoment.distanceTo(other.controlMoment)).toBeLessThan(1e-9);
+      const budget = geometryBudget(panel, other);
+      expect(Math.abs(panel.controlCandidate - other.controlCandidate)).toBeLessThan(budget.angle / (22 * DEG));
+      const arm = Math.max(panel.point.distanceTo(before.aircraft.cg), other.point.distanceTo(after.aircraft.cg)) + panel.chordMax;
+      expect(panel.controlMoment.distanceTo(other.controlMoment)).toBeLessThan(budget.force * arm);
       if (panel.controlEffectiveness === 0) {
-        fixed++;
         expect(panel.controlCandidate).toBe(0);
         continue;
       }
@@ -121,7 +178,7 @@ describe('主翼与副翼气动等效', () => {
       const neutralPanel = base.surfaces.find(other => other.kind === panel.kind && other.side === panel.side && other.spanStart === panel.spanStart)!;
       expect(panel.force.distanceTo(neutralPanel.force)).toBeGreaterThan(0.01);
     }
-    expect(fixed).toBeGreaterThan(0); expect(movable).toBeGreaterThan(0);
+    expect(movable).toBeGreaterThan(0);
   });
 
 

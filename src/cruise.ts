@@ -33,12 +33,14 @@ export function analyzeCruiseReference(definition: AircraftDefinition): CruiseAn
   const probe = new Float64Array(4);
   // Thrust has no propwash term. Solve its horizontal balance directly, retaining
   // vertical thrust, mount moment, and the same aeroelastic force evaluation.
+  let squaredThrottle = 0;
   const balance = (speed: number, pitch: number, elevator: number) => {
     const unit = d.engine.count * engine.maxThrust * engineThrustFactor(0, speed * Math.cos(pitch), engine.exhaustVelocity) * Math.cos(pitch);
-    let squaredThrottle = 0;
-    let t = simulation.sampleSteadyFlight(speed, pitch, elevator, 0);
-    for (let iteration = 0; iteration < 3 && Math.abs(t.force.x) > weight * 0.00001; iteration++) {
-      squaredThrottle = clamp(squaredThrottle - t.force.x / Math.max(1, unit), 0, 1);
+    let t = simulation.sampleSteadyFlight(speed, pitch, elevator, Math.sqrt(squaredThrottle));
+    for (let iteration = 0; iteration < 3 && Math.abs(t.force.x) > weight * 0.0001; iteration++) {
+      const nextSquaredThrottle = clamp(squaredThrottle - t.force.x / Math.max(1, unit), 0, 1);
+      if (nextSquaredThrottle === squaredThrottle) break;
+      squaredThrottle = nextSquaredThrottle;
       t = simulation.sampleSteadyFlight(speed, pitch, elevator, Math.sqrt(squaredThrottle));
     }
     probe[0] = (t.force.y - weight) / weight;
@@ -46,36 +48,69 @@ export function analyzeCruiseReference(definition: AircraftDefinition): CruiseAn
     probe[2] = Math.sqrt(squaredThrottle);
     probe[3] = t.force.x / weight;
   };
-  let previousPitch = 3 * DEG, previousElevator = 0;
-  for (let speed = result.searched.minimumSpeed; speed <= result.searched.maximumSpeed; speed++) {
+  const seedLift = simulation.sampleSteadyFlight(50, 3 * DEG, 0, 0).force.y;
+  const seed = seedLift > 0 ? clamp(Math.round(50 * Math.sqrt(weight / seedLift)), result.searched.minimumSpeed, result.searched.maximumSpeed)
+    : result.searched.minimumSpeed;
+  const speeds: number[] = [];
+  for (let speed = seed; speed <= result.searched.maximumSpeed; speed++) speeds.push(speed);
+  for (let speed = seed - 1; speed >= result.searched.minimumSpeed; speed--) speeds.push(speed);
+  let previousPitch = 3 * DEG, previousElevator = 0, seedPitch = previousPitch, seedElevator = previousElevator;
+  let a = NaN, b = NaN, c = NaN, f = NaN;
+  for (const speed of speeds) {
+    if (speed === seed - 1) {
+      previousPitch = seedPitch; previousElevator = seedElevator;
+      a = b = c = f = NaN; squaredThrottle = 0;
+    }
     let pitch = previousPitch, elevator = previousElevator;
+    // Keep accepted probes, including their surface state, for the next iteration.
+    balance(speed, pitch, elevator);
     for (let iteration = 0; iteration < 12; iteration++) {
-      balance(speed, pitch, elevator);
       const lift = probe[0], moment = probe[1], error = Math.hypot(lift, moment);
       const residual = Math.hypot(lift, moment, probe[3]);
       result.minimumRelativeResidual = Math.min(result.minimumRelativeResidual ?? Infinity, residual);
       if (error < 0.0001) break;
-      const angleStep = 0.0001, controlStep = 0.001;
-      balance(speed, pitch + angleStep, elevator);
-      const a = (probe[0] - lift) / angleStep, c = (probe[1] - moment) / angleStep;
-      const controlDirection = elevator > 0.99 ? -controlStep : controlStep;
-      balance(speed, pitch, elevator + controlDirection);
-      const b = (probe[0] - lift) / controlDirection, f = (probe[1] - moment) / controlDirection;
-      const determinant = a * f - b * c;
-      if (Math.abs(determinant) < 1e-10) break;
-      const changePitch = clamp((-lift * f + b * moment) / determinant, -4 * DEG, 4 * DEG);
-      const changeElevator = clamp((-a * moment + c * lift) / determinant, -0.3, 0.3);
       let accepted = false;
-      for (let fraction = 1; fraction >= 1 / 16; fraction /= 2) {
-        const nextPitch = clamp(pitch + fraction * changePitch, -12 * DEG, 18 * DEG);
-        const nextElevator = clamp(elevator + fraction * changeElevator, -1, 1);
-        balance(speed, nextPitch, nextElevator);
-        if (Math.hypot(probe[0], probe[1]) >= error) continue;
-        pitch = nextPitch; elevator = nextElevator; accepted = true; break;
+      for (let refresh = 0; refresh < 2 && !accepted; refresh++) {
+        const fresh = refresh > 0 || !Number.isFinite(a + b + c + f);
+        if (fresh) {
+          const angleStep = 0.0001, controlStep = elevator > 0.99 ? -0.001 : 0.001;
+          balance(speed, pitch + angleStep, elevator);
+          a = (probe[0] - lift) / angleStep; c = (probe[1] - moment) / angleStep;
+          balance(speed, pitch, elevator + controlStep);
+          b = (probe[0] - lift) / controlStep; f = (probe[1] - moment) / controlStep;
+        }
+        const determinant = a * f - b * c;
+        if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-10) {
+          if (fresh) break;
+          continue;
+        }
+        const changePitch = clamp((-lift * f + b * moment) / determinant, -4 * DEG, 4 * DEG);
+        const changeElevator = clamp((-a * moment + c * lift) / determinant, -0.3, 0.3);
+        for (let fraction = 1; fraction >= 1 / 16; fraction /= 2) {
+          const nextPitch = clamp(pitch + fraction * changePitch, -12 * DEG, 18 * DEG);
+          const nextElevator = clamp(elevator + fraction * changeElevator, -1, 1);
+          if (nextPitch === pitch && nextElevator === elevator) continue;
+          balance(speed, nextPitch, nextElevator);
+          if (Math.hypot(probe[0], probe[1]) >= error) continue;
+          // Broyden updates use only accepted steps and their actual force residuals.
+          const stepPitch = nextPitch - pitch, stepElevator = nextElevator - elevator;
+          const lengthSquared = stepPitch ** 2 + stepElevator ** 2;
+          const liftCorrection = (probe[0] - lift - a * stepPitch - b * stepElevator) / lengthSquared;
+          const momentCorrection = (probe[1] - moment - c * stepPitch - f * stepElevator) / lengthSquared;
+          a += liftCorrection * stepPitch; b += liftCorrection * stepElevator;
+          c += momentCorrection * stepPitch; f += momentCorrection * stepElevator;
+          pitch = nextPitch; elevator = nextElevator; accepted = true; break;
+        }
+        if (!accepted && fresh) break;
       }
-      if (!accepted) break;
+      if (!accepted) {
+        balance(speed, pitch, elevator);
+        break;
+      }
     }
-    balance(speed, pitch, elevator);
+    // Continue the numerical solve even when this point fails a final flight gate.
+    previousPitch = pitch; previousElevator = elevator;
+    if (speed === seed) { seedPitch = pitch; seedElevator = elevator; }
     if (Math.hypot(probe[0], probe[1], probe[3]) > 0.001) continue;
     if (simulation.surfaces.some(surface => {
       if (surface.kind === 'vertical') return false;
@@ -83,7 +118,6 @@ export function analyzeCruiseReference(definition: AircraftDefinition): CruiseAn
       const blend = clamp(degrees < -6 ? (-degrees - 6) / 29 : (Math.abs(degrees) - 17) / 18, 0, 1);
       return blend * blend * (3 - 2 * blend) > 0.1;
     })) continue;
-    previousPitch = pitch; previousElevator = elevator;
     candidates.push({ speed, pitch, elevator, throttle: probe[2],
       fuelPerDistance: d.engine.count * engine.fuelFlow * probe[2] ** 2 / speed,
       residual: { horizontalForce: probe[3] * weight, verticalForce: probe[0] * weight, pitchMoment: probe[1] * momentScale } });

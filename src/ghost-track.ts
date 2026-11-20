@@ -35,7 +35,10 @@ export async function decodeGhostFrames(encoded: unknown, duration: number, sect
   if(sectionLength!==sections*GHOST_SECTION_WIDTH||!Number.isInteger(fragmentLength)||fragmentLength<0||fragmentLength%11||fragmentLength>sections*11||offset+sectionLength+fragmentLength>data.length)fail();
   if(h[0]<0||i===0&&h[0]!==0||i>0&&h[0]<=frames[i-1].time||h[1]<0||![0,1].includes(h[2])||h[3]!==+(i===count-1))fail();
   const sectionData=data.subarray(offset,offset+sectionLength);offset+=sectionLength;const fragmentData=data.subarray(offset,offset+fragmentLength);offset+=fragmentLength;
-  for(let j=0;j<sectionLength;j+=GHOST_SECTION_WIDTH)if(!Number.isInteger(sectionData[j])||sectionData[j]<0||sectionData[j]>sections)fail();
+  for(let j=0;j<sectionLength;j+=GHOST_SECTION_WIDTH){
+   if(!Number.isInteger(sectionData[j])||sectionData[j]<0||sectionData[j]>sections||![0,1].includes(sectionData[j+24]))fail();
+   if(sectionData[j+24]&&Math.abs(sectionData.subarray(j+31,j+35).reduce((sum,n)=>sum+n*n,0)-1)>0.01)fail();
+  }
   const ids=new Set<number>();for(let j=0;j<fragmentLength;j+=11){const id=fragmentData[j];if(!Number.isInteger(id)||id<1||id>sections||ids.has(id))fail();ids.add(id);}
   const quaternion=Array.from(h.subarray(7,11));if(Math.abs(quaternion.reduce((sum,n)=>sum+n*n,0)-1)>0.01)fail();
   frames.push({time:h[0],flightTime:h[1],ended:!!h[2],done:!!h[3],position:Array.from(h.subarray(4,7)),quaternion,cg:Array.from(h.subarray(11,14)),pilot:Array.from(h.subarray(14,16)),controls:Array.from(h.subarray(16,19)),thrust:h[19],sections:sectionData,fragments:fragmentData});

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { FlightSimulation, WATER } from '../src/physics';
-import { BODY_GEOMETRY, clone, defaultAircraft, presets } from '../src/model';
+import { BODY_GEOMETRY, clone, defaultAircraft, fuselageEnds, presets } from '../src/model';
 import { cacheFlight, cacheRecording, recordedLoads, replaySimulation, seekReplay } from '../src/playback';
 import { exportReplay, importReplay } from '../src/replay';
 import * as challenges from '../src/challenges';
@@ -30,9 +30,18 @@ it('supports a grazing wing without ending, penetrating terrain or creating ener
  (sim as any).preparePlatformContacts();expect((sim as any).platformCount).toBeGreaterThan(0);
  sim.step(neutral);
  expect(sim.ended).toBe(false);
- for(const point of points){if(!(sim as any).mainContact(point))continue;expect(point.clone().sub(sim.cg).applyQuaternion(sim.quaternion).add(sim.position).y).toBeGreaterThan(20-3e-6);}
+ const mainContact=Reflect.get(sim,'mainContact') as (point:Vector3)=>boolean;
+ for(const point of points){if(!mainContact.call(sim,point))continue;expect(point.clone().sub(sim.cg).applyQuaternion(sim.quaternion).add(sim.position).y).toBeGreaterThanOrEqual(20-1e-4);}
  const t=sim.telemetry;
  expect(t.energy+t.dissipatedEnergy-dissipated-t.propulsionWork-t.controlWork-t.waterWork+t.fuelEnergyRemoved).toBeCloseTo(energy,6);
+});
+
+it('ends on a stationary fuselage tail contact regardless of compiled vertex order',()=>{
+ const sim=groundFlight(0);sim.quaternion.setFromAxisAngle(new Vector3(0,0,1),0.35);
+ const tail=new Vector3(fuselageEnds(sim.definition).tail,-0.12,0).sub(sim.cg).applyQuaternion(sim.quaternion);
+ sim.position.y=20-tail.y-0.0002;
+ sim.step(neutral,1e-5);
+ expect(sim.result?.landing).toBe('terrain');
 });
 
 it('ends on actual nose or inverted cockpit contact, and only ends a touching fuselage below 1.5 m/s',()=>{

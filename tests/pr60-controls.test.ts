@@ -27,7 +27,7 @@ it('colors the loaded skin and caps, and restores original colors after unloadin
  geometry.setAttribute('color', new BufferAttribute(original.slice(), 3));
  const section = { rows: 1, vertexStart: 0, rootCap: 64, tipCap: 96, physics: { stressRatio: 0.75 } };
  const view = Object.assign(Object.create(SceneView.prototype), {
-  wingMeshes: [new Mesh(geometry)], wingOriginalColors: [original], wingSections: [[section]], structureColor: new Color(),
+  wingMeshes: [new Mesh(geometry)], wingOriginalColors: [original], wingSections: [[section]], structureColor: new Color(), fragments: [],
  });
  view.setStructureLayer(true);
  const orange = new Color(structureLoadColor(0.75)), colors = geometry.getAttribute('color');
@@ -55,8 +55,10 @@ it.each([-0.3, 0.3])('updates equilibrium trim with active stick %s while preser
  expect(Math.abs(sim.telemetry.trimPitch - 0.7)).toBeGreaterThan(0.1);
  const trimmed = flight(), baseline = flight();
  for (const [model, command] of [[trimmed, stick], [baseline, 0]] as const) {
-  model.velocity.set(20, -0.4, 0);
-  model.step({ ...neutral, autoTrim: true, trimPitch: sim.telemetry.trimPitch, elevator: command }, 0.001);
+  for (let frame = 0; frame < 60; frame++) {
+   model.position.set(100, 2000, 0); model.quaternion.identity(); model.velocity.set(20, -0.4, 0); model.omega.set(0, 0, 0);
+   model.step({ ...neutral, autoTrim: true, trimPitch: sim.telemetry.trimPitch, elevator: command });
+  }
  }
  expect((trimmed.omega.z - baseline.omega.z) * stick).toBeLessThan(0);
 });

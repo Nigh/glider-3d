@@ -18,6 +18,7 @@ function definition() {
 function sample(d: AircraftDefinition, height = 100, isolated = false) {
   const s = new FlightSimulation(d, 'test-space', 0, { height: 100, speed: 20, catapult: false });
   s.structure.reset(); s.launching = false; s.position.set(100, height, 0); s.quaternion.identity();
+  Reflect.get(s, 'syncContacts').call(s, 0);
   s.velocity.set(20, -1, 0); s.omega.set(0, 0, 0);
   if (isolated) for (const surface of s.surfaces) if (surface.kind !== 'main') surface.bodyId = 1;
   Reflect.get(s, 'evaluateForces').call(s, { weight: 0, elevator: 0, aileron: 0, rudder: 0 }, s.velocity, s.omega, s.quaternion, s.position);
@@ -116,26 +117,39 @@ describe('载荷与几何尾迹', () => {
     const d = definition();
     d.assembly.mainIncidence = incidence;
     d.horizontalTail.controlSurface = d.verticalTail.controlSurface = 0.3;
+    // Keep the test actuators clear of the cockpit and the other wing's swept volume.
+    d.assembly.mainWingHeight = 0.7;
+    d.verticalTail = { ...wing(2.4, 0.7, 0.4), controlSurface: 0.3 };
+    d.assembly.verticalTail = -3;
     const s = sample(d);
     s.omega.copy(omega);
     for (const surface of s.surfaces) surface.controlCommand = 0.05 * surface.side;
+    Reflect.get(s, 'updateControlDeflections').call(s);
     Reflect.get(s, 'effective').smartMixing = true;
     Reflect.get(s, 'updateControlDirections').call(s);
     const sources = (['main', 'tail', 'vertical'] as const).map(kind =>
-      s.surfaces.find(surface => surface.kind === kind && surface.controlEffectiveness > 0));
+      s.surfaces.filter(surface => surface.kind === kind && surface.controlEffectiveness > 0).at(-1));
     const predicted = sources.map(source => source?.controlMoment.clone()), delta = 0.0001;
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];
       if (!source) throw Error('测试翼面缺少舵面');
+      const section = s.structure.sections.find(section => section.surface === source)!;
       // Perturb one physical actuator; every passive receiving wing stays coupled.
       const center = source.controlCommand;
       source.controlCommand = center - delta;
+      Reflect.get(s, 'updateControlDeflections').call(s);
       Reflect.get(s, 'evaluateForces').call(s, {}, s.velocity, s.omega, s.quaternion, s.position);
       const low = s.telemetry.torque.clone();
+      const lowCommand = source.controlCommand, lowDeflection = section.controlDeflection;
       source.controlCommand = center + delta;
+      Reflect.get(s, 'updateControlDeflections').call(s);
       Reflect.get(s, 'evaluateForces').call(s, {}, s.velocity, s.omega, s.quaternion, s.position);
-      const measured = s.telemetry.torque.clone().sub(low).multiplyScalar(1 / (2 * delta));
+      const travel = source.controlCommand - lowCommand;
+      expect(travel).toBeGreaterThan(delta);
+      expect(Math.abs(section.controlDeflection - lowDeflection)).toBeGreaterThan(0);
+      const measured = s.telemetry.torque.clone().sub(low).multiplyScalar(1 / travel);
       source.controlCommand = center;
+      Reflect.get(s, 'updateControlDeflections').call(s);
       expect(predicted[i]!.distanceTo(measured) / Math.max(1, measured.length())).toBeLessThan(0.05);
     }
   });

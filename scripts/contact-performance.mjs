@@ -82,7 +82,7 @@ for (const root of roots) {
       const world = point.clone().sub(body.cg).applyQuaternion(body.quaternion).add(body.position);
       maxPenetration = Math.max(maxPenetration, challengeTerrainHeight('low-altitude', world.x, world.z) - world.y);
      }
-     assert.ok(maxPenetration <= 2e-6, `${name}: contact penetration (${maxPenetration})`);
+     assert.ok(maxPenetration <= 1e-4, `${name}: contact penetration (${maxPenetration})`);
     }
     const ms = performance.now() - start;
     assert.ok(Number.isFinite(ms), `${name}: non-finite runtime`);

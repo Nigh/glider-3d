@@ -2,6 +2,7 @@ import { BODY_GEOMETRY, cockpitGeometry, DEG, finThickness, fuselageEnds, planfo
 import { airfoilY } from './airfoils';
 import type { AerodynamicSurface } from './physics';
 import { Vector3 } from 'three';
+import type { CompiledAircraft } from './compiled-geometry-cache';
 
 type Patch = { x: number; y: number; z: number; nx: number; ny: number; nz: number; area: number; exposed: boolean };
 type Volume = { patches: Patch[]; contains: (x: number, y: number, z: number) => boolean; bounds: number[] };
@@ -52,14 +53,30 @@ export class AirframeExposure {
  private readonly baselineBeam:Patch[];
  private readonly strips;
  private readonly poses:Float64Array;
- constructor(d:AircraftDefinition, private readonly surfaces:AerodynamicSurface[]){
+ constructor(d:AircraftDefinition, private readonly surfaces:AerodynamicSurface[], compiled?:CompiledAircraft){
   const shell=cockpitGeometry(d), canopy=BODY_GEOMETRY.canopy;
   this.volumes=d.birdman?[]:[ellipsoid({...shell,x:shell.x+d.cockpit.position}),ellipsoid({...canopy,x:canopy.x+d.cockpit.position},true)];
   const bodyCount=this.volumes.length, nose=BODY_GEOMETRY.nose;
   this.volumes.push(beam(d),ellipsoid({...nose,x:fuselageEnds(d).nose+nose.x}));
   this.baselineBeam=this.volumes.slice(bodyCount).flatMap(volume=>volume.patches.filter(p=>
    !this.volumes.slice(bodyCount).some(other=>other!==volume&&other.contains(p.x,p.y,p.z))));
-  this.bodies=this.volumes.map(volume=>volume.patches.filter(p=>!this.volumes.some(other=>other!==volume&&other.contains(p.x,p.y,p.z))));
+  const kinds=[...(d.birdman?[]:['cockpit','canopy']),'fuselage','nose'];
+  this.bodies=this.volumes.map((volume,index)=>{
+   if(!compiled)return volume.patches.filter(p=>!this.volumes.some(other=>other!==volume&&other.contains(p.x,p.y,p.z)));
+   const patches:Patch[]=[];
+   for(const partition of compiled.partitions)if(partition.kind===kinds[index]){
+    for(let triangle=0;triangle<partition.indices.length;triangle+=3){
+     const a=partition.indices[triangle]*3,b=partition.indices[triangle+1]*3,c=partition.indices[triangle+2]*3,p=partition.positions;
+     const ax=p[b]-p[a],ay=p[b+1]-p[a+1],az=p[b+2]-p[a+2],bx=p[c]-p[a],by=p[c+1]-p[a+1],bz=p[c+2]-p[a+2];
+     const surface=patch((p[a]+p[b]+p[c])/3,(p[a+1]+p[b+1]+p[c+1])/3,(p[a+2]+p[b+2]+p[c+2])/3,
+      (ay*bz-az*by)/2,(az*bx-ax*bz)/2,(ax*by-ay*bx)/2);
+     if(surface.area<1e-15)continue;
+     const offset=1e-5/surface.area;
+     if(!this.volumes.some(other=>other!==volume&&other.contains(surface.x+surface.nx*offset,surface.y+surface.ny*offset,surface.z+surface.nz*offset)))patches.push(surface);
+    }
+   }
+   return patches;
+  });
   this.strips=surfaces.map(surface=>{
    const w=wingInstanceWing(d,surface.wingInstance), p=planform(w,surface.kind!=='vertical');
    const half=Math.abs(w.points[1].y), root=p.root+(p.tip-p.root)*surface.spanStart/half, tip=p.root+(p.tip-p.root)*surface.spanEnd/half;
@@ -78,8 +95,11 @@ export class AirframeExposure {
      samples.push(point.dot(chordDirection),point.dot(normal),point.dot(spanDirection),chord/(12*24*(root+tip)));
     }
    }
-   return {surface,center,slope,root:p.root,quarterSlope,samples,half,miter:surface.kind==='vertical'?0:Math.tan(w.dihedral*DEG),radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
+   const compiledFraction=surface.retainedAreaFraction;
+   return {surface,center,slope,root:p.root,quarterSlope,samples,half,origin,normal,chordDirection,spanDirection,compiledFraction,baselineFraction:1,
+    miter:surface.kind==='vertical'?0:Math.tan(w.dihedral*DEG),radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
   });
+  for(const strip of this.strips)strip.baselineFraction=this.fraction(strip,true);
   this.poses=new Float64Array(surfaces.length*13).fill(NaN);
   this.update();
  }
@@ -96,35 +116,39 @@ export class AirframeExposure {
   }
   if(!changed)return;
   for(const strip of this.strips){
-   const s=strip.surface,p=s.point,r=strip.radius;
-   const candidates=s.bodyId===0?this.volumes.filter(v=>p.x+r>=v.bounds[0]&&p.x-r<=v.bounds[1]&&p.y+r>=v.bounds[2]&&p.y-r<=v.bounds[3]&&p.z+r>=v.bounds[4]&&p.z-r<=v.bounds[5]):[];
-   s.exposedFraction=1;
-   if(!candidates.length)continue;
-   let covered=0;
-   for(let i=0;i<strip.samples.length;i+=4){
-    const a=strip.samples[i],b=strip.samples[i+1],c=strip.samples[i+2];
-    const x=p.x+a*s.chordDirection.x+b*s.normal.x+c*s.spanDirection.x;
-    const y=p.y+a*s.chordDirection.y+b*s.normal.y+c*s.spanDirection.y;
-    const z=p.z+a*s.chordDirection.z+b*s.normal.z+c*s.spanDirection.z;
-    if(candidates.some(v=>v.contains(x,y,z)))covered+=strip.samples[i+3];
-   }
-   s.exposedFraction=Math.max(0,1-covered);
+   const dynamic=this.fraction(strip,false),base=strip.baselineFraction,compiled=strip.compiledFraction;
+   strip.surface.exposedFraction=compiled===undefined?dynamic:dynamic>=base?compiled:base>0?compiled*dynamic/base:compiled;
   }
   for(const patches of this.bodies)for(const p of patches){
-   p.exposed=!this.strips.some(strip=>{
-    const s=strip.surface;if(s.bodyId!==0)return false;
-    const x=p.x-s.point.x,y=p.y-s.point.y,z=p.z-s.point.z;
-    if(x*x+y*y+z*z>strip.radius**2)return false;
-    const normalDistance=x*s.normal.x+y*s.normal.y+z*s.normal.z;
-    const offset=x*s.spanDirection.x+y*s.spanDirection.y+z*s.spanDirection.z;
-    const span=(strip.center+offset-normalDistance*strip.miter)/(1-normalDistance*strip.miter/strip.half);
-    if(span<s.spanStart||span>s.spanEnd)return false;
-    const chord=strip.root+strip.slope*span, u=.25-(x*s.chordDirection.x+y*s.chordDirection.y+z*s.chordDirection.z+strip.quarterSlope*(span-strip.center))/chord;
-    if(u<=0||u>=1)return false;
-    const normal=(x*s.normal.x+y*s.normal.y+z*s.normal.z)/chord;
-    return normal>sectionY(s,u,-1)&&normal<sectionY(s,u,1);
-   });
+   p.exposed=!this.strips.some(strip=>strip.surface.bodyId===0&&this.contains(strip,p.x,p.y,p.z,false));
   }
+ }
+ private contains(strip:AirframeExposure['strips'][number],px:number,py:number,pz:number,reference:boolean):boolean {
+  const s=strip.surface,p=reference?strip.origin:s.point,n=reference?strip.normal:s.normal;
+  const c=reference?strip.chordDirection:s.chordDirection,b=reference?strip.spanDirection:s.spanDirection;
+  const x=px-p.x,y=py-p.y,z=pz-p.z;
+  if(x*x+y*y+z*z>strip.radius**2)return false;
+  const normalDistance=x*n.x+y*n.y+z*n.z,offset=x*b.x+y*b.y+z*b.z;
+  const span=(strip.center+offset-normalDistance*strip.miter)/(1-normalDistance*strip.miter/strip.half);
+  if(span<s.spanStart||span>s.spanEnd)return false;
+  const chord=strip.root+strip.slope*span,u=.25-(x*c.x+y*c.y+z*c.z+strip.quarterSlope*(span-strip.center))/chord;
+  if(u<=0||u>=1)return false;
+  // Surface samples on a shared skin are not interior points within the 0.1 mm geometry budget.
+  const margin=1e-4/chord,normal=normalDistance/chord;
+  return normal>sectionY(s,u,-1)+margin&&normal<sectionY(s,u,1)-margin;
+ }
+ private fraction(strip:AirframeExposure['strips'][number],reference:boolean):number {
+  const s=strip.surface,p=reference?strip.origin:s.point,n=reference?strip.normal:s.normal;
+  const c=reference?strip.chordDirection:s.chordDirection,b=reference?strip.spanDirection:s.spanDirection;
+  let covered=0;
+  for(let i=0;i<strip.samples.length;i+=4){
+   const a=strip.samples[i],normal=strip.samples[i+1],span=strip.samples[i+2];
+   const x=p.x+a*c.x+normal*n.x+span*b.x,y=p.y+a*c.y+normal*n.y+span*b.y,z=p.z+a*c.z+normal*n.z+span*b.z;
+   if((reference||s.bodyId===0)&&this.volumes.some(volume=>volume.contains(x,y,z))
+    ||this.strips.some(other=>other.surface.wingInstance<s.wingInstance
+     &&(reference||other.surface.bodyId===s.bodyId)&&this.contains(other,x,y,z,reference)))covered+=strip.samples[i+3];
+  }
+  return Math.max(0,Math.min(1,1-covered));
  }
  pressureSpeed(index:number,v:Vector3){
   let sum=0;for(const p of this.bodies[index])if(p.exposed)sum+=Math.max(0,p.nx*v.x+p.ny*v.y+p.nz*v.z);return sum;

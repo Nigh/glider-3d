@@ -1,14 +1,18 @@
 import * as THREE from 'three';
 import { structureLoadColor } from './structure-display';
+import type { SectionGeometry } from './structure';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BODY_GEOMETRY, finPoint, aircraftWings, hasMirroredFin, wingSupports, controlSurfaceRegions, wingControlHinge, wingControlAxis, wingInstanceWing, wingInstancePoint, wingInstanceDirection, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, engineLateralOffset, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey, type WingSupport } from './model';
+import { BODY_GEOMETRY, finPoint, aircraftWings, hasMirroredFin, wingSupports, wingControlHinge, wingControlAxis, wingInstanceWing, wingInstancePoint, wingInstanceDirection, wingAirfoil, clamp, clone, DEG, defaultAircraft, cockpitLimits, editWingPoint, normalizeAircraftGeometry, wingMountLimits, engineMounts, engineLateralOffset, fuelTankDimensions, fuelTankPosition, fuelTankLimits, normalizeEngineHeight, fuselageEnds, mainWingMountLimits, mainWingSupport, resizeFuselage, wingOrigin, wingLocalPoint, type AircraftDefinition, type Wing, type WingKey, type WingSupport } from './model';
 import { airfoilY } from './airfoils';
-import { GRAVITY, LAUNCH, PLATFORM, launchHeight, derive, fuelCgRange, FlightSimulation } from './physics';
-import { applyGhost, ditherGhost, ghostOpacity, type GhostFrame, type GhostFragment } from './ghost';
+import { GRAVITY, LAUNCH, PLATFORM, launchHeight, FlightSimulation } from './physics';
+import type { CompiledAircraft, CompiledPartition } from './compiled-geometry-cache';
+import { geometryMetrics, type DesignReferenceResult } from './geometry-client';
+import { applyGhost, applyGhostTopology, ditherGhost, ghostOpacity, type GhostFrame, type GhostFragment } from './ghost';
 import { downhillHeightLimit, downhillRouteCenter, downhillRuins, challengeCenter, challengeCheckpoints, challengeDefinitions, challengeLaunch, challengeStartGate, challengeGateProfile, CHALLENGE_WARNING_EXTENT, challengeRiverCenter, challengeRiverHeight, CHALLENGE_RIVER, challengeTerrainGrid, challengeTerrainHeight, challengeCollisionHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeCheckpoint, type ChallengeMode } from './challenges';
+import { ENGINE_GEOMETRY } from './engine-geometry';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog } from './engines';
 import { isLaboratory, TEST_SPACE, testCatapultSample, testSpaceTerrainHeight } from './laboratory';
@@ -40,11 +44,10 @@ type PhysicsSection = FlightSimulation['structure']['sections'][number];
 type WingRenderSection = {
   wingIndex: number; side: number; spanStart: number; spanEnd: number; movable: boolean;
   vertexStart: number; rows: number; rootCap: number; tipCap: number;
+  vertexCount?: number; hingeIndices?: number[];
   skin: number[]; rootIndices: number[]; tipIndices: number[]; controlRootIndices: number[]; controlTipIndices: number[];
   previous: WingRenderSection | null; next: WingRenderSection | null;
-  physics: PhysicsSection | null; bodyId: number; previousBodyId: number;
-  previousRoot: THREE.Vector3; previousTip: THREE.Vector3;
-  previousRootRotation: THREE.Quaternion; previousTipRotation: THREE.Quaternion;
+  physics: PhysicsSection | null; bodyId: number;
   root: THREE.Vector3; tip: THREE.Vector3;
   rootRotation: THREE.Quaternion; tipRotation: THREE.Quaternion;
   referenceRoot: THREE.Vector3; referenceTip: THREE.Vector3;
@@ -53,12 +56,19 @@ type WingRenderSection = {
 type FragmentRender = {
   id: number; wingIndex: number; mesh: THREE.Mesh; hinge: THREE.LineSegments;
   previousPosition: THREE.Vector3; previousQuaternion: THREE.Quaternion; previousCG: THREE.Vector3;
-  cg: THREE.Vector3; captured: boolean;
+  cg: THREE.Vector3; captured: boolean; frozen: boolean;
+  originalColors?: Float32Array; loads?: { start: number; count: number; ratio: number }[];
+};
+type SpanDeformation = { t: number; matrix: THREE.Matrix4; revision: number };
+type RenderPhysicsGeometry = SectionGeometry & {
+  previousRoot: THREE.Vector3; previousTip: THREE.Vector3;
+  previousRootRotation: THREE.Quaternion; previousTipRotation: THREE.Quaternion;
+  previousBodyId: number; spans: Map<number, SpanDeformation>;
 };
 
 /** 湖区常驻；山谷按挑战切换释放，动态飞机与轨迹缓冲区重复使用。 */
 export class SceneView {
-  readonly metrics = { fps: 60, mean: 16.7, p95: 16.7, p99: 16.7, renderMs: 0, geometryMs: 0, drawCalls: 0, triangles: 0, memory: 0, quality: 'Medium', geometries: 0, textures: 0, programs: 0 };
+  readonly metrics = { fps: 60, mean: 16.7, p95: 16.7, p99: 16.7, renderMs: 0, geometryMs: 0, get lastCompileMs() { return geometryMetrics.lastCompileMs; }, drawCalls: 0, triangles: 0, memory: 0, quality: 'Medium', geometries: 0, textures: 0, programs: 0 };
   onEditorSelect: ((target: Exclude<EditorTarget, null>) => void) | null = null;
   onDesignViewChange: ((view: string) => void) | null = null;
   private readonly crashMark = new THREE.Group();
@@ -119,6 +129,13 @@ export class SceneView {
   private readonly wingAngles: number[] = [NaN, NaN, NaN];
   private readonly wingSections: WingRenderSection[][] = [[], [], []];
   private readonly wingNormalGeometry: THREE.BufferGeometry[] = [];
+  private readonly physicsGeometry: RenderPhysicsGeometry[] = [];
+  private readonly wingDeformationFrames: (SpanDeformation | undefined)[][] = [];
+  private deformationRevision = 0;
+  private deformationSource: CompiledAircraft | null = null;
+  private deformationStructure: FlightSimulation['structure'] | null = null;
+  private compiledAircraft: CompiledAircraft | null = null;
+  private readonly compiledBodyParts: { mesh: THREE.Mesh; partition: CompiledPartition }[] = [];
   private readonly fragments: FragmentRender[] = [];
   private readonly deformationCenter = new THREE.Vector3();
   private readonly controlRotation = new THREE.Quaternion();
@@ -569,6 +586,11 @@ export class SceneView {
         labels: ['满油圆点', '空油菱形'],
       },
       structureLayer: this.structureLayer,
+      compiledGeometry: this.compiledAircraft ? { key: this.compiledAircraft.key, partitions: this.compiledAircraft.partitions.length,
+        vertices: this.compiledAircraft.partitions.reduce((sum, partition) => sum + partition.positions.length / 3, 0),
+        triangles: this.compiledAircraft.partitions.reduce((sum, partition) => sum + partition.indices.length / 3, 0),
+        lastCompileMs: geometryMetrics.lastCompileMs,
+        bodyParts: this.compiledBodyParts.length, movableArea: this.compiledAircraft.controls.reduce((sum, control) => sum + control.area, 0) } : null,
       structureColors: this.wingSections.map((sections,index) => sections.map(section => {
         const colors=this.wingMeshes[index].geometry.getAttribute('color');
         return {load:section.physics?.stressRatio??0,r:colors.getX(section.vertexStart),g:colors.getY(section.vertexStart),b:colors.getZ(section.vertexStart)};
@@ -670,7 +692,7 @@ export class SceneView {
           maxDeflection = Math.max(maxDeflection, section.root.distanceTo(section.referenceRoot), section.tip.distanceTo(section.referenceTip));
           if (!section.previous || section.previous.bodyId !== section.bodyId) caps++;
           if (!section.next || section.next.bodyId !== section.bodyId) caps++;
-          if (!section.next || section.next.bodyId !== section.bodyId) continue;
+          if (section.vertexCount !== undefined || !section.next || section.next.bodyId !== section.bodyId) continue;
           for (let k = 0; k < 32; k++) {
             const a = section.vertexStart + section.rows * 32 + k, b = section.next.vertexStart + k;
             maxSeamGap = Math.max(maxSeamGap, Math.hypot(positions.getX(a) - positions.getX(b), positions.getY(a) - positions.getY(b), positions.getZ(a) - positions.getZ(b)));
@@ -1626,27 +1648,41 @@ export class SceneView {
     this.aircraftPending = true;
   }
 
-  private applyAircraft(): void {
+  setDesignReference({ stats, fuel }: DesignReferenceResult): void {
+    this.designCG.copy(stats.cg);
+    this.fuelCgFullPosition.copy(fuel.full); this.fuelCgEmptyPosition.copy(fuel.empty);
+    this.designLiftVisible = !!stats.aerodynamics.liftCenter; this.designDragVisible = !!stats.aerodynamics.dragCenter;
+    if (stats.aerodynamics.liftCenter) this.designLiftCenter.copy(stats.aerodynamics.liftCenter);
+    if (stats.aerodynamics.dragCenter) this.designDragCenter.copy(stats.aerodynamics.dragCenter);
+    this.designLiftDirection.copy(stats.aerodynamics.lift); this.designDragDirection.copy(stats.aerodynamics.drag);
+    if (!this.simulation) { this.body.position.copy(this.designCG).negate(); this.updateCenters(); }
+  }
+
+  private designRegions(d: AircraftDefinition) {
+    return aircraftWings(d).flatMap(({ id, key, wing }) => {
+      const regions = [];
+      for (const side of key === 'verticalTail' && !wing.mirrored ? [1] : [-1, 1]) {
+        for (let start = 0; start < Math.abs(wing.points[1].y) - 1e-8; start += 0.8) {
+          regions.push({ wingInstance: id, side, spanStart: start, spanEnd: Math.min(start + 0.8, Math.abs(wing.points[1].y)), movable: wing.controlSurface > 0 });
+        }
+      }
+      return regions;
+    });
+  }
+
+  private applyAircraft(preserveFragments = false): void {
     if (!this.aircraftPending) return;
-    const start = performance.now();
     const d = this.definition;
     this.aircraftPending = false;
     this.editorDirty = true;
-    const properties = derive(d);
-    this.designCG.copy(properties.cg);
-    const cgRange = fuelCgRange(d);
-    this.fuelCgFullPosition.copy(cgRange.full);
-    this.fuelCgEmptyPosition.copy(cgRange.empty);
-    this.designLiftVisible = !!properties.aerodynamics.liftCenter;
-    this.designDragVisible = !!properties.aerodynamics.dragCenter;
-    if (properties.aerodynamics.liftCenter) this.designLiftCenter.copy(properties.aerodynamics.liftCenter);
-    if (properties.aerodynamics.dragCenter) this.designDragCenter.copy(properties.aerodynamics.dragCenter);
-    this.designLiftDirection.copy(properties.aerodynamics.lift);
-    this.designDragDirection.copy(properties.aerodynamics.drag);
+    const compiled = this.simulation?.compiledGeometry;
+    if (this.simulation && !compiled) throw new Error('飞机表面尚未编译');
+    const compiledChanged = this.compiledAircraft !== (compiled ?? null);
+    this.compiledAircraft = compiled ?? null;
     this.body.position.copy(this.simulation?.telemetry.cg ?? this.designCG).negate();
-    this.clearFragments();
+    if (preserveFragments) this.freezeFragments(); else this.clearFragments();
     const instances = aircraftWings(d);
-    const regions = controlSurfaceRegions(d);
+    const regions = this.designRegions(d);
     while (this.wingMeshes.length > instances.length) {
       const index = this.wingMeshes.length - 1, mesh = this.wingMeshes.pop()!;
       this.body.remove(mesh, this.hingeLines[index]);
@@ -1664,6 +1700,7 @@ export class SceneView {
       this.wingHinges.pop();
       this.wingMovable.pop();
       this.wingAxes.pop();
+      this.wingDeformationFrames.pop();
       this.wingOriginalColors.pop();
       this.surfaceParameters.pop();
       this.wingParameters.length = this.wingMeshes.length * 12;
@@ -1683,12 +1720,12 @@ export class SceneView {
       const origin = wingInstancePoint(d, i, 1, 0, 0, 0, this.vector);
       const shapeKey = JSON.stringify([key, d.birdman ? 'dae11' : wing.airfoil ?? 'dae11', wing.mirrored, wing.cant, wing.lateralOffset,
         i === 2 && d.assembly.tailOnFin ? [d.assembly.tailIncidence, wingAirfoil(d, 'horizontalTail'), d.horizontalTail.dihedral, d.horizontalTail.points] : false,
-        regions.filter(region => region.wingInstance === i).map(region => region.movable)]);
+        compiled?.key ?? 'design']);
       const changed = this.wingChanged(i, wing, origin.x, origin.y, incidence) || this.wingShapeKeys[i] !== shapeKey;
       this.wingShapeKeys[i] = shapeKey;
-      if (!changed && this.surfaceParameters[i] === wing.controlSurface) continue;
+      if (!compiledChanged && !changed && this.surfaceParameters[i] === wing.controlSurface) continue;
       this.surfaceParameters[i] = wing.controlSurface;
-      const geometry = this.wingGeometry(wing, origin.x, origin.y, incidence, i, regions);
+      const geometry = compiled ? this.compiledWingGeometry(i, compiled) : this.wingGeometry(wing, origin.x, origin.y, incidence, i, regions);
       const position = geometry.getAttribute('position');
       const colors = new Float32Array(position.count * 3);
       const span = Math.max(wing.points[1].y, 0.1);
@@ -1723,6 +1760,7 @@ export class SceneView {
     this.pilot.visible = d.birdman;
     this.cockpit.visible = !d.birdman;
     this.updatePropulsionGeometry();
+    this.rebuildCompiledBody();
     this.cg.visible = !this.simulation || this.debug;
     if (!this.simulation) {
       this.positionAtLaunch();
@@ -1733,7 +1771,6 @@ export class SceneView {
     this.updateControlSurfaces();
     this.updateCenters();
     if (this.hoverTarget) this.setHoveredPart(this.hoverTarget);
-    this.metrics.geometryMs = performance.now() - start;
   }
 
   private updateCockpitShell(): void {
@@ -1834,15 +1871,16 @@ export class SceneView {
 
   private buildPropulsion(): void {
     const { engine: metal, intake: dark, graphite, orange, exhaust, exhaustInner, exhaustCore } = this.aircraftMaterials;
+    const g = ENGINE_GEOMETRY;
     // Open engine shells need their inner faces; closed parts keep front-face culling.
     const housingMaterial = metal.clone(), nozzleMaterial = graphite.clone();
     housingMaterial.side = nozzleMaterial.side = THREE.DoubleSide;
-    const housingGeometry = new THREE.CylinderGeometry(1, 0.82, 0.8, 20, 1, true);
-    const nozzleGeometry = new THREE.CylinderGeometry(0.82, 0.55, 0.2, 20, 1, true);
-    const intakeGeometry = new THREE.CircleGeometry(0.92, 20);
-    const exhaustBackGeometry = new THREE.CircleGeometry(0.82, 20);
-    const rimGeometry = new THREE.TorusGeometry(0.96, 0.035, 6, 20);
-    const hubGeometry = new THREE.ConeGeometry(0.24, 0.12, 12);
+    const housingGeometry = new THREE.CylinderGeometry(g.housing.frontRadius, g.housing.rearRadius, g.housing.frontX - g.housing.rearX, g.segments, 1, true);
+    const nozzleGeometry = new THREE.CylinderGeometry(g.nozzle.frontRadius, g.nozzle.rearRadius, g.nozzle.frontX - g.nozzle.rearX, g.segments, 1, true);
+    const intakeGeometry = new THREE.CircleGeometry(g.intake.radius, g.segments);
+    const exhaustBackGeometry = new THREE.CircleGeometry(g.exhaustBack.radius, g.segments);
+    const rimGeometry = new THREE.TorusGeometry(g.rim.radius, g.rim.tube, g.rim.segments, g.segments);
+    const hubGeometry = new THREE.ConeGeometry(g.hub.radius, g.hub.length, g.hub.segments);
     const flameGeometry = new THREE.ConeGeometry(1, 1, 12, 1, true);
     const flameCellGeometry = new THREE.OctahedronGeometry(1, 0);
     const supportGeometry = new THREE.BoxGeometry(1, 1, 0.06);
@@ -1853,22 +1891,22 @@ export class SceneView {
       this.body.add(group);
       const housing = this.mesh(housingGeometry, housingMaterial, group);
       housing.rotation.z = -Math.PI / 2;
-      housing.position.x = 0.1;
+      housing.position.x = (g.housing.frontX + g.housing.rearX) / 2;
       const nozzle = this.mesh(nozzleGeometry, nozzleMaterial, group);
       nozzle.rotation.z = -Math.PI / 2;
-      nozzle.position.x = -0.4;
+      nozzle.position.x = (g.nozzle.frontX + g.nozzle.rearX) / 2;
       const exhaustBack = this.mesh(exhaustBackGeometry, dark, group);
       exhaustBack.rotation.y = -Math.PI / 2;
-      exhaustBack.position.x = -0.295;
+      exhaustBack.position.x = g.exhaustBack.x;
       const intake = this.mesh(intakeGeometry, dark, group);
       intake.rotation.y = Math.PI / 2;
-      intake.position.x = 0.401;
+      intake.position.x = g.intake.x;
       const rim = this.mesh(rimGeometry, metal, group);
       rim.rotation.y = Math.PI / 2;
-      rim.position.x = 0.465;
+      rim.position.x = g.rim.x;
       const hub = this.mesh(hubGeometry, graphite, group);
       hub.rotation.z = -Math.PI / 2;
-      hub.position.x = 0.44;
+      hub.position.x = g.hub.x;
       const plume = new THREE.Group();
       plume.name = 'actual-thrust-exhaust';
       for (const material of [exhaust, exhaustInner, exhaustCore]) {
@@ -2005,7 +2043,8 @@ export class SceneView {
     this.endEditorDrag();
     this.editorDirty = true;
     this.simulation = sim;
-    if (sim && !reuseAircraft) this.updateAircraft(sim.definition);
+    if (sim && (!reuseAircraft || this.compiledAircraft !== sim.compiledGeometry)) this.updateAircraft(sim.geometryDefinition);
+    if (!sim) { this.wingShapeKeys.length = 0; this.aircraftPending = true; }
     this.applyAircraft();
     this.headOffset.set(0, 0, 0);
     this.headTime = sim?.elapsedTime ?? 0;
@@ -2200,16 +2239,11 @@ export class SceneView {
     if (sim.challenge === 'low-altitude' && sim.launching) {
       this.railLastAttachedX = sim.railPositionX;
     }
-    for (const sections of this.wingSections) {
-      for (const section of sections) {
-        const physical = section.physics;
-        if (!physical) continue;
-        section.previousBodyId = physical.bodyId;
-        section.previousRoot.copy(physical.root.position);
-        section.previousTip.copy(physical.tip.position);
-        section.previousRootRotation.copy(physical.root.quaternion);
-        section.previousTipRotation.copy(physical.tip.quaternion);
-      }
+    for (const physical of sim.structure.sections) {
+      const geometry = this.physicsGeometry[physical.id];
+      geometry.previousBodyId = physical.bodyId;
+      geometry.previousRoot.copy(physical.root.position); geometry.previousTip.copy(physical.tip.position);
+      geometry.previousRootRotation.copy(physical.root.quaternion); geometry.previousTipRotation.copy(physical.tip.quaternion);
     }
     for (const fragment of this.fragments) {
       const body = (this.ghostFragments ?? sim.fragments).find(body => body.id === fragment.id);
@@ -2225,7 +2259,9 @@ export class SceneView {
     if (this.disposed) return;
     const start = performance.now();
     this.restoreCameraClearance();
+    const geometryStart = performance.now();
     this.applyAircraft();
+    this.metrics.geometryMs = performance.now() - geometryStart;
     const seconds = Math.min(0.1, Math.max(0, Number.isFinite(dt) ? dt : 0));
     this.elapsed += seconds;
     this.waterTime.value = this.reducedMotion ? 0 : this.elapsed;
@@ -2238,7 +2274,9 @@ export class SceneView {
       this.renderCG.lerpVectors(this.previousCG, sim.telemetry.cg, blend);
       this.body.position.copy(this.renderCG).negate();
       this.driver.position.set(sim.pilotOffset.x, 0, sim.pilotOffset.z);
+      const deformationStart = performance.now();
       this.updateControlSurfaces();
+      this.metrics.geometryMs += performance.now() - deformationStart;
       this.followCamera(seconds, false);
       if (!isLaboratory(sim.challenge)) { this.recordTrail(seconds); this.recordWingTrail(); }
       this.updateDebug();
@@ -2373,6 +2411,10 @@ export class SceneView {
   }
 
   private updateAuxiliarySupports(): void {
+    if (this.compiledAircraft) {
+      for (const support of this.auxiliarySupports) support.mesh.visible = false;
+      this.updateCompiledSupports(); return;
+    }
     for (const support of this.auxiliarySupports ?? []) {
       let section: WingRenderSection | undefined;
       for (const candidate of this.wingSections[support.wingIndex]) {
@@ -2396,8 +2438,137 @@ export class SceneView {
     }
   }
 
+  private compiledWingGeometry(index: number, compiled: CompiledAircraft): THREE.BufferGeometry {
+    const partitions = compiled.partitions.filter(partition => partition.wingInstance === index);
+    const vertexCount = partitions.reduce((sum, partition) => sum + partition.positions.length / 3, 0);
+    const indexCount = partitions.reduce((sum, partition) => sum + partition.indices.length, 0);
+    const positions = new Float32Array(vertexCount * 3), coordinates = new Float32Array(vertexCount * 4);
+    const hinges = new Float32Array(vertexCount * 3), movable = new Uint8Array(vertexCount), indices = new Uint32Array(indexCount);
+    const sections = this.wingSections[index] ??= []; sections.length = 0;
+    const wing = wingInstanceWing(this.definition, index), hingeU = 1 - wing.controlSurface;
+    const sides = this.wingKey(index) === 'verticalTail' && !wing.mirrored ? [1] : [-1, 1];
+    const controls = sides.map(side => compiled.controls.find(control => control.wingInstance === index && control.side === side));
+    const axes = sides.map((side, sideIndex) => controls[sideIndex]
+      ? new THREE.Vector3().fromArray(controls[sideIndex]!.axis) : wingControlAxis(this.definition, index, side, new THREE.Vector3()));
+    let vertexOffset = 0, indexOffset = 0;
+    for (const partition of partitions) {
+      const count = partition.positions.length / 3;
+      positions.set(partition.positions, vertexOffset * 3);
+      const section: WingRenderSection = {
+        wingIndex: index, side: partition.side, spanStart: partition.spanStart, spanEnd: partition.spanEnd,
+        movable: partition.movable, vertexStart: vertexOffset, vertexCount: count, rows: 0, rootCap: vertexOffset, tipCap: vertexOffset,
+        skin: [], rootIndices: [], tipIndices: [], controlRootIndices: [], controlTipIndices: [], hingeIndices: [],
+        previous: null, next: null, physics: null, bodyId: 0,
+        root: new THREE.Vector3(), tip: new THREE.Vector3(), rootRotation: new THREE.Quaternion(), tipRotation: new THREE.Quaternion(),
+        referenceRoot: new THREE.Vector3(), referenceTip: new THREE.Vector3(),
+        neutralRoot: new THREE.Vector3(), neutralTip: new THREE.Vector3(),
+        neutralIncidence: aircraftWings(this.definition)[index].incidence * DEG,
+      };
+      wingInstancePoint(this.definition, index, partition.side, partition.spanStart, 0.25, 0, section.referenceRoot);
+      wingInstancePoint(this.definition, index, partition.side, partition.spanEnd, 0.25, 0, section.referenceTip);
+      section.neutralRoot.copy(section.referenceRoot); section.neutralTip.copy(section.referenceTip);
+      const control = controls[sides.indexOf(partition.side)];
+      if (control) this.deformationHinge.fromArray(control.hinge);
+      else wingControlHinge(this.definition, index, partition.side, 0, this.deformationHinge);
+      for (let local = 0; local < count; local++) {
+        const vertex = vertexOffset + local, source = local * 3, offset = vertex * 4;
+        coordinates[offset] = partition.coordinates[source]; coordinates[offset + 1] = partition.coordinates[source + 1];
+        coordinates[offset + 2] = partition.coordinates[source + 2]; coordinates[offset + 3] = hingeU;
+        this.deformationHinge.toArray(hinges, vertex * 3); movable[vertex] = partition.movable ? 1 : 0;
+      }
+      const edges = new Set<string>();
+      for (let triangle = 0; triangle < partition.indices.length; triangle += 3) {
+        for (let corner = 0; corner < 3; corner++) {
+          const local = partition.indices[triangle + corner], vertex = vertexOffset + local;
+          section.skin.push(vertex); indices[indexOffset++] = vertex;
+          if (!partition.movable || wing.controlSurface <= 0 || wing.controlSurface >= 1) continue;
+          const next = partition.indices[triangle + (corner + 1) % 3];
+          if (Math.abs(partition.coordinates[local * 3 + 1] - hingeU) > 1e-5 ||
+            Math.abs(partition.coordinates[next * 3 + 1] - hingeU) > 1e-5 ||
+            Math.abs(partition.coordinates[local * 3] - partition.coordinates[next * 3]) < 1e-6 ||
+            partition.coordinates[local * 3 + 2] < -1e-5 || partition.coordinates[next * 3 + 2] < -1e-5) continue;
+          const edge = `${Math.min(local, next)}:${Math.max(local, next)}`;
+          if (!edges.has(edge)) { edges.add(edge); section.hingeIndices!.push(vertex, vertexOffset + next); }
+        }
+      }
+      sections.push(section); vertexOffset += count;
+    }
+    const geometry = new THREE.BufferGeometry()
+      .setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage))
+      .setAttribute('normal', new THREE.BufferAttribute(new Float32Array(positions.length), 3).setUsage(THREE.DynamicDrawUsage))
+      .setIndex(new THREE.BufferAttribute(indices.slice(), 1).setUsage(THREE.DynamicDrawUsage));
+    this.wingNormalGeometry[index]?.dispose();
+    this.wingNormalGeometry[index] = new THREE.BufferGeometry()
+      .setAttribute('position', geometry.getAttribute('position')).setAttribute('normal', geometry.getAttribute('normal'))
+      .setIndex(new THREE.BufferAttribute(indices, 1));
+    this.wingNeutral[index] = positions.slice(); this.wingCoordinates[index] = coordinates;
+    this.wingHinges[index] = hinges; this.wingMovable[index] = movable; this.wingAxes[index] = axes;
+    this.hingeLines[index].geometry.dispose();
+    this.hingeLines[index].geometry = new THREE.BufferGeometry().setAttribute('position', geometry.getAttribute('position'))
+      .setIndex(new THREE.BufferAttribute(new Uint32Array(sections.reduce((sum, section) => sum + section.hingeIndices!.length, 0)), 1).setUsage(THREE.DynamicDrawUsage));
+    this.hingeLines[index].visible = sections.some(section => section.hingeIndices!.length > 0);
+    this.writeWingIndices(index, 0, geometry, this.hingeLines[index].geometry);
+    return geometry;
+  }
+
+  private rebuildCompiledBody(): void {
+    for (const { mesh } of this.compiledBodyParts) { this.body.remove(mesh); mesh.geometry.dispose(); }
+    this.compiledBodyParts.length = 0;
+    const compiled = this.compiledAircraft;
+    this.beam.visible = this.nose.visible = !compiled;
+    for (const object of this.cockpit.children) object.visible = !compiled;
+    for (const engine of this.engines) for (const object of engine.children) if (object instanceof THREE.Mesh) object.visible = !compiled;
+    for (const support of this.engineSupports) support.visible = !compiled && this.definition.engine.count > 0;
+    this.fuelTank.visible = !compiled && this.definition.engine.count > 0 && this.definition.fuelTank.capacity > 0;
+    if (!compiled) return;
+    this.support.visible = false;
+    for (const support of this.auxiliarySupports) support.mesh.visible = false;
+    const engineMaterials = {
+      housing: this.aircraftMaterials.engine, nozzle: this.aircraftMaterials.graphite,
+      intake: this.aircraftMaterials.intake, 'exhaust-back': this.aircraftMaterials.intake,
+      rim: this.aircraftMaterials.engine, hub: this.aircraftMaterials.graphite,
+    };
+    for (const partition of compiled.partitions) {
+      if (partition.wingInstance >= 0) continue;
+      if (partition.kind === 'engine' && !partition.enginePart) throw new Error(t('飞机引擎分区缺少部件来源'));
+      const geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(partition.positions.slice(), 3).setUsage(THREE.DynamicDrawUsage))
+        .setIndex(new THREE.BufferAttribute(partition.indices, 1));
+      geometry.computeVertexNormals();
+      const material = partition.kind === 'canopy' ? this.aircraftMaterials.canopy : partition.kind === 'nose' || partition.kind === 'fuel-tank' ? this.aircraftMaterials.orange
+        : partition.kind === 'engine' ? engineMaterials[partition.enginePart!]
+          : partition.kind === 'engine-support' ? this.aircraftMaterials.graphite : this.aircraftMaterials.ivory;
+      const mesh = this.mesh(geometry, material, this.body); mesh.name = `compiled-${partition.kind}-${partition.sourceIndex}`;
+      this.compiledBodyParts.push({ mesh, partition });
+    }
+  }
+
+  private updateCompiledSupports(): void {
+    for (const { mesh, partition } of this.compiledBodyParts) {
+      if (partition.kind !== 'wing-support') continue;
+      const section = this.wingSections[partition.supportWingInstance]?.find(section => (partition.side === 0 || section.side === partition.side) && section.spanStart < 1e-6);
+      mesh.visible = true;
+      const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+      if (!section || section.bodyId !== 0) {
+        if (mesh.userData.attached !== false) {
+          (positions.array as Float32Array).set(partition.positions); positions.needsUpdate = true;
+          mesh.geometry.computeVertexNormals(); mesh.geometry.computeBoundingSphere();
+        }
+        mesh.userData.attached = false; continue;
+      }
+      mesh.userData.attached = true;
+      for (let vertex = 0; vertex < positions.count; vertex++) {
+        this.deformationPoint.fromArray(partition.positions, vertex * 3);
+        const x = this.deformationPoint.x, y = this.deformationPoint.y, z = this.deformationPoint.z;
+        this.deformPoint(section, this.deformationPoint, 0);
+        const weight = partition.coordinates[vertex * 3];
+        positions.setXYZ(vertex, x + (this.deformationPoint.x - x) * weight, y + (this.deformationPoint.y - y) * weight, z + (this.deformationPoint.z - z) * weight);
+      }
+      positions.needsUpdate = true; mesh.geometry.computeVertexNormals(); mesh.geometry.computeBoundingSphere();
+    }
+  }
+
   /** 结构边界独立顶点；段内 0.2 m 显示细分，断口使用独立封口顶点。 */
-  private wingGeometry(wing: Wing, rootX: number, height: number, incidence: number, index: number, regions = controlSurfaceRegions(this.definition)): THREE.BufferGeometry {
+  private wingGeometry(wing: Wing, rootX: number, height: number, incidence: number, index: number, regions = this.designRegions(this.definition)): THREE.BufferGeometry {
     const vertices: number[] = [], indices: number[] = [], hinges: number[] = [], movable: number[] = [], coordinates: number[] = [];
     const sections = this.wingSections[index] ??= [];
     sections.length = 0;
@@ -2422,9 +2593,7 @@ export class SceneView {
           movable: region.movable,
           vertexStart: vertices.length / 3, rows,
           rootCap: 0, tipCap: 0, skin: [], rootIndices: [], tipIndices: [], controlRootIndices: [], controlTipIndices: [], previous, next: null,
-          physics: null, bodyId: 0, previousBodyId: -1,
-          previousRoot: new THREE.Vector3(), previousTip: new THREE.Vector3(),
-          previousRootRotation: new THREE.Quaternion(), previousTipRotation: new THREE.Quaternion(),
+          physics: null, bodyId: 0,
           root: new THREE.Vector3(), tip: new THREE.Vector3(),
           rootRotation: new THREE.Quaternion(), tipRotation: new THREE.Quaternion(),
           referenceRoot: new THREE.Vector3(), referenceTip: new THREE.Vector3(),
@@ -2534,7 +2703,8 @@ export class SceneView {
       } else if (section.next.movable !== section.movable) {
         for (const vertex of section.controlTipIndices) triangles[count++] = vertex;
       }
-      if (section.movable) for (let row = 0; row < section.rows; row++) {
+      if (section.hingeIndices && section.movable) for (const vertex of section.hingeIndices) lines[lineCount++] = vertex;
+      if (!section.hingeIndices && section.movable) for (let row = 0; row < section.rows; row++) {
         lines[lineCount++] = section.vertexStart + row * 32 + 12;
         lines[lineCount++] = section.vertexStart + (row + 1) * 32 + 12;
       }
@@ -2547,8 +2717,13 @@ export class SceneView {
   private removeFragment(fragment: FragmentRender): void {
     for (const object of [fragment.mesh, fragment.hinge]) {
       this.scene.remove(object);
-      // 顶点属性由主翼拥有；片体只释放自己的索引与VAO，不能销毁仍被主翼引用的GPU缓冲。
-      for (const name in object.geometry.attributes) object.geometry.deleteAttribute(name);
+      // Shared buffers survive until their final mesh or frozen fragment releases them.
+      const owners = [...this.wingMeshes.map(mesh => mesh.geometry), ...this.wingNormalGeometry,
+        ...this.fragments.flatMap(part => [part.mesh.geometry, part.hinge.geometry])];
+      for (const name in object.geometry.attributes) {
+        const attribute = object.geometry.getAttribute(name);
+        if (owners.some(owner => owner !== object.geometry && owner.getAttribute(name) === attribute)) object.geometry.deleteAttribute(name);
+      }
       object.geometry.dispose();
     }
   }
@@ -2560,12 +2735,61 @@ export class SceneView {
 
   private syncWingPhysics(): void {
     const sim = this.simulation;
+    const resetSpans = this.deformationSource !== this.compiledAircraft || this.deformationStructure !== (sim?.structure ?? null);
+    this.deformationSource = this.compiledAircraft; this.deformationStructure = sim?.structure ?? null;
+    this.physicsGeometry.length = sim?.structure.sections.length ?? 0;
+    for (const physical of sim?.structure.sections ?? []) {
+      const geometry = this.physicsGeometry[physical.id] ??= {
+        root: new THREE.Vector3(), tip: new THREE.Vector3(), rootRotation: new THREE.Quaternion(), tipRotation: new THREE.Quaternion(),
+        previousRoot: new THREE.Vector3(), previousTip: new THREE.Vector3(), previousRootRotation: new THREE.Quaternion(), previousTipRotation: new THREE.Quaternion(),
+        previousBodyId: physical.bodyId, spans: new Map(),
+      };
+      geometry.root.copy(physical.root.position); geometry.tip.copy(physical.tip.position);
+      geometry.rootRotation.copy(physical.root.quaternion); geometry.tipRotation.copy(physical.tip.quaternion);
+      geometry.previousRoot.copy(physical.root.position); geometry.previousTip.copy(physical.tip.position);
+      geometry.previousRootRotation.copy(physical.root.quaternion); geometry.previousTipRotation.copy(physical.tip.quaternion);
+      geometry.previousBodyId = physical.bodyId;
+      if (resetSpans) geometry.spans.clear();
+    }
     for (let index = 0; index < this.wingSections.length; index++) {
+      const frames = this.wingDeformationFrames[index] ??= [];
+      frames.length = sim ? this.wingCoordinates[index].length / 4 : 0;
       for (const section of this.wingSections[index]) {
         section.physics = sim?.structure.sections.find(physical => physical.wingInstance === index && physical.side === section.side
-          && Math.abs(physical.spanStart - section.spanStart) < 1e-8) ?? null;
-        section.previousBodyId = -1;
+          && section.spanStart >= physical.spanStart - 1e-6 && section.spanEnd <= physical.spanEnd + 1e-6) ?? null;
+        const physical = section.physics;
+        if (!physical) continue;
+        const geometry = this.physicsGeometry[physical.id];
+        section.referenceRoot = physical.referenceRoot; section.referenceTip = physical.referenceTip;
+        section.root = geometry.root; section.tip = geometry.tip;
+        section.rootRotation = geometry.rootRotation; section.tipRotation = geometry.tipRotation;
+        if (section.vertexCount !== undefined) {
+          wingInstancePoint(this.definition, index, section.side, physical.spanStart, 0.25, 0, section.neutralRoot);
+          wingInstancePoint(this.definition, index, section.side, physical.spanEnd, 0.25, 0, section.neutralTip);
+        }
+        const count = (section.rows + 1) * 32;
+        for (let local = 0; local < (section.vertexCount ?? count + 64); local++) {
+          const vertex = section.vertexCount !== undefined || local < count ? section.vertexStart + local
+            : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
+          const span = this.wingCoordinates[index][vertex * 4], t = clamp((span - physical.spanStart) / (physical.spanEnd - physical.spanStart), 0, 1);
+          let frame = geometry.spans.get(t);
+          if (!frame) { frame = { t, matrix: new THREE.Matrix4(), revision: -1 }; geometry.spans.set(t, frame); }
+          frames[vertex] = frame;
+        }
       }
+    }
+  }
+
+  private interpolateWingPhysics(): void {
+    const sim = this.simulation;
+    if (!sim) return;
+    this.deformationRevision++;
+    for (const physical of sim.structure.sections) {
+      const geometry = this.physicsGeometry[physical.id], blend = geometry.previousBodyId === physical.bodyId ? this.renderBlend : 1;
+      geometry.root.lerpVectors(geometry.previousRoot, physical.root.position, blend);
+      geometry.tip.lerpVectors(geometry.previousTip, physical.tip.position, blend);
+      geometry.rootRotation.slerpQuaternions(geometry.previousRootRotation, physical.root.quaternion, blend);
+      geometry.tipRotation.slerpQuaternions(geometry.previousTipRotation, physical.tip.quaternion, blend);
     }
   }
 
@@ -2590,6 +2814,7 @@ export class SceneView {
     applyGhost(ghost.simulation, a, ghost.ghostFragments);
     ghost.ensureFragments(); ghost.captureFlightState();
     applyGhost(ghost.simulation, b, ghost.ghostFragments);
+    if (alpha < 1) applyGhostTopology(ghost.simulation, a);
     ghost.renderBlend = alpha;
     ghost.aircraft.position.lerpVectors(ghost.previousPosition, ghost.simulation.position, alpha);
     ghost.aircraft.quaternion.slerpQuaternions(ghost.previousQuaternion, ghost.simulation.quaternion, alpha);
@@ -2600,6 +2825,19 @@ export class SceneView {
     ghost.updateExhaust();
   }
 
+  private freezeFragments(): void {
+    for (const fragment of this.fragments) {
+      if (fragment.frozen) continue;
+      fragment.frozen = true;
+      fragment.originalColors = this.wingOriginalColors[fragment.wingIndex];
+      fragment.loads = this.wingSections[fragment.wingIndex].filter(section => section.bodyId === fragment.id)
+        .map(section => ({ start: section.vertexStart, count: section.vertexCount ?? 0, ratio: section.physics?.stressRatio ?? 0 }));
+      for (const geometry of [this.wingMeshes[fragment.wingIndex].geometry, this.wingNormalGeometry[fragment.wingIndex], this.hingeLines[fragment.wingIndex].geometry]) {
+        for (const name in geometry.attributes) geometry.deleteAttribute(name);
+      }
+    }
+  }
+
   private ensureFragments(): boolean {
     const sim = this.simulation;
     if (!sim) return false;
@@ -2608,7 +2846,7 @@ export class SceneView {
       const fragment = this.fragments[index];
       let present = false;
       for (const body of this.ghostFragments ?? sim.fragments) if (body.id === fragment.id) { present = true; break; }
-      if (present && this.wingSections[fragment.wingIndex].some(section => section.physics?.bodyId === fragment.id)) continue;
+      if (present && (fragment.frozen || this.wingSections[fragment.wingIndex].some(section => section.physics?.bodyId === fragment.id))) continue;
       this.removeFragment(fragment);
       this.fragments.splice(index, 1);
       changed = true;
@@ -2627,13 +2865,16 @@ export class SceneView {
       hinge.name = `${mesh.name}-hinge`;
       this.scene.add(hinge);
       this.fragments.push({ id: body.id, wingIndex, mesh, hinge, previousPosition: body.position.clone(),
-        previousQuaternion: body.quaternion.clone(), previousCG: body.cg.clone(), cg: body.cg.clone(), captured: false });
+        previousQuaternion: body.quaternion.clone(), previousCG: body.cg.clone(), cg: body.cg.clone(), captured: false, frozen: false });
       changed = true;
     }
     return changed;
   }
 
   private deformPoint(section: WingRenderSection, point: THREE.Vector3, t: number): void {
+    if (section.physics && this.simulation) {
+      this.simulation.structure.deformPoint(section.physics, point, t, this.physicsGeometry); return;
+    }
     this.deformationRotation.slerpQuaternions(section.rootRotation, section.tipRotation, t);
     this.deformationReference.lerpVectors(section.referenceRoot, section.referenceTip, t);
     point.sub(this.deformationReference).applyQuaternion(this.deformationRotation);
@@ -2649,6 +2890,10 @@ export class SceneView {
   /** 舵面先在中性翼面旋转，再组合物理弹性。断片保持物理冻结舵角。 */
   private updateControlSurfaces(): void {
     const sim = this.simulation, controls = sim?.controlDeflections;
+    if (sim && sim.compiledGeometry !== this.compiledAircraft) {
+      this.updateAircraft(sim.geometryDefinition); this.applyAircraft(sim.geometryRevisionReason === 'incidence'); return;
+    }
+    this.interpolateWingPhysics();
     let topologyChanged = this.ensureFragments();
     if (sim) {
       for (const fragment of this.fragments) {
@@ -2680,27 +2925,20 @@ export class SceneView {
         const physical = section.physics, bodyId = physical?.bodyId ?? 0;
         if (section.bodyId !== bodyId) topologyChanged = true;
         section.bodyId = bodyId;
-        const movable = physical ? physical.surface.controlEffectiveness > 0 : section.movable;
+        const movable = physical && section.vertexCount === undefined ? physical.surface.controlEffectiveness > 0 : section.movable;
         const controlChanged = bodyId === 0 && section.movable !== movable;
         if (controlChanged) {
           section.movable = movable;
           controlsChanged = topologyChanged = true;
         }
-        const blend = section.previousBodyId === bodyId ? this.renderBlend : 1;
-        if (physical) {
-          section.referenceRoot.copy(physical.referenceRoot);
-          section.referenceTip.copy(physical.referenceTip);
-          section.root.lerpVectors(section.previousRoot, physical.root.position, blend);
-          section.tip.lerpVectors(section.previousTip, physical.tip.position, blend);
-          section.rootRotation.slerpQuaternions(section.previousRootRotation, physical.root.quaternion, blend);
-          section.tipRotation.slerpQuaternions(section.previousTipRotation, physical.tip.quaternion, blend);
-        } else {
+        if (!physical) {
           section.root.copy(section.referenceRoot);
           section.tip.copy(section.referenceTip);
           section.rootRotation.identity();
           section.tipRotation.identity();
         }
         const fragment = bodyId === 0 ? undefined : this.fragmentRender(bodyId, index);
+        if (fragment?.frozen) continue;
         const sideIndex = section.side < 0 || vertical && this.wingAxes[index].length === 1 ? 0 : 1;
         const direction = key === 'mainWing' ? -1 : key === 'horizontalTail' ? -section.side : 1;
         // Physical reference geometry can rotate live in the tunnel. Transform
@@ -2711,10 +2949,12 @@ export class SceneView {
         this.controlRotation.setFromAxisAngle(this.deformationAxis, physical?.controlDeflection ?? angle * direction);
         const count = (section.rows + 1) * 32;
         let previousT = -1, t = 0;
-        for (let local = 0; local < count + 64; local++) {
-          const vertex = local < count ? section.vertexStart + local
+        for (let local = 0; local < (section.vertexCount ?? count + 64); local++) {
+          const vertex = section.vertexCount !== undefined || local < count ? section.vertexStart + local
             : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
-          if (local < count) {
+          const frame = physical ? this.wingDeformationFrames[index][vertex] : undefined;
+          if (frame) t = frame.t;
+          else if (local < count) {
             if (local % 32 === 0) t = clamp((this.wingCoordinates[index][vertex * 4] - section.spanStart) / (section.spanEnd - section.spanStart), 0, 1);
           } else t = local < count + 32 ? 0 : 1;
           if (controlChanged) {
@@ -2729,25 +2969,32 @@ export class SceneView {
           }
           if (t !== previousT) {
             this.neutralReference.lerpVectors(section.neutralRoot, section.neutralTip, t);
-            this.deformationCenter.lerpVectors(section.referenceRoot, section.referenceTip, t);
-            this.deformPoint(section, this.deformationCenter, t);
+            this.deformationReference.lerpVectors(section.referenceRoot, section.referenceTip, t);
+            if (physical && sim && frame) {
+              if (frame.revision !== this.deformationRevision) {
+                sim.structure.deformFrame(physical, t, frame.matrix, this.physicsGeometry); frame.revision = this.deformationRevision;
+              }
+            } else {
+              this.deformationCenter.copy(this.deformationReference); this.deformPoint(section, this.deformationCenter, t);
+            }
             previousT = t;
           }
-          if (index === 2 && this.definition.assembly.tailOnFin && physical) {
+          if (section.vertexCount === undefined && index === 2 && this.definition.assembly.tailOnFin && physical) {
             const coords = this.wingCoordinates[index], offset = vertex * 4;
             finPoint(this.definition, coords[offset], coords[offset + 1], coords[offset + 2], this.deformationPoint, physical.crownIncidence, section.side);
             this.deformationReference.lerpVectors(section.referenceRoot, section.referenceTip, t);
             this.deformationPoint.sub(this.deformationReference);
           } else this.deformationPoint.fromArray(neutral, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
           if (this.wingMovable[index][vertex]) {
-            if (index === 2 && this.definition.assembly.tailOnFin && physical) {
+            if (section.vertexCount === undefined && index === 2 && this.definition.assembly.tailOnFin && physical) {
               const coords = this.wingCoordinates[index], offset = vertex * 4;
               finPoint(this.definition, coords[offset], coords[offset + 3], 0, this.deformationHinge, physical.crownIncidence, section.side);
               this.deformationHinge.sub(this.deformationReference);
             } else this.deformationHinge.fromArray(hinges, vertex * 3).sub(this.neutralReference).applyQuaternion(this.incidenceRotation);
             this.deformationPoint.sub(this.deformationHinge).applyQuaternion(this.controlRotation).add(this.deformationHinge);
           }
-          this.deformationPoint.applyQuaternion(this.deformationRotation).add(this.deformationCenter);
+          if (frame) this.deformationPoint.add(this.deformationReference).applyMatrix4(frame.matrix);
+          else this.deformationPoint.applyQuaternion(this.deformationRotation).add(this.deformationCenter);
           if (fragment) this.deformationPoint.sub(fragment.cg);
           position.setXYZ(vertex, this.deformationPoint.x, this.deformationPoint.y, this.deformationPoint.z);
         }
@@ -2764,10 +3011,11 @@ export class SceneView {
     if (topologyChanged) {
       if (!this.aircraftOnly) this.clearWingTrail();
       for (let index = 0; index < this.wingSections.length; index++) this.writeWingIndices(index, 0, this.wingMeshes[index].geometry, this.hingeLines[index].geometry);
-      for (const fragment of this.fragments) this.writeWingIndices(fragment.wingIndex, fragment.id, fragment.mesh.geometry, fragment.hinge.geometry);
+      for (const fragment of this.fragments) if (!fragment.frozen) this.writeWingIndices(fragment.wingIndex, fragment.id, fragment.mesh.geometry, fragment.hinge.geometry);
       this.metrics.memory = this.geometryMemory();
     }
     for (const fragment of this.fragments) {
+      if (fragment.frozen) continue;
       this.updateWingBounds(fragment.wingIndex, fragment.id, fragment.mesh.geometry);
       fragment.hinge.geometry.boundingBox = fragment.mesh.geometry.boundingBox;
       fragment.hinge.geometry.boundingSphere = fragment.mesh.geometry.boundingSphere;
@@ -2791,12 +3039,26 @@ export class SceneView {
         if (ratio <= 0.5) continue;
         this.structureColor.setHex(structureLoadColor(ratio));
         const count = (section.rows + 1) * 32;
-        for (let local = 0; local < count + 64; local++) {
-          const vertex = local < count ? section.vertexStart + local : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
+        for (let local = 0; local < (section.vertexCount ?? count + 64); local++) {
+          const vertex = section.vertexCount !== undefined || local < count ? section.vertexStart + local : local < count + 32 ? section.rootCap + local - count : section.tipCap + local - count - 32;
           colors.setXYZ(vertex, this.structureColor.r, this.structureColor.g, this.structureColor.b);
         }
       }
       colors.needsUpdate = true;
+    }
+    for (const fragment of this.fragments) {
+      if (!fragment.frozen || !fragment.originalColors) continue;
+      const colors = fragment.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
+      (colors.array as Float32Array).set(fragment.originalColors); colors.needsUpdate = true;
+    }
+    if (this.structureLayer) for (const fragment of this.fragments) {
+      if (!fragment.frozen || !fragment.loads || !fragment.originalColors) continue;
+      const colors = fragment.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
+      for (const load of fragment.loads) {
+        if (load.ratio <= 0.5) continue;
+        this.structureColor.setHex(structureLoadColor(load.ratio));
+        for (let vertex = load.start; vertex < load.start + load.count; vertex++) colors.setXYZ(vertex, this.structureColor.r, this.structureColor.g, this.structureColor.b);
+      }
     }
   }
 
@@ -2807,7 +3069,7 @@ export class SceneView {
     bounds.makeEmpty();
     for (const section of this.wingSections[index]) {
       if (section.bodyId !== bodyId) continue;
-      const end = section.vertexStart + (section.rows + 1) * 32;
+      const end = section.vertexStart + (section.vertexCount ?? (section.rows + 1) * 32);
       for (let vertex = section.vertexStart; vertex < end; vertex++) {
         const x = positions.getX(vertex), y = positions.getY(vertex), z = positions.getZ(vertex);
         bounds.min.x = Math.min(bounds.min.x, x); bounds.max.x = Math.max(bounds.max.x, x);
@@ -2838,7 +3100,7 @@ export class SceneView {
     }
     for (const section of this.wingSections[index]) {
       const next = section.next;
-      if (!next || next.bodyId !== section.bodyId) continue;
+      if (section.vertexCount !== undefined || !next || next.vertexCount !== undefined || next.bodyId !== section.bodyId) continue;
       for (let k = 0; k < 32; k++) {
         const a = (section.vertexStart + section.rows * 32 + k) * 3, b = (next.vertexStart + k) * 3;
         for (let axis = 0; axis < 3; axis++) normals[a + axis] = normals[b + axis] = normals[a + axis] + normals[b + axis];
@@ -3969,8 +4231,16 @@ export class SceneView {
 
   private wingTipWorld(side: number, out: THREE.Vector3): THREE.Vector3 {
     for (const section of this.wingSections[0]) {
-      if (section.side !== side || section.next) continue;
-      out.fromBufferAttribute(this.wingMeshes[0].geometry.getAttribute('position'), section.vertexStart + section.rows * 32 + 16);
+      if (section.side !== side || section.next || section.vertexCount !== undefined && section.spanEnd < Math.abs(this.definition.mainWing.points[1].y) - 1e-5) continue;
+      const positions = this.wingMeshes[0].geometry.getAttribute('position');
+      if (section.vertexCount !== undefined) {
+        let selected = section.vertexStart, best = Infinity;
+        for (let vertex = section.vertexStart; vertex < section.vertexStart + section.vertexCount; vertex++) {
+          const offset = vertex * 4, score = Math.abs(this.wingCoordinates[0][offset] - section.spanEnd) + Math.abs(this.wingCoordinates[0][offset + 1] - 1);
+          if (score < best) { best = score; selected = vertex; }
+        }
+        out.fromBufferAttribute(positions, selected);
+      } else out.fromBufferAttribute(positions, section.vertexStart + section.rows * 32 + 16);
       const fragment = this.fragmentRender(section.bodyId);
       if (fragment) return out.applyQuaternion(fragment.mesh.quaternion).add(fragment.mesh.position);
       return out.sub(this.renderCG).applyQuaternion(this.aircraft.quaternion).add(this.aircraft.position);

@@ -235,10 +235,12 @@ export const downhillRuins: readonly ChallengeRuin[] = downhillRuinPassages.flat
   return blocks;
 });
 
-export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:number;z:number}, b = a): boolean {
+export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:number;z:number}, b = a, tolerance = 0): boolean {
   if (challenge !== 'downhill' || Math.max(a.x,b.x) < DOWNHILL_PLAIN_START) return false;
+  // Projecting three padded local axes onto a world axis is bounded by sqrt(3).
+  const padding = tolerance * Math.sqrt(3);
   for (const ruin of downhillRuins) {
-    if (Math.max(a.x,b.x) < ruin.x - ruin.radiusX || Math.min(a.x,b.x) > ruin.x + ruin.radiusX) continue;
+    if (Math.max(a.x,b.x) < ruin.x - ruin.radiusX - padding || Math.min(a.x,b.x) > ruin.x + ruin.radiusX + padding) continue;
     const cy = Math.cos(ruin.yaw), sy = Math.sin(ruin.yaw), ct = Math.cos(ruin.tilt), st = Math.sin(ruin.tilt);
     const ax = a.x - ruin.x, ay = a.y - ruin.y, az = a.z - ruin.z;
     const bx = b.x - ruin.x, by = b.y - ruin.y, bz = b.z - ruin.z;
@@ -247,7 +249,7 @@ export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:numbe
     for (let axis = 0; axis < 3; axis++) {
       const start = axis === 0 ? cy * ax - sy * az : axis === 1 ? ct * ay + st * ar : -st * ay + ct * ar;
       const end = axis === 0 ? cy * bx - sy * bz : axis === 1 ? ct * by + st * br : -st * by + ct * br;
-      const half = (axis === 0 ? ruin.width : axis === 1 ? ruin.height : ruin.length) / 2;
+      const half = (axis === 0 ? ruin.width : axis === 1 ? ruin.height : ruin.length) / 2 + tolerance;
       const delta = end - start;
       if (Math.abs(delta) < 1e-12) {
         if (Math.abs(start) > half) { entry = Infinity; break; }

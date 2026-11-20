@@ -4,6 +4,7 @@ import { AirframeExposure } from '../src/exposure';
 import { BODY_GEOMETRY, clone, cockpitGeometry, presets, DEG } from '../src/model';
 import { FlightSimulation } from '../src/physics';
 import { DRAG_TERMS } from '../src/drag';
+import { getCompiledAircraft } from '../src/compiled-geometry-cache';
 
 const normal=()=>clone(presets.find(d=>d.name==='基础单发型')!);
 const neutral={weight:0,lateral:0,elevator:0,aileron:0,rudder:0,throttle:0};
@@ -33,10 +34,10 @@ it('removes only buried wing faces and follows deformation, detachment and resto
  const root=sim.surfaces.find(s=>s.kind==='main'&&s.side===1&&s.spanStart===0)!;
  const tip=sim.surfaces.filter(s=>s.kind==='main'&&s.side===1).at(-1)!;
  const covered=root.exposedFraction;
- expect(covered).toBeGreaterThan(0);expect(covered).toBeLessThan(.95);expect(tip.exposedFraction).toBe(1);
- const original=root.point.clone();root.point.y+=3;summary.updateExposure();expect(root.exposedFraction).toBe(1);
+ expect(covered).toBeGreaterThan(0);expect(covered).toBeLessThan(.95);expect(tip.exposedFraction).toBe(tip.retainedAreaFraction);
+ const original=root.point.clone();root.point.y+=3;summary.updateExposure();expect(root.exposedFraction).toBe(root.retainedAreaFraction);
  root.point.copy(original);summary.updateExposure();expect(root.exposedFraction).toBe(covered);
- root.bodyId=1;summary.updateExposure();expect(root.exposedFraction).toBe(1);
+ root.bodyId=1;summary.updateExposure();expect(root.exposedFraction).toBe(root.retainedAreaFraction);
  root.bodyId=0;summary.updateExposure();expect(root.exposedFraction).toBe(covered);
  sim.reset(0);summary.updateExposure();expect(root.exposedFraction).toBe(covered);
 });
@@ -91,4 +92,29 @@ it('rebuilds the derived exposure cache for independent physics checkpoints',()=
  expect(copy.telemetry.force.toArray()).toEqual(sim.telemetry.force.toArray());
  expect(copy.telemetry.torque.toArray()).toEqual(sim.telemetry.torque.toArray());
  expect(copy.surfaces.map(surface=>surface.exposedFraction)).toEqual(sim.surfaces.map(surface=>surface.exposedFraction));
+});
+
+it('matches compiled projected areas at the design pose and restores body exposure after detachment',()=>{
+ const d=normal();d.assembly.mainWingHeight=0;d.cockpit.position=d.assembly.mainWing-.6;
+ const sim=new FlightSimulation(d,'test-space',0);sim.structure.reset();
+ const model=new AirframeExposure(sim.definition,sim.surfaces,getCompiledAircraft(sim.definition)),compiled=getCompiledAircraft(sim.definition)!;
+ for(const surface of sim.surfaces){
+  const area=compiled.partitions.filter(partition=>partition.wingInstance===surface.wingInstance&&partition.side===surface.side
+   &&partition.spanStart>=surface.spanStart-1e-7&&partition.spanEnd<=surface.spanEnd+1e-7).reduce((sum,partition)=>sum+partition.surfaceArea,0);
+  expect(surface.area*surface.exposedFraction).toBeCloseTo(Math.min(surface.area,area),9);
+ }
+ const before=model.skinArea(0);
+ for(const surface of sim.surfaces)if(surface.wingInstance===0)surface.bodyId=1;
+ model.update();
+ expect(model.skinArea(0)).toBeGreaterThan(before);
+});
+
+it('does not copy dense triangle geometry into playback checkpoints',()=>{
+ const sim=new FlightSimulation(normal(),'low-altitude',0),copy=sim.checkpoint();
+ expect(internal(sim).contactSolids.length).toBeGreaterThan(0);
+ expect(internal(copy).contactSolids).toEqual([]);
+ expect(internal(copy).contacts.length).toBe(internal(sim).contacts.length);
+ for(let frame=0;frame<3;frame++){sim.step(neutral);copy.step(neutral);}
+ expect(copy.position.toArray()).toEqual(sim.position.toArray());
+ expect(copy.structure.sections.map(section=>section.controlDeflection)).toEqual(sim.structure.sections.map(section=>section.controlDeflection));
 });

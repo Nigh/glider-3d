@@ -2,6 +2,19 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "正在编译飞机表面…": ["Compiling aircraft surfaces…", "機体表面を構築中…"],
+ "正在计算飞机性能…": ["Calculating aircraft performance…", "機体性能を計算中…"],
+ "飞机表面编译失败，请重试。": ["Aircraft surface compilation failed. Try again.", "機体表面を構築できませんでした。もう一度お試しください。"],
+ "飞机性能计算失败，请重试。": ["Aircraft performance calculation failed. Try again.", "機体性能を計算できませんでした。もう一度お試しください。"],
+ "飞机表面编译失败，已保留设计：{error}": ["Aircraft surface compilation failed. Your design is unchanged: {error}", "機体表面を構築できませんでした。設計は変更されていません：{error}"],
+ "飞机表面尚未编译": ["Aircraft surfaces have not been compiled", "機体表面がまだ構築されていません"],
+ "飞机引擎分区缺少部件来源": ["A compiled engine partition is missing its source part", "構築済みエンジン区画の部品情報がありません"],
+ "正在更新风洞表面…": ["Updating wind-tunnel surfaces…", "風洞の機体表面を更新中…"],
+ "等待期间暂停模拟，参数仍可编辑。": ["Simulation pauses while surfaces update. Parameters remain editable.", "表面の更新中はシミュレーションを停止します。設定は引き続き変更できます。"],
+ "风洞表面更新失败，已保留当前几何：{error}": ["Wind-tunnel surface update failed. Current geometry is unchanged: {error}", "風洞の表面を更新できませんでした。現在の形状を保持しています：{error}"],
+ "重试表面更新": ["Retry surface update", "表面の更新を再試行"],
+ "增量编译缺少当前飞机表面": ["Incremental compilation is missing the current aircraft surfaces", "差分構築に必要な現在の機体表面がありません"],
+ "飞机表面编译结果已过期": ["The aircraft surface compilation result is stale", "機体表面の構築結果が古くなっています"],
  "垂直辅助翼镜像": ["Mirror vertical auxiliary wing", "垂直補助翼をミラー配置"],
  "垂直辅助翼偏转角": ["Vertical auxiliary wing cant", "垂直補助翼の傾斜角"],
  "垂直辅助翼横向偏移": ["Vertical auxiliary wing lateral offset", "垂直補助翼の左右オフセット"],

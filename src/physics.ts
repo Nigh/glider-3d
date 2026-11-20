@@ -1,16 +1,17 @@
-import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, BODY_GEOMETRY, aircraftWings, controlSurfaceRegions, finThickness, wingControlAxis, wingControlHinge, wingInstanceAirfoil, wingInstanceDirection, wingInstancePoint, wingInstanceWing, wingSupports, WING_CONTROL_LIMIT, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, SUPPORT_AREAL_DENSITY, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
+import { Matrix3, Matrix4, Quaternion, Triangle, Vector3 } from 'three';
+import { AIRFRAME_MASS, BODY_GEOMETRY, aircraftWings, finThickness, wingControlAxis, wingControlHinge, wingInstanceAirfoil, wingInstanceDirection, wingInstancePoint, wingInstanceWing, wingSupports, WING_CONTROL_LIMIT, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, SUPPORT_AREAL_DENSITY, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
 import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
-import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type WingFragment } from './structure';
-import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
+import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type StructureSection, type WingFragment } from './structure';
+import { advanceWindTunnel, createWindTunnelMotion, defaultTestSpace, defaultWindTunnel, isLaboratory, TEST_SPACE, testCatapultSample, testSpaceLaunch, testSpaceSettings, windTunnelRates, windTunnelRoom, windTunnelSettings, type TestSpaceSettings, type WindTunnelSettings } from './laboratory';
 import { mixTrim } from './trim';
 import { mixControlSurfaces, type MixingSurface } from './control-mixing';
 import { airfoilY, AIR_VISCOSITY, highReDragScale, naca0012Section, type AirfoilId } from './airfoils';
 import { DRAG_TERMS, type DragTerm } from './drag';
 import { AirframeExposure } from './exposure';
 import { ghostRecording, recordGhost, resetGhostRecording, type GhostFrame } from './ghost';
+import { compileAircraft, compileAffectedAircraft, geometryKey, getCompiledAircraft, installCompiledAircraft, type CompiledAircraft } from './compiled-geometry';
 
 export const GRAVITY = 9.81;
 /** Production clock; diagnostic step(dt) calls share this overload interval. */
@@ -31,7 +32,11 @@ export function runwayHeight(x: number) { return LAUNCH.height - x * Math.tan(LA
 export const PLATFORM = { thickness: 0.6, width: 13, slotWidth: 0.6, slotDepth: 0.305, slotFloorThickness: 0.15 } as const;
 const PLATFORM_COS = Math.cos(LAUNCH.slope), PLATFORM_SIN = Math.sin(LAUNCH.slope);
 const CONTACT_SLOTS = 5; // three launcher boxes, terrain, ruin
-const CONTACT_TOLERANCE = 2e-6;
+const CONTACT_TOLERANCE = 1e-4;
+const CONTACT_MARGIN = CONTACT_TOLERANCE / 2;
+const ROTATED_CONTACT_PADDING = CONTACT_TOLERANCE * Math.sqrt(3);
+const RUIN_MIN_X = downhillRuins.reduce((bound, ruin) => Math.min(bound, ruin.x - ruin.radiusX), Infinity) - ROTATED_CONTACT_PADDING;
+const RUIN_MAX_X = downhillRuins.reduce((bound, ruin) => Math.max(bound, ruin.x + ruin.radiusX), -Infinity) + ROTATED_CONTACT_PADDING;
 // Dry sliding contact of airframe/wing skin against ground, not rail rolling resistance.
 export const GROUND_FRICTION = 0.35;
 const PLATFORM_NORMALS = [
@@ -128,7 +133,11 @@ export interface AircraftProperties {
   aerodynamics: AerodynamicReference;
 }
 interface MassPart { mass: number; x: number; y: number; z: number; ix: number; iy: number; iz: number; ixy?: number; ixz?: number; iyz?: number; sectionId?: number; moving?: boolean; fuel?: boolean; wingSupport?: boolean; wingKey?: WingKey }
-interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3; span?: number; u?: number; normal?: number; controlHinge?: Vector3; controlAxis?: Vector3 }
+interface ContactPoint extends Vector3 { sectionId?: number; tip?: boolean; reference?: Vector3; span?: number; u?: number; normal?: number; controlHinge?: Vector3; controlAxis?: Vector3; movable?: boolean; solidId?: number; vertexIndex?: number; supportSectionId?: number; supportWeight?: number; geometrySolidIndex?: number; geometryVertexIndex?: number; bindingAnchor?: number }
+interface ContactNode { min: Vector3; max: Vector3; referenceBounds: Float64Array; spanStart: number; spanEnd: number; epoch: number; anchor: number; triangles?: number[]; vertices?: number[]; left?: ContactNode; right?: ContactNode }
+interface ContactRow { span: number; first: ContactPoint; matrix: Float64Array; epoch: number }
+interface ContactComponent { vertices: number[]; extremes: number[] }
+interface ContactSolid { index?: number; separatedEpochs?: Float64Array; poseSignature?: Float64Array; sectionId?: number; points: ContactPoint[]; indices: number[]; min: Vector3; max: Vector3; boundsTranslation: Vector3; controlMatrix?: Matrix4; tree?: ContactNode; vertexRows?: ContactRow[]; vertexEpochs?: Float64Array; triangleData?: Float64Array; triangleEpochs?: Float64Array; components?: ContactComponent[]; epoch: number; motionBound: number; structure?: WingStructure; radius?: number; controlRadius?: number }
 interface Polar { cl: number; cd: number; inducedCd: number; profileCd: number; separatedCd: number; cm: number }
 export interface WingAerodynamics {
   kind: AerodynamicSurface['kind'];
@@ -186,6 +195,8 @@ export interface AerodynamicSurface extends MixingSurface {
   area: number;
   /** Fraction of the two section faces outside the cockpit and fuselage. */
   exposedFraction: number;
+  /** Retained original skin only; detachment never recreates clipped source volume. */
+  retainedAreaFraction: number | undefined;
   aspect: number;
   span: number;
   chord: number; chordMin: number; chordMax: number;
@@ -214,9 +225,11 @@ export interface AerodynamicSurface extends MixingSurface {
   normal: Vector3;
   incidence: number;
   controlEffectiveness: number;
+  controlMinAngle?: number; controlMaxAngle?: number;
   /** Actual independent actuator state, normalized to this wing's travel limit. */
   controlCommand: number;
   controlProjection: Vector3;
+  controlPoint: Vector3;
   controlMoment: Vector3;
   kind: 'main' | 'tail' | 'vertical';
   side: number;
@@ -374,7 +387,7 @@ function massLayout(d: AircraftDefinition): MassPart[] {
   return parts;
 }
 
-function properties(d: AircraftDefinition): AircraftProperties {
+function properties(d: AircraftDefinition, compiled?: CompiledAircraft): AircraftProperties {
   const p = planform(d.mainWing);
   let tailWeight = 0, tailMoment = 0;
   const mainQuarter = quarterChord(d.mainWing), mainAngle = d.assembly.mainIncidence * DEG;
@@ -397,7 +410,7 @@ function properties(d: AircraftDefinition): AircraftProperties {
   return { wingMass: { mainWing: 0, horizontalTail: 0, verticalTail: 0 }, mass: 0, cg: new Vector3(), inertia: new Vector3(), inertiaTensor: new Matrix3(), inverseInertia: new Matrix3(), wingArea: p.area, span: p.span, aspect: p.aspect,
     wingLoading: 0, stallSpeed: 0, glideRatio: 0, staticMargin: 0,
     mainQuarterChord,
-    neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d), d) };
+    neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d, compiled), d, compiled !== undefined) };
 }
 
 function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, out: AircraftProperties, neutral: number, chord: number, updateInertia = true, lateral = 0, structure?: WingStructure) {
@@ -529,15 +542,38 @@ function controlEffectiveness(fraction: number) {
   const hingeAngle = Math.acos(2 * fraction - 1);
   return (Math.PI - hingeAngle + Math.sin(hingeAngle)) / Math.PI;
 }
-function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
-  const regions=controlSurfaceRegions(d);
+
+function compiledAircraft(d: AircraftDefinition): CompiledAircraft {
+  const cached = getCompiledAircraft(d);
+  if (cached) return cached;
+  const result = compileAircraft(d);
+  installCompiledAircraft(d, result);
+  return result;
+}
+
+function applyCompiledControls(d: AircraftDefinition, surfaces: AerodynamicSurface[], compiled: CompiledAircraft | undefined) {
+  for (const surface of surfaces) {
+    if (surface.bodyId !== 0) continue;
+    const control = compiled?.controls.find(control => control.wingInstance === surface.wingInstance && control.side === surface.side
+      && Math.abs(control.spanStart - surface.spanStart) < 1e-7 && Math.abs(control.spanEnd - surface.spanEnd) < 1e-7);
+    surface.retainedAreaFraction = compiled ? Math.min(1, compiled.partitions.reduce((area, partition) => area
+      + (partition.wingInstance === surface.wingInstance && partition.side === surface.side
+        && partition.spanStart >= surface.spanStart - 1e-7 && partition.spanEnd <= surface.spanEnd + 1e-7 ? partition.surfaceArea : 0), 0) / surface.area) : undefined;
+    surface.controlEffectiveness = controlEffectiveness(wingInstanceWing(d, surface.wingInstance).controlSurface) * (compiled ? control?.areaFraction ?? 0 : 1);
+    const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT;
+    surface.controlMinAngle = control?.minAngle ?? -limit; surface.controlMaxAngle = control?.maxAngle ?? limit;
+    if (control) surface.controlPoint.fromArray(control.center);
+    else surface.controlPoint.copy(surface.point);
+    if (surface.controlEffectiveness === 0) surface.controlCommand = surface.controlCandidate = 0;
+  }
+}
+function makeSurfaces(d: AircraftDefinition, compiled?: CompiledAircraft): AerodynamicSurface[] {
   const surfaces: AerodynamicSurface[] = [];
   for (const instance of aircraftWings(d)) {
     const { key, id, wing: w } = instance, vertical = key === 'verticalTail', p = planform(w, !vertical);
     const halfSpan = Math.abs(w.points[1].y), incidence = instance.incidence * DEG;
-    for (const region of regions) {
-      if (region.wingInstance !== id) continue;
-      const { spanStart: start, spanEnd: end, side } = region, width = end - start;
+    for (const side of vertical && !w.mirrored ? [1] : [-1, 1]) for (let cell = 0; cell * 0.8 < halfSpan - 1e-10; cell++) {
+      const start = cell * 0.8, end = Math.min((cell + 1) * 0.8, halfSpan), width = end - start;
       const root = p.root + (p.tip - p.root) * start / halfSpan;
       const tip = p.root + (p.tip - p.root) * end / halfSpan;
       const center = start + width * (root + 2 * tip) / (3 * (root + tip));
@@ -546,7 +582,7 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
         surfaces.push({ bodyId: 0, wingInstance: id, name: `${vertical ? '垂直辅助翼' : key === 'mainWing' ? '主翼' : '水平辅助翼'}${side < 0 ? '左' : '右'} ${start.toFixed(1)}–${end.toFixed(1)} m`,
           point, airfoil: vertical ? 'dae11' : airfoil,
           normal: wingInstanceDirection(d, id, side, 0, 1, 0, new Vector3()),
-          area: width * (root + tip) / 2, exposedFraction: 1, aspect: p.aspect, span: p.span,
+          area: width * (root + tip) / 2, exposedFraction: 1, retainedAreaFraction: undefined, aspect: p.aspect, span: p.span,
           chordMin: Math.min(root, tip), chordMax: Math.max(root, tip),
           chord: 2 / 3 * (root * root + root * tip + tip * tip) / (root + tip), spanStart: start, spanEnd: end,
           spanDirection: wingInstanceDirection(d, id, side, 0, 0, 1, new Vector3()),
@@ -555,23 +591,28 @@ function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
           sweep: sweepAngle(w), clearance: Infinity, groundEffect: 1, inducedDrag: 0, profileDrag: 0, separatedDrag: 0, spanwiseDrag: 0, waterDrag: 0,
           inducedFlow: new Vector3(), localFlow: new Vector3(), localOmega: new Vector3(), airFraction: 1, circulation: 0, nextCirculation: 0,
           incidence,
-          controlEffectiveness: region.movable ? controlEffectiveness(w.controlSurface) : 0,
+          controlEffectiveness: 0,
           controlAxes: w.controlAxes ?? { roll: !vertical, pitch: !vertical, yaw: vertical },
           controlResponse: w.controlResponse ?? 1, controlReversed: w.controlReversed ?? false,
-          controlProjection: new Vector3(), controlMoment: new Vector3(), controlCommand: 0, controlCandidate: 0,
+          controlProjection: new Vector3(), controlPoint: point.clone(), controlMoment: new Vector3(), controlCommand: 0, controlCandidate: 0,
           kind: vertical ? 'vertical' : key === 'mainWing' ? 'main' : 'tail', side, alpha: 0,
           force: new Vector3(), drag: new Vector3(), moment: new Vector3() });
     }
   }
+  applyCompiledControls(d, surfaces, compiled);
   return surfaces;
 }
+
+const controlNeutralPolar: Polar = { cl: 0, cd: 0, inducedCd: 0, profileCd: 0, separatedCd: 0, cm: 0 };
+const controlLoadForce = new Vector3(), controlLoadArm = new Vector3();
 
 /** 与飞行积分共用单翼计算；力、阻力输出先保留在机体坐标中。 */
 function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   velocity: Vector3, coefficient: Polar, liftDirection: Vector3, alphaOffset = 0) {
   const speed = velocity.length(), area = surface.area * surface.exposedFraction;
   const normalSpeed = velocity.dot(surface.normal) - surface.inducedFlow.dot(surface.normal);
-  const incidence = deflection * surface.controlEffectiveness;
+  // Coefficients use exposed wing area; control authority retains its own compiled area.
+  const incidence = surface.exposedFraction > 1e-9 ? deflection * surface.controlEffectiveness / surface.exposedFraction : 0;
   // 后掠法向条带近似；弹性法向/作用点由结构模型更新，非真实非定常升力线或颤振求解。
   // 侧滑改变两侧有效动压，后掠产生上反效应，前掠产生反向效应。
   const crossflow = velocity.dot(surface.crossflowDirection) - surface.inducedFlow.dot(surface.crossflowDirection);
@@ -607,6 +648,16 @@ function evaluateSurface(surface: AerodynamicSurface, deflection: number,
   surface.force.copy(liftDirection).multiplyScalar(lift).add(surface.drag);
   applySectionMoment(surface, coefficient.cm, pressureSpeedSq);
   const liftSq = liftDirection.lengthSq();
+  if (incidence !== 0) {
+    polar(surface.alpha - incidence, surface.aspect, controlNeutralPolar, surface.groundEffect,
+      speed * surface.chord / AIR_VISCOSITY, surface.kind !== 'vertical', surface.airfoil);
+    const neutralInduced = Math.max(0, controlNeutralPolar.inducedCd + controlNeutralPolar.cl * Math.atan2(Math.sin(loss), Math.cos(loss)));
+    const neutralDrag = controlNeutralPolar.profileCd + controlNeutralPolar.separatedCd + neutralInduced;
+    controlLoadForce.copy(liftDirection).multiplyScalar(0.5 * AIR_DENSITY * pressureSpeedSq * area * (coefficient.cl - controlNeutralPolar.cl));
+    if (speed > 1e-9) controlLoadForce.addScaledVector(velocity, -scale * pressureSpeedSq * (coefficient.cd - neutralDrag) / speed);
+    controlLoadArm.subVectors(surface.controlPoint, surface.point);
+    surface.moment.add(controlLoadArm.cross(controlLoadForce));
+  }
   const circulationLift = liftSq > 1e-12 ? (surface.force.dot(liftDirection) - surface.drag.dot(liftDirection)) / liftSq : 0;
   surface.nextCirculation = speed > 1e-6 ? surface.airFraction * circulationLift / (AIR_DENSITY * speed * Math.max(surface.spanEnd - surface.spanStart, 1e-6)) : 0;
 }
@@ -649,8 +700,8 @@ function trailingVortex(out: Vector3, dx: number, dy: number, dz: number, ax: nu
 
 const wakeMatrices = new WeakMap<AerodynamicSurface[], Float64Array>();
 const WAKE_PASSES = 6;
-// Per stage: dΓ/dα, dα/dwake[3], dM/dα[3], dM/dloss[3]; then two adjoint buffers.
-const CONTROL_LINEARIZATION_WIDTH = 10;
+// Per stage: dΓ/dα, dα/dwake[3], dM/dα[3], dM/dloss[3], dM/ddeflection[3]; then two adjoint buffers.
+const CONTROL_LINEARIZATION_WIDTH = 13;
 const controlLinearizations = new WeakMap<AerodynamicSurface[], Float64Array>();
 const controlForceDerivative = new Vector3(), controlMomentArm = new Vector3();
 
@@ -686,7 +737,29 @@ function linearizeSurface(surface: AerodynamicSurface, center: number, cg: Vecto
   const lossDerivative = coefficient.inducedCd > 0 && speed > 1e-9
     ? -0.5 * AIR_DENSITY * surface.area * surface.exposedFraction * pressureSpeedSq * coefficient.cl * surface.airFraction / speed : 0;
   controlMomentArm.subVectors(surface.point, cg).cross(surface.localFlow).multiplyScalar(lossDerivative);
+  if (center !== 0 && surface.controlEffectiveness !== 0 && speed > 1e-9) {
+    const loss = Math.atan2(-surface.localFlow.dot(surface.normal), rawChord) - Math.atan2(-n, c);
+    const neutralInduced = controlNeutralPolar.inducedCd + controlNeutralPolar.cl * Math.atan2(Math.sin(loss), Math.cos(loss));
+    const slope = (coefficient.inducedCd > 0 ? coefficient.cl : 0) - (neutralInduced > 0 ? controlNeutralPolar.cl : 0);
+    controlLoadForce.copy(surface.localFlow).multiplyScalar(-0.5 * AIR_DENSITY * surface.area * surface.exposedFraction
+      * pressureSpeedSq * slope * surface.airFraction / speed);
+    controlMomentArm.add(controlLoadArm.subVectors(surface.controlPoint, surface.point).cross(controlLoadForce));
+  }
   for (let axis = 0; axis < 3; axis++) data[offset + 7 + axis] = controlMomentArm.getComponent(axis);
+  // Changing the actuator leaves the neutral-wing pressure unchanged. An
+  // airflow-incidence perturbation moves both pressures and misses this wrench.
+  evaluateSurface(surface, center - delta, surface.localFlow, coefficient, direction);
+  controlForceDerivative.copy(surface.force);
+  const actuatorLowX = surface.moment.x, actuatorLowY = surface.moment.y, actuatorLowZ = surface.moment.z;
+  evaluateSurface(surface, center + delta, surface.localFlow, coefficient, direction);
+  controlForceDerivative.subVectors(surface.force, controlForceDerivative).multiplyScalar(1 / (2 * delta));
+  controlMomentArm.subVectors(surface.point, cg).cross(controlForceDerivative);
+  controlMomentArm.x += (surface.moment.x - actuatorLowX) / (2 * delta);
+  controlMomentArm.y += (surface.moment.y - actuatorLowY) / (2 * delta);
+  controlMomentArm.z += (surface.moment.z - actuatorLowZ) / (2 * delta);
+  controlMomentArm.multiplyScalar(surface.airFraction);
+  for (let axis = 0; axis < 3; axis++) data[offset + 10 + axis] = controlMomentArm.getComponent(axis);
+  evaluateSurface(surface, center, surface.localFlow, coefficient, direction);
 }
 
 /**
@@ -786,7 +859,7 @@ function coupledControlMoments(surfaces: AerodynamicSurface[]) {
     const surface = surfaces[i], final = (WAKE_PASSES * count + i) * CONTROL_LINEARIZATION_WIDTH;
     surface.controlMoment.set(0, 0, 0);
     if (surface.bodyId !== 0) continue;
-    surface.controlMoment.set(data[final + 4], data[final + 5], data[final + 6]);
+    surface.controlMoment.set(data[final + 10], data[final + 11], data[final + 12]);
     for (let j = 0; j < count; j++) {
       if (surfaces[j].bodyId !== 0) continue;
       const receiver = (WAKE_PASSES * count + j) * CONTROL_LINEARIZATION_WIDTH, kernel = (j * count + i) * 3;
@@ -803,7 +876,8 @@ function coupledControlMoments(surfaces: AerodynamicSurface[]) {
       if (surface.bodyId !== 0) continue;
       for (let axis = 0; axis < 3; axis++) {
         surface.controlMoment.setComponent(axis, surface.controlMoment.getComponent(axis)
-          + 0.5 * data[offset] * data[current + i * 3 + axis]);
+          + 0.5 * data[offset] * data[current + i * 3 + axis]
+            * surface.controlEffectiveness / Math.max(surface.exposedFraction, 1e-9));
         data[previous + i * 3 + axis] = 0.5 * data[current + i * 3 + axis];
       }
       for (let j = 0; j < count; j++) {
@@ -819,9 +893,10 @@ function coupledControlMoments(surfaces: AerodynamicSurface[]) {
   for (let i = 0; i < count; i++) {
     const surface = surfaces[i];
     if (surface.bodyId !== 0) continue;
-    for (let axis = 0; axis < 3; axis++) surface.controlMoment.setComponent(axis, surface.controlMoment.getComponent(axis)
-      + data[i * CONTROL_LINEARIZATION_WIDTH] * data[current + i * 3 + axis]);
-    surface.controlMoment.multiplyScalar(surface.controlEffectiveness * (surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT));
+    const incidenceScale = surface.controlEffectiveness / Math.max(surface.exposedFraction, 1e-9);
+    const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT;
+    for (let axis = 0; axis < 3; axis++) surface.controlMoment.setComponent(axis, surface.controlMoment.getComponent(axis) * limit
+      + data[i * CONTROL_LINEARIZATION_WIDTH] * data[current + i * 3 + axis] * incidenceScale * limit);
   }
 }
 
@@ -865,11 +940,11 @@ class AerodynamicSummary implements AerodynamicReference {
   private readonly localDrag = new Vector3();
   private readonly moment = new Vector3();
 
-  constructor(readonly surfaces: AerodynamicSurface[], private readonly definition: AircraftDefinition) {
+  constructor(readonly surfaces: AerodynamicSurface[], private readonly definition: AircraftDefinition, private readonly compiled = false) {
     const d = definition;
     this.engines = engineMounts(d).map(mount => ({ point: new Vector3(mount.x, mount.y, mount.z), area: engineDragArea(d, mount),
       nacelleArea: Math.PI * engineCatalog[d.engine.type].radius ** 2 * 0.22, supportArea: mount.supportLength * mount.supportWidth * 0.02 }));
-    frameExposures.set(surfaces, new AirframeExposure(d, surfaces));
+    frameExposures.set(surfaces, new AirframeExposure(d, surfaces, compiled ? getCompiledAircraft(d) : undefined));
     this.bodies = (d.birdman ? [] : [cockpitGeometry(d), BODY_GEOMETRY.canopy]).map((shape, index) =>
       ({ point: new Vector3(d.cockpit.position + shape.x, shape.y, 0), index }));
     this.wings = (['main', 'tail', 'vertical'] as const).map((kind, index) => {
@@ -882,7 +957,7 @@ class AerodynamicSummary implements AerodynamicReference {
   }
   private exposure() {
     let model = frameExposures.get(this.surfaces);
-    if (!model) { model = new AirframeExposure(this.definition, this.surfaces); frameExposures.set(this.surfaces, model); }
+    if (!model) { model = new AirframeExposure(this.definition, this.surfaces, this.compiled ? getCompiledAircraft(this.definition) : undefined); frameExposures.set(this.surfaces, model); }
     return model;
   }
   updateExposure() { this.exposure().update(); }
@@ -1035,6 +1110,38 @@ function evaluateReference(aircraft: AircraftProperties) {
 }
 /** 与 scene.wingGeometry 相同的翼型采样，碰撞与发射净空包含安装角和厚度。 */
 function makeContacts(d: AircraftDefinition, structure?: WingStructure): ContactPoint[] {
+  const compiled = getCompiledAircraft(d);
+  if (compiled) {
+    const points: ContactPoint[] = [];
+    for (let solidId = 0; solidId < compiled.partitions.length; solidId++) {
+      const partition = compiled.partitions[solidId];
+      const section = structure?.sections.find(section => section.wingInstance === partition.wingInstance && section.side === partition.side
+        && partition.spanStart >= section.spanStart - 1e-7 && partition.spanEnd <= section.spanEnd + 1e-7);
+      const supportSection = partition.kind === 'wing-support' ? structure?.sections.find(section => section.wingInstance === partition.supportWingInstance
+        && (partition.side === 0 || section.side === partition.side) && section.spanStart < 1e-7) : undefined;
+      const control = section ? compiled.controls.find(control => control.wingInstance === partition.wingInstance && control.side === partition.side
+        && control.spanStart === section.spanStart && control.spanEnd === section.spanEnd) : undefined;
+      const hinge = section ? control ? new Vector3().fromArray(control.hinge) : wingControlHinge(d, partition.wingInstance, partition.side, 0, new Vector3()) : undefined;
+      const axis = section ? control ? new Vector3().fromArray(control.axis) : wingControlAxis(d, partition.wingInstance, partition.side, new Vector3()) : undefined;
+      for (let index = 0; index < partition.positions.length; index += 3) {
+        const point: ContactPoint = new Vector3().fromArray(partition.positions, index);
+        point.solidId = solidId; point.vertexIndex = index / 3;
+        point.bindingAnchor = -1;
+        if (section) {
+          point.sectionId = section.id; point.reference = point.clone();
+          point.span = partition.coordinates[index]; point.u = partition.coordinates[index + 1]; point.normal = partition.coordinates[index + 2];
+          point.tip = Math.abs(point.span - section.spanEnd) < 1e-7; point.movable = partition.movable;
+          point.controlHinge = hinge; point.controlAxis = axis;
+          point.bindingAnchor = point.movable ? -2 : structure!.attachmentAnchor(section, point.span);
+        } else if (supportSection) {
+          point.reference = point.clone(); point.supportSectionId = supportSection.id; point.supportWeight = partition.coordinates[index];
+          point.bindingAnchor = -2;
+        }
+        points.push(point);
+      }
+    }
+    return points;
+  }
   const { nose, tail } = fuselageEnds(d);
   const shell = cockpitGeometry(d);
   const points: ContactPoint[] = [
@@ -1115,6 +1222,532 @@ function makeContacts(d: AircraftDefinition, structure?: WingStructure): Contact
   return points;
 }
 
+function makeContactSolids(d: AircraftDefinition, points: ContactPoint[]): ContactSolid[] {
+  const compiled = getCompiledAircraft(d);
+  if (!compiled) return [];
+  const groups = new Map<string, ContactSolid>(), solids: ContactSolid[] = [];
+  let offset = 0;
+  for (let id = 0; id < compiled.partitions.length; id++) {
+    const partition = compiled.partitions[id], count = partition.positions.length / 3, sectionId = points[offset]?.sectionId;
+    const key = sectionId === undefined ? `body:${id}` : `${sectionId}:${partition.movable}`;
+    let solid = groups.get(key);
+    if (!solid) {
+      solid = { points: [], indices: [], min: new Vector3(), max: new Vector3(), boundsTranslation: new Vector3(), sectionId, epoch: 0, motionBound: 0 };
+      groups.set(key, solid); solids.push(solid);
+    }
+    const base = solid.points.length;
+    for (let index = 0; index < count; index++) solid.points.push(points[offset + index]);
+    for (const index of partition.indices) solid.indices.push(base + index);
+    offset += count;
+  }
+  return prepareContactSolids(solids);
+}
+
+function prepareContactSolids(solids: ContactSolid[]): ContactSolid[] {
+  for (let index = 0; index < solids.length; index++) {
+    const solid = solids[index];
+    solid.index = index; solid.separatedEpochs = new Float64Array(solids.length).fill(-1);
+    solid.tree = contactTree(solid, Array.from({ length: solid.indices.length / 3 }, (_, index) => index * 3));
+    solid.min.copy(solid.tree.min); solid.max.copy(solid.tree.max);
+    solid.components = contactComponents(solid);
+    solid.vertexEpochs = new Float64Array(solid.points.length).fill(-1);
+    solid.triangleData = new Float64Array(solid.indices.length * 3);
+    solid.triangleEpochs = new Float64Array(solid.indices.length / 3).fill(-1);
+    if (solid.sectionId === undefined) continue;
+    const rows = new Map<number, ContactRow>();
+    solid.vertexRows = [];
+    for (const point of solid.points) {
+      let row = rows.get(point.span!);
+      if (!row) { row = { span: point.span!, first: point, matrix: new Float64Array(12), epoch: -1 }; rows.set(point.span!, row); }
+      solid.vertexRows.push(row);
+    }
+  }
+  linkContactVertices(solids);
+  return solids;
+}
+
+function linkContactVertices(solids: ContactSolid[]) {
+  for (let solid = 0; solid < solids.length; solid++) for (let vertex = 0; vertex < solids[solid].points.length; vertex++) {
+    const point = solids[solid].points[vertex]; point.geometrySolidIndex = solid; point.geometryVertexIndex = vertex;
+  }
+}
+
+function contactComponents(solid: ContactSolid): ContactComponent[] {
+  const parents = Int32Array.from(solid.points, (_, index) => index), welded = new Map<string, number>();
+  const root = (vertex: number): number => {
+    let current = vertex;
+    while (parents[current] !== current) current = parents[current];
+    while (parents[vertex] !== vertex) { const next = parents[vertex]; parents[vertex] = current; vertex = next; }
+    return current;
+  };
+  for (let index = 0; index < solid.points.length; index++) {
+    const point = solid.points[index].reference ?? solid.points[index], key = `${point.x},${point.y},${point.z}`, previous = welded.get(key);
+    if (previous === undefined) welded.set(key, index); else parents[root(index)] = root(previous);
+  }
+  for (let index = 0; index < solid.indices.length; index += 3) {
+    const first = root(solid.indices[index]);
+    parents[root(solid.indices[index + 1])] = first; parents[root(solid.indices[index + 2])] = first;
+  }
+  const groups = new Map<number, ContactComponent>();
+  for (let index = 0; index < solid.points.length; index++) {
+    const id = root(index); let component = groups.get(id);
+    if (!component) { component = { vertices: [], extremes: new Array<number>(6).fill(index) }; groups.set(id, component); }
+    component.vertices.push(index);
+    const point = solid.points[index].reference ?? solid.points[index];
+    for (let axis = 0; axis < 3; axis++) {
+      const low = solid.points[component.extremes[axis * 2]], high = solid.points[component.extremes[axis * 2 + 1]];
+      if (point.getComponent(axis) < (low.reference ?? low).getComponent(axis)) component.extremes[axis * 2] = index;
+      if (point.getComponent(axis) > (high.reference ?? high).getComponent(axis)) component.extremes[axis * 2 + 1] = index;
+    }
+  }
+  return [...groups.values()];
+}
+
+function contactTriangleAnchor(solid: ContactSolid, triangle: number): number {
+  const anchor = solid.points[solid.indices[triangle]].bindingAnchor ?? -2;
+  return anchor !== -2 && anchor === solid.points[solid.indices[triangle + 1]].bindingAnchor
+    && anchor === solid.points[solid.indices[triangle + 2]].bindingAnchor ? anchor : -2;
+}
+
+function contactTree(solid: ContactSolid, triangles: number[]): ContactNode {
+  const node: ContactNode = { min: new Vector3(Infinity, Infinity, Infinity), max: new Vector3(-Infinity, -Infinity, -Infinity),
+    referenceBounds: new Float64Array(6), spanStart: Infinity, spanEnd: -Infinity, epoch: -1, anchor: solid.points[solid.indices[triangles[0]]].bindingAnchor ?? -2 };
+  for (const triangle of triangles) {
+    for (let corner = 0; corner < 3; corner++) {
+      const vertex = solid.points[solid.indices[triangle + corner]], point = vertex.reference ?? vertex; node.min.min(point); node.max.max(point);
+      if (node.anchor !== (vertex.bindingAnchor ?? -2)) node.anchor = -2;
+      if (vertex.span !== undefined) { node.spanStart = Math.min(node.spanStart, vertex.span); node.spanEnd = Math.max(node.spanEnd, vertex.span); }
+    }
+  }
+  const bounds = node.referenceBounds;
+  bounds[0] = node.min.x; bounds[1] = node.min.y; bounds[2] = node.min.z;
+  bounds[3] = node.max.x; bounds[4] = node.max.y; bounds[5] = node.max.z;
+  if (triangles.length <= 8) {
+    node.triangles = triangles; node.vertices = [];
+    for (const triangle of triangles) for (let corner = 0; corner < 3; corner++) {
+      const vertex = solid.indices[triangle + corner];
+      if (!node.vertices.includes(vertex)) node.vertices.push(vertex);
+    }
+  }
+  else {
+    if (node.anchor === -2) {
+      let anchor = -2;
+      for (const triangle of triangles) { anchor = contactTriangleAnchor(solid, triangle); if (anchor !== -2) break; }
+      if (anchor !== -2) {
+        const bound: number[] = [], other: number[] = [];
+        for (const triangle of triangles) (contactTriangleAnchor(solid, triangle) === anchor ? bound : other).push(triangle);
+        node.left = contactTree(solid, bound); node.right = contactTree(solid, other);
+        return node;
+      }
+    }
+    // Minimize child surface area and triangle count instead of overlapping median cuts.
+    const areas = new Float64Array(triangles.length);
+    let axis = 0, bestAxis = 0, middle = Math.floor(triangles.length / 2), bestCost = Infinity;
+    const compare = (a: number, b: number) => {
+      let difference = 0;
+      for (let corner = 0; corner < 3; corner++) {
+        const av = solid.points[solid.indices[a + corner]], bv = solid.points[solid.indices[b + corner]];
+        difference += (av.reference ?? av).getComponent(axis) - (bv.reference ?? bv).getComponent(axis);
+      }
+      return difference || a - b;
+    };
+    for (axis = 0; axis < 3; axis++) {
+      triangles.sort(compare);
+      let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      for (let index = 0; index < triangles.length; index++) {
+        for (let corner = 0; corner < 3; corner++) {
+          const vertex = solid.points[solid.indices[triangles[index] + corner]], point = vertex.reference ?? vertex;
+          minX = Math.min(minX, point.x); minY = Math.min(minY, point.y); minZ = Math.min(minZ, point.z);
+          maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y); maxZ = Math.max(maxZ, point.z);
+        }
+        const x = maxX - minX, y = maxY - minY, z = maxZ - minZ;
+        areas[index] = (x * y + x * z + y * z) * (index + 1);
+      }
+      minX = minY = minZ = Infinity; maxX = maxY = maxZ = -Infinity;
+      for (let index = triangles.length - 1; index > 0; index--) {
+        for (let corner = 0; corner < 3; corner++) {
+          const vertex = solid.points[solid.indices[triangles[index] + corner]], point = vertex.reference ?? vertex;
+          minX = Math.min(minX, point.x); minY = Math.min(minY, point.y); minZ = Math.min(minZ, point.z);
+          maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y); maxZ = Math.max(maxZ, point.z);
+        }
+        const x = maxX - minX, y = maxY - minY, z = maxZ - minZ;
+        const cost = areas[index - 1] + (x * y + x * z + y * z) * (triangles.length - index);
+        if (cost < bestCost || cost === bestCost && Math.abs(index - triangles.length / 2) < Math.abs(middle - triangles.length / 2)) {
+          bestCost = cost; bestAxis = axis; middle = index;
+        }
+      }
+    }
+    axis = bestAxis;
+    if (axis !== 2) triangles.sort(compare);
+    node.left = contactTree(solid, triangles.slice(0, middle)); node.right = contactTree(solid, triangles.slice(middle));
+  }
+  return node;
+}
+
+const contactPoseSignature = new Float64Array(54);
+/** Exact deformFrame inputs; a whole-aircraft rigid transform does not move local skin. */
+function contactPoseUnchanged(solid: ContactSolid, section: StructureSection, structure: WingStructure): boolean {
+  const pose = contactPoseSignature;
+  pose[0] = section.bodyId; pose[1] = solid.points[0].movable ? section.controlDeflection : 0;
+  pose[2] = section.spanStart; pose[3] = section.spanEnd;
+  section.root.position.toArray(pose, 4); section.root.quaternion.toArray(pose, 7);
+  section.tip.position.toArray(pose, 11); section.tip.quaternion.toArray(pose, 14);
+  section.referenceRoot.toArray(pose, 18); section.referenceTip.toArray(pose, 21);
+  pose[24] = section.attachmentBodyStart; pose[25] = section.attachmentBodyEnd;
+  pose[26] = section.attachmentJointStart; pose[27] = section.attachmentJointEnd;
+  pose[28] = section.attachmentAnchorId; pose[29] = Number(section.attachmentFrozen);
+  section.attachmentReference.toArray(pose, 30); section.attachmentPosition.toArray(pose, 33); section.attachmentRotation.toArray(pose, 36);
+  const anchor = !section.attachmentFrozen && section.attachmentAnchorId >= 0 ? structure.sections[section.attachmentAnchorId] : undefined;
+  if (anchor) {
+    anchor.referenceTip.toArray(pose, 40); anchor.tip.position.toArray(pose, 43); anchor.tip.quaternion.toArray(pose, 46);
+    pose[50] = anchor.attachmentBodyStart; pose[51] = anchor.attachmentBodyEnd; pose[52] = anchor.attachmentJointStart; pose[53] = anchor.spanEnd;
+  } else pose.fill(0, 40);
+  let unchanged = solid.structure === structure && solid.poseSignature !== undefined;
+  const previous = solid.poseSignature ??= new Float64Array(pose.length);
+  for (let index = 0; index < pose.length; index++) {
+    if (previous[index] !== pose[index]) unchanged = false;
+    previous[index] = pose[index];
+  }
+  return unchanged;
+}
+
+function poseContactVertex(solid: ContactSolid, index: number) {
+  if (solid.vertexEpochs![index] === solid.epoch) return;
+  const point = solid.points[index], reference = point.reference;
+  if (!reference) { solid.vertexEpochs![index] = solid.epoch; return; }
+  if (point.bindingAnchor === -1) { point.copy(reference); solid.vertexEpochs![index] = solid.epoch; return; }
+  const row = solid.vertexRows?.[index];
+  if (row) {
+    if (row.epoch !== solid.epoch) {
+      const section = solid.structure!.sections[solid.sectionId!], t = clamp((row.span - section.spanStart) / (section.spanEnd - section.spanStart), 0, 1);
+      solid.structure!.deformFrame(section, t, contactFrameMatrix);
+      if (row.first.movable && section.controlDeflection !== 0) {
+        contactControlRotation.setFromAxisAngle(row.first.controlAxis!, section.controlDeflection);
+        contactControlOffset.copy(row.first.controlHinge!).applyQuaternion(contactControlRotation).negate().add(row.first.controlHinge!);
+        contactControlMatrix.makeRotationFromQuaternion(contactControlRotation).setPosition(contactControlOffset);
+        contactFrameMatrix.multiply(contactControlMatrix);
+      }
+      const e = contactFrameMatrix.elements, m = row.matrix;
+      m[0] = e[0]; m[1] = e[4]; m[2] = e[8]; m[3] = e[1]; m[4] = e[5]; m[5] = e[9];
+      m[6] = e[2]; m[7] = e[6]; m[8] = e[10]; m[9] = e[12]; m[10] = e[13]; m[11] = e[14]; row.epoch = solid.epoch;
+    }
+    const m = row.matrix, x = reference.x, y = reference.y, z = reference.z;
+    point.set(m[0] * x + m[1] * y + m[2] * z + m[9], m[3] * x + m[4] * y + m[5] * z + m[10],
+      m[6] * x + m[7] * y + m[8] * z + m[11]);
+  } else if (point.supportSectionId !== undefined) {
+    const section = solid.structure!.sections[point.supportSectionId];
+    point.copy(reference);
+    if (section.bodyId === 0) { solid.structure!.deformPoint(section, point, 0); point.lerp(reference, 1 - point.supportWeight!); }
+  }
+  solid.vertexEpochs![index] = solid.epoch;
+}
+
+function poseContactNode(solid: ContactSolid, node: ContactNode) {
+  if (node.epoch === solid.epoch) return;
+  if (node.triangles) {
+    node.min.set(Infinity, Infinity, Infinity); node.max.set(-Infinity, -Infinity, -Infinity);
+    for (const index of node.vertices!) {
+      poseContactVertex(solid, index);
+      node.min.min(solid.points[index]); node.max.max(solid.points[index]);
+    }
+  } else {
+    contactQueryBounds(solid, node);
+    node.min.copy(contactQueryMin); node.max.copy(contactQueryMax);
+  }
+  node.epoch = solid.epoch;
+}
+
+
+/** Fixed contact budget per structural strip; geometric cut count is not solver cost. */
+function sampleContacts(solids: ContactSolid[]): ContactPoint[] {
+  const selected = new Set<ContactPoint>();
+  for (const solid of solids) {
+    for (let sample = 0; sample < 70; sample++) {
+      const axis = sample - 64, y = sample < 64 ? 1 - 2 * (sample + 0.5) / 64 : axis === 2 ? 1 : axis === 3 ? -1 : 0;
+      const radius = Math.sqrt(Math.max(0, 1 - y * y)), angle = sample * 2.399963229728653;
+      const x = sample < 64 ? radius * Math.cos(angle) : axis === 0 ? 1 : axis === 1 ? -1 : 0;
+      const z = sample < 64 ? radius * Math.sin(angle) : axis === 4 ? 1 : axis === 5 ? -1 : 0;
+      let best: ContactPoint | undefined, distance = -Infinity;
+      for (const point of solid.points) {
+        const projection = x * point.x + y * point.y + z * point.z;
+        if (projection > distance) { best = point; distance = projection; }
+      }
+      if (best) selected.add(best);
+    }
+  }
+  return [...selected];
+}
+
+/** Triangle narrow phase. Bounds only reject pairs; they never declare contact. */
+function triangleHit(origin: Vector3, dx: number, dy: number, dz: number, a: Vector3, b: Vector3, c: Vector3): number {
+  const ex = b.x - a.x, ey = b.y - a.y, ez = b.z - a.z;
+  const fx = c.x - a.x, fy = c.y - a.y, fz = c.z - a.z;
+  const px = dy * fz - dz * fy, py = dz * fx - dx * fz, pz = dx * fy - dy * fx;
+  const determinant = ex * px + ey * py + ez * pz;
+  if (Math.abs(determinant) < 1e-12) return Infinity;
+  const tx = origin.x - a.x, ty = origin.y - a.y, tz = origin.z - a.z;
+  const u = (tx * px + ty * py + tz * pz) / determinant;
+  if (u < -1e-9 || u > 1 + 1e-9) return Infinity;
+  const qx = ty * ez - tz * ey, qy = tz * ex - tx * ez, qz = tx * ey - ty * ex;
+  const v = (dx * qx + dy * qy + dz * qz) / determinant;
+  if (v < -1e-9 || u + v > 1 + 1e-9) return Infinity;
+  return (fx * qx + fy * qy + fz * qz) / determinant;
+}
+
+const contactTriangle = new Triangle(), contactNearest = new Vector3();
+const contactNormalA = new Vector3(), contactNormalB = new Vector3(), contactLine = new Vector3();
+const contactNormalCache = new Vector3();
+const contactLinePoint = new Vector3(), contactIntersection = new Vector3(), contactProbe = new Vector3(), contactBarycentric = new Vector3();
+const contactControlRotation = new Quaternion(), contactControlOffset = new Vector3();
+const contactFrameMatrix = new Matrix4(), contactControlMatrix = new Matrix4();
+const contactIntervalA = [0, 0], contactIntervalB = [0, 0];
+const contactQueryMin = new Vector3(), contactQueryMax = new Vector3();
+const contactRayDirection = new Vector3(1, 0.371390676, 0.719213).normalize();
+
+function contactQueryBounds(solid: ContactSolid, node: ContactNode) {
+  if (node.epoch === solid.epoch) { contactQueryMin.copy(node.min); contactQueryMax.copy(node.max); return; }
+  const bounds = node.referenceBounds;
+  contactQueryMin.set(bounds[0], bounds[1], bounds[2]); contactQueryMax.set(bounds[3], bounds[4], bounds[5]);
+  const matrix = solid.controlMatrix;
+  if (matrix) {
+    const e = matrix.elements, x = (bounds[0] + bounds[3]) / 2, y = (bounds[1] + bounds[4]) / 2, z = (bounds[2] + bounds[5]) / 2;
+    const rx = (bounds[3] - bounds[0]) / 2, ry = (bounds[4] - bounds[1]) / 2, rz = (bounds[5] - bounds[2]) / 2;
+    const cx = e[0] * x + e[4] * y + e[8] * z + e[12], cy = e[1] * x + e[5] * y + e[9] * z + e[13], cz = e[2] * x + e[6] * y + e[10] * z + e[14];
+    const ex = Math.abs(e[0]) * rx + Math.abs(e[4]) * ry + Math.abs(e[8]) * rz;
+    const ey = Math.abs(e[1]) * rx + Math.abs(e[5]) * ry + Math.abs(e[9]) * rz;
+    const ez = Math.abs(e[2]) * rx + Math.abs(e[6]) * ry + Math.abs(e[10]) * rz;
+    contactQueryMin.set(cx - ex, cy - ey, cz - ez); contactQueryMax.set(cx + ex, cy + ey, cz + ez);
+  }
+  if (node.anchor === -1) return;
+  const minX = contactQueryMin.x, minY = contactQueryMin.y, minZ = contactQueryMin.z;
+  const maxX = contactQueryMax.x, maxY = contactQueryMax.y, maxZ = contactQueryMax.z;
+  contactQueryMin.add(solid.boundsTranslation).addScalar(-solid.motionBound);
+  contactQueryMax.add(solid.boundsTranslation).addScalar(solid.motionBound);
+  if (solid.sectionId !== undefined) {
+    const section = solid.structure!.sections[solid.sectionId];
+    // Only body blending is reduced here. A moving/frozen installation anchor
+    // still uses attachmentMotionBound, including its full parent motion.
+    if (section.attachmentBodyStart >= 0 && section.attachmentAnchorId < 0) {
+      const free = solid.structure!.attachmentFreeWeight(section, node.spanStart, node.spanEnd);
+      const bound = free * (solid.motionBound - CONTACT_TOLERANCE + solid.boundsTranslation.length()) + CONTACT_TOLERANCE;
+      contactQueryMin.set(Math.max(contactQueryMin.x, minX - bound), Math.max(contactQueryMin.y, minY - bound), Math.max(contactQueryMin.z, minZ - bound));
+      contactQueryMax.set(Math.min(contactQueryMax.x, maxX + bound), Math.min(contactQueryMax.y, maxY + bound), Math.min(contactQueryMax.z, maxZ + bound));
+    }
+  }
+}
+function contactPointNearSurface(solid: ContactSolid, node: ContactNode, point: Vector3, tolerance: number): boolean {
+  contactQueryBounds(solid, node);
+  const x = Math.max(contactQueryMin.x - point.x, 0, point.x - contactQueryMax.x);
+  const y = Math.max(contactQueryMin.y - point.y, 0, point.y - contactQueryMax.y);
+  const z = Math.max(contactQueryMin.z - point.z, 0, point.z - contactQueryMax.z);
+  if (x * x + y * y + z * z > tolerance * tolerance) return false;
+  if (!node.triangles) return contactPointNearSurface(solid, node.left!, point, tolerance) || contactPointNearSurface(solid, node.right!, point, tolerance);
+  poseContactNode(solid, node);
+  for (const index of node.triangles) {
+    contactTriangle.set(solid.points[solid.indices[index]], solid.points[solid.indices[index + 1]], solid.points[solid.indices[index + 2]]);
+    contactTriangle.closestPointToPoint(point, contactNearest);
+    if (contactNearest.distanceToSquared(point) <= tolerance * tolerance) return true;
+  }
+  return false;
+}
+
+function trianglePlaneInterval(a: Vector3, b: Vector3, c: Vector3, normal: Vector3, origin: Vector3, interval: number[]): boolean {
+  const constant = normal.dot(origin), ad = normal.dot(a) - constant, bd = normal.dot(b) - constant, cd = normal.dot(c) - constant;
+  if (Math.min(ad, bd, cd) >= -CONTACT_TOLERANCE || Math.max(ad, bd, cd) <= CONTACT_TOLERANCE) return false;
+  let low = Infinity, high = -Infinity;
+  for (let edge = 0; edge < 3; edge++) {
+    const first = edge === 0 ? a : edge === 1 ? b : c, second = edge === 0 ? b : edge === 1 ? c : a;
+    const d0 = edge === 0 ? ad : edge === 1 ? bd : cd, d1 = edge === 0 ? bd : edge === 1 ? cd : ad;
+    if (d0 * d1 > 0 || d0 === d1) continue;
+    const t = d0 / (d0 - d1), start = contactLine.dot(first);
+    if (interval === contactIntervalA && low === Infinity) contactLinePoint.copy(first).lerp(second, t);
+    const projection = start + (contactLine.dot(second) - start) * t;
+    low = Math.min(low, projection); high = Math.max(high, projection);
+  }
+  interval[0] = low; interval[1] = high;
+  return true;
+}
+
+function coplanarTrianglesMeet(a: Vector3, b: Vector3, c: Vector3, p: Vector3, q: Vector3, r: Vector3): boolean {
+  if (contactNormalA.dot(contactNormalB) <= 0) return false;
+  const constant = contactNormalA.dot(a);
+  if (Math.max(Math.abs(contactNormalA.dot(p) - constant), Math.abs(contactNormalA.dot(q) - constant),
+    Math.abs(contactNormalA.dot(r) - constant)) > CONTACT_TOLERANCE) return false;
+  contactIntersection.set(0, 0, 0);
+  let count = 0;
+  contactTriangle.set(p, q, r);
+  for (let vertex = 0; vertex < 3; vertex++) {
+    const point = vertex === 0 ? a : vertex === 1 ? b : c;
+    if (contactTriangle.containsPoint(point)) { contactIntersection.add(point); count++; }
+  }
+  contactTriangle.set(a, b, c);
+  for (let vertex = 0; vertex < 3; vertex++) {
+    const point = vertex === 0 ? p : vertex === 1 ? q : r;
+    if (contactTriangle.containsPoint(point)) { contactIntersection.add(point); count++; }
+  }
+  const nx = Math.abs(contactNormalA.x), ny = Math.abs(contactNormalA.y), nz = Math.abs(contactNormalA.z);
+  const axisA = nx >= ny && nx >= nz ? 1 : 0, axisB = nz > nx && nz > ny ? 1 : 2;
+  for (let edgeA = 0; edgeA < 3; edgeA++) {
+    const first = edgeA === 0 ? a : edgeA === 1 ? b : c, second = edgeA === 0 ? b : edgeA === 1 ? c : a;
+    const x = first.getComponent(axisA), y = first.getComponent(axisB);
+    const dx = second.getComponent(axisA) - x, dy = second.getComponent(axisB) - y;
+    for (let edgeB = 0; edgeB < 3; edgeB++) {
+      const from = edgeB === 0 ? p : edgeB === 1 ? q : r, to = edgeB === 0 ? q : edgeB === 1 ? r : p;
+      const ex = to.getComponent(axisA) - from.getComponent(axisA), ey = to.getComponent(axisB) - from.getComponent(axisB);
+      const determinant = dx * ey - dy * ex;
+      if (Math.abs(determinant) < 1e-16) continue;
+      const rx = from.getComponent(axisA) - x, ry = from.getComponent(axisB) - y;
+      const t = (rx * ey - ry * ex) / determinant, u = (rx * dy - ry * dx) / determinant;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      contactIntersection.addScaledVector(first, 1 - t).addScaledVector(second, t); count++;
+    }
+  }
+  if (!count) return false;
+  contactIntersection.multiplyScalar(1 / count);
+  return true;
+}
+
+/** Exact posed bounds and normal, reused across BVH pairs until the solid moves. */
+function contactTriangleData(solid: ContactSolid, triangle: number): Float64Array {
+  const data = solid.triangleData!, index = triangle * 3;
+  if (solid.triangleEpochs![triangle / 3] === solid.epoch) return data;
+  const a = solid.points[solid.indices[triangle]], b = solid.points[solid.indices[triangle + 1]], c = solid.points[solid.indices[triangle + 2]];
+  data[index] = Math.min(a.x, b.x, c.x); data[index + 1] = Math.min(a.y, b.y, c.y); data[index + 2] = Math.min(a.z, b.z, c.z);
+  data[index + 3] = Math.max(a.x, b.x, c.x); data[index + 4] = Math.max(a.y, b.y, c.y); data[index + 5] = Math.max(a.z, b.z, c.z);
+  contactTriangle.set(a, b, c).getNormal(contactNormalCache);
+  data[index + 6] = contactNormalCache.x; data[index + 7] = contactNormalCache.y; data[index + 8] = contactNormalCache.z;
+  solid.triangleEpochs![triangle / 3] = solid.epoch;
+  return data;
+}
+
+function trianglesPenetrate(a: Vector3, b: Vector3, c: Vector3, p: Vector3, q: Vector3, r: Vector3): boolean {
+  contactLine.crossVectors(contactNormalA, contactNormalB);
+  if (contactLine.lengthSq() < 1e-16) return coplanarTrianglesMeet(a, b, c, p, q, r);
+  contactLine.normalize();
+  if (!trianglePlaneInterval(a, b, c, contactNormalB, p, contactIntervalA)
+    || !trianglePlaneInterval(p, q, r, contactNormalA, a, contactIntervalB)) return false;
+  const low = Math.max(contactIntervalA[0], contactIntervalB[0]), high = Math.min(contactIntervalA[1], contactIntervalB[1]);
+  if (high - low <= CONTACT_TOLERANCE) return false;
+  contactIntersection.copy(contactLinePoint).addScaledVector(contactLine, (low + high) / 2 - contactLine.dot(contactLinePoint));
+  return true;
+}
+function contactTrianglePairPenetrates(a: ContactSolid, b: ContactSolid, i: number, j: number): boolean {
+  const ad = a.triangleData!, bd = b.triangleData!;
+  contactNormalA.fromArray(ad, i * 3 + 6); contactNormalB.fromArray(bd, j * 3 + 6);
+  if (!trianglesPenetrate(a.points[a.indices[i]], a.points[a.indices[i + 1]], a.points[a.indices[i + 2]],
+    b.points[b.indices[j]], b.points[b.indices[j + 1]], b.points[b.indices[j + 2]])) return false;
+  const sharedInterior = 1 + contactNormalA.dot(contactNormalB);
+  if (sharedInterior <= 1e-12) return false;
+  const interiorTolerance = CONTACT_TOLERANCE / 2, distance = -1.001 * interiorTolerance / sharedInterior;
+  contactProbe.copy(contactIntersection).addScaledVector(contactNormalA, distance).addScaledVector(contactNormalB, distance);
+  // Nearly opposed cut faces can put their normal bisector far beyond both
+  // finite triangles. A remote overlap is not a witness for this face pair.
+  contactTriangle.set(a.points[a.indices[i]], a.points[a.indices[i + 1]], a.points[a.indices[i + 2]]).getBarycoord(contactProbe, contactBarycentric);
+  if (Math.min(contactBarycentric.x, contactBarycentric.y, contactBarycentric.z) < -1e-12) return false;
+  contactTriangle.set(b.points[b.indices[j]], b.points[b.indices[j + 1]], b.points[b.indices[j + 2]]).getBarycoord(contactProbe, contactBarycentric);
+  if (Math.min(contactBarycentric.x, contactBarycentric.y, contactBarycentric.z) < -1e-12) return false;
+  return solidContains(a, contactProbe, interiorTolerance) && solidContains(b, contactProbe, interiorTolerance);
+}
+
+
+function solidContains(solid: ContactSolid, point: Vector3, tolerance = CONTACT_TOLERANCE): boolean {
+  if (point.x <= solid.min.x + CONTACT_MARGIN || point.x >= solid.max.x - CONTACT_MARGIN
+    || point.y <= solid.min.y + CONTACT_MARGIN || point.y >= solid.max.y - CONTACT_MARGIN
+    || point.z <= solid.min.z + CONTACT_MARGIN || point.z >= solid.max.z - CONTACT_MARGIN) return false;
+  const crossings = contactRayCrossings(solid, solid.tree!, point);
+  return crossings > 0 && crossings % 2 === 1 && !contactPointNearSurface(solid, solid.tree!, point, tolerance);
+}
+
+function contactRayCrossings(solid: ContactSolid, node: ContactNode, point: Vector3): number {
+  contactQueryBounds(solid, node);
+  const direction = contactRayDirection;
+  const enter = Math.max(0, (contactQueryMin.x - point.x) / direction.x, (contactQueryMin.y - point.y) / direction.y, (contactQueryMin.z - point.z) / direction.z);
+  const exit = Math.min((contactQueryMax.x - point.x) / direction.x, (contactQueryMax.y - point.y) / direction.y, (contactQueryMax.z - point.z) / direction.z);
+  if (exit < enter - 1e-9) return 0;
+  if (!node.triangles) return contactRayCrossings(solid, node.left!, point) + contactRayCrossings(solid, node.right!, point);
+  poseContactNode(solid, node);
+  let crossings = 0;
+  for (const index of node.triangles) {
+    const distance = triangleHit(point, direction.x, direction.y, direction.z, solid.points[solid.indices[index]], solid.points[solid.indices[index + 1]], solid.points[solid.indices[index + 2]]);
+    if (distance >= -CONTACT_MARGIN && distance <= CONTACT_MARGIN) return -Infinity;
+    if (distance > CONTACT_MARGIN && distance < Infinity) crossings++;
+  }
+  return crossings;
+}
+
+function solidsIntersect(a: ContactSolid, b: ContactSolid): boolean {
+  if (a.max.x <= b.min.x + CONTACT_MARGIN || b.max.x <= a.min.x + CONTACT_MARGIN
+    || a.max.y <= b.min.y + CONTACT_MARGIN || b.max.y <= a.min.y + CONTACT_MARGIN
+    || a.max.z <= b.min.z + CONTACT_MARGIN || b.max.z <= a.min.z + CONTACT_MARGIN) return false;
+  if (a.separatedEpochs![b.index!] === a.epoch && b.separatedEpochs![a.index!] === b.epoch) return false;
+  if (contactTreesIntersect(a, a.tree!, b, b.tree!)) return true;
+  // Without crossing faces, only a fully contained connected component can overlap.
+  for (const component of a.components!) {
+    let possible = true;
+    for (const index of component.extremes) {
+      poseContactVertex(a, index); const point = a.points[index];
+      if (point.x < b.min.x - CONTACT_TOLERANCE || point.x > b.max.x + CONTACT_TOLERANCE
+        || point.y < b.min.y - CONTACT_TOLERANCE || point.y > b.max.y + CONTACT_TOLERANCE
+        || point.z < b.min.z - CONTACT_TOLERANCE || point.z > b.max.z + CONTACT_TOLERANCE) { possible = false; break; }
+    }
+    if (!possible) continue;
+    for (const index of component.vertices) {
+      poseContactVertex(a, index); const point = a.points[index];
+      if (solidContains(b, point)) return true;
+      // Without crossing faces, one point away from the boundary fixes this
+      // connected component's side. A touching point remains inconclusive.
+      if (!contactPointNearSurface(b, b.tree!, point, CONTACT_TOLERANCE)) break;
+    }
+  }
+  for (const component of b.components!) {
+    let possible = true;
+    for (const index of component.extremes) {
+      poseContactVertex(b, index); const point = b.points[index];
+      if (point.x < a.min.x - CONTACT_TOLERANCE || point.x > a.max.x + CONTACT_TOLERANCE
+        || point.y < a.min.y - CONTACT_TOLERANCE || point.y > a.max.y + CONTACT_TOLERANCE
+        || point.z < a.min.z - CONTACT_TOLERANCE || point.z > a.max.z + CONTACT_TOLERANCE) { possible = false; break; }
+    }
+    if (!possible) continue;
+    for (const index of component.vertices) {
+      poseContactVertex(b, index); const point = b.points[index];
+      if (solidContains(a, point)) return true;
+      if (!contactPointNearSurface(a, a.tree!, point, CONTACT_TOLERANCE)) break;
+    }
+  }
+  a.separatedEpochs![b.index!] = a.epoch; b.separatedEpochs![a.index!] = b.epoch;
+  return false;
+}
+
+function contactNodeArea(node: ContactNode): number {
+  const x = node.max.x - node.min.x, y = node.max.y - node.min.y, z = node.max.z - node.min.z;
+  return x * y + x * z + y * z;
+}
+
+function contactTreesIntersect(a: ContactSolid, an: ContactNode, b: ContactSolid, bn: ContactNode): boolean {
+  // Original partitions are disjoint. Fixed interface patches sharing one exact
+  // rigid map stay disjoint; this is a binding proof, not an OBB collision.
+  if (an.anchor !== undefined && an.anchor !== -2 && an.anchor === bn.anchor) return false;
+  poseContactNode(a, an); poseContactNode(b, bn);
+  if (an.max.x < bn.min.x - CONTACT_MARGIN || bn.max.x < an.min.x - CONTACT_MARGIN
+    || an.max.y < bn.min.y - CONTACT_MARGIN || bn.max.y < an.min.y - CONTACT_MARGIN
+    || an.max.z < bn.min.z - CONTACT_MARGIN || bn.max.z < an.min.z - CONTACT_MARGIN) return false;
+  if (!an.triangles && (bn.triangles || contactNodeArea(an) >= contactNodeArea(bn))) {
+    return contactTreesIntersect(a, an.left!, b, bn) || contactTreesIntersect(a, an.right!, b, bn);
+  }
+  if (!bn.triangles) return contactTreesIntersect(a, an, b, bn.left!) || contactTreesIntersect(a, an, b, bn.right!);
+  for (const i of an.triangles!) {
+    const ad = contactTriangleData(a, i), ai = i * 3;
+    for (const j of bn.triangles) {
+      const bd = contactTriangleData(b, j), bi = j * 3;
+      if (ad[ai + 3] < bd[bi] - CONTACT_MARGIN || bd[bi + 3] < ad[ai] - CONTACT_MARGIN
+        || ad[ai + 4] < bd[bi + 1] - CONTACT_MARGIN || bd[bi + 4] < ad[ai + 1] - CONTACT_MARGIN
+        || ad[ai + 5] < bd[bi + 2] - CONTACT_MARGIN || bd[bi + 5] < ad[ai + 2] - CONTACT_MARGIN) continue;
+      if (contactTrianglePairPenetrates(a, b, i, j)) return true;
+    }
+  }
+  return false;
+}
+
 /** 起点CG高度；机体俯仰贴合下坡，并为整个±1°滚转包络保留5 cm净空。 */
 export function launchHeight(d: AircraftDefinition, cg = derive(d).cg): number {
   d = validateAircraft(d);
@@ -1133,15 +1766,40 @@ function contactLaunchOffset(contacts: ContactPoint[], cg: Vector3, structure?: 
   return 0.05 - lowest / Math.cos(LAUNCH.slope);
 }
 
+const runtimeCompiledGeometry = new WeakMap<FlightSimulation, CompiledAircraft>();
+type InternalContactPair = { moving: ContactSolid; other: ContactSolid };
+const internalContactPairs = new WeakMap<FlightSimulation, InternalContactPair>();
+const activeBranchContactPairs = new WeakMap<FlightSimulation, Map<number, InternalContactPair>>();
+type ContactGeometrySource = Pick<ContactSolid, 'sectionId' | 'points' | 'indices'>;
+const runtimeContactSources = new WeakMap<FlightSimulation, ContactGeometrySource[]>();
+const certifiedContactGeometry = new WeakMap<FlightSimulation, CompiledAircraft>();
+export type AircraftGeometryProvider = (definition: AircraftDefinition, previous: CompiledAircraft, changedWingInstances: readonly number[]) => CompiledAircraft | undefined;
+interface PreparedWindGeometry {
+  dt: number; phase: number; baseKey: string; main: number; tail: number; targetMain: number; targetTail: number;
+  entries: { key: string; definition: AircraftDefinition; changed: number[]; result?: CompiledAircraft }[];
+}
+const geometryProviders = new WeakMap<FlightSimulation, AircraftGeometryProvider>();
+const preparedWindGeometries = new WeakMap<FlightSimulation, PreparedWindGeometry>();
+
 
 export class FlightSimulation {
   readonly definition: AircraftDefinition;
+  private geometryReference: AircraftDefinition;
+  /** Installed geometry snapshot shared with the renderer. */
+  get geometryDefinition() { return this.geometryReference; }
+  get compiledGeometry() { return runtimeCompiledGeometry.get(this)!; }
+  get geometryRevisionReason() { return 'incidence' as const; }
+  get geometryProvider() { return geometryProviders.get(this); }
+  set geometryProvider(provider: AircraftGeometryProvider | undefined) {
+    preparedWindGeometries.delete(this);
+    if (provider) geometryProviders.set(this, provider); else geometryProviders.delete(this);
+  }
   private readonly cockpitShape: BodyEllipsoid;
   readonly id = 0;
   readonly structure: WingStructure;
   readonly fragments: WingFragment[] = [];
   private readonly sectionContacts: number[][];
-  private readonly branchContacts: { key: WingKey; wingInstance: number; side: number; indices: number[] }[];
+  private readonly branchContacts: { key: WingKey; wingInstance: number; side: number; rootId: number; indices: number[] }[];
   get cg() { return this.aircraft.cg; }
   get mass() { return this.aircraft.mass; }
   get inertiaTensor() { return this.aircraft.inertiaTensor; }
@@ -1237,6 +1895,9 @@ export class FlightSimulation {
   private readonly nosePoint = new Vector3();
   private readonly mixingSurfaces: AerodynamicSurface[];
   private readonly contacts: ContactPoint[];
+  private readonly contactSolids: ContactSolid[];
+  /** Pair order affects bounded shape solving; persist only stable solid IDs, never mesh caches. */
+  private readonly activeContactPairIds: Int32Array;
   /** Impulses until an accepted step converts them to average structural loads. */
   private readonly wingContactLoads: SectionContactLoad[];
   private readonly wingImpactLoads: SectionContactLoad[];
@@ -1253,16 +1914,16 @@ export class FlightSimulation {
   private readonly initialImpactTorque = new Vector3();
   private readonly finalImpactImpulse = new Vector3();
   private readonly finalImpactTorque = new Vector3();
-  private readonly platformFaces: Int8Array;
-  private readonly platformGaps: Float64Array;
-  private readonly platformImpulses: Float64Array;
-  private readonly platformFriction: Vector3[];
+  private platformFaces: Int8Array;
+  private platformGaps: Float64Array;
+  private platformImpulses: Float64Array;
+  private platformFriction: Vector3[];
   private readonly frictionDirection = new Vector3();
   private readonly frictionDelta = new Vector3();
   private readonly frictionAxis = new Vector3();
-  private readonly platformAxes: Vector3[];
-  private readonly groundNormals: Vector3[];
-  private readonly platformActive: Int32Array;
+  private platformAxes: Vector3[];
+  private groundNormals: Vector3[];
+  private platformActive: Int32Array;
   private platformCount = 0;
   private readonly platformStart = new Vector3();
   private readonly platformEnd = new Vector3();
@@ -1320,6 +1981,8 @@ export class FlightSimulation {
 
   constructor(d: AircraftDefinition, challenge: ChallengeMode = 'birdman', private readonly fixedLaunchRoll?: number, testSettings: TestSpaceSettings = defaultTestSpace) {
     this.definition = validateAircraft(d);
+    this.geometryReference = challenge === 'wind-tunnel' ? validateAircraft(this.definition) : this.definition;
+    runtimeCompiledGeometry.set(this, compiledAircraft(this.definition));
     this.cockpitShape = cockpitGeometry(this.definition);
     if (!Object.hasOwn(challengeDefinitions, challenge)) throw new Error('未知飞行挑战');
     if (challenge === 'birdman' && (!this.definition.birdman || this.definition.engine.count > 0)) throw new Error('鸟人间比赛只允许无动力鸟人间设计');
@@ -1332,22 +1995,32 @@ export class FlightSimulation {
     this.enginePositions = engineMounts(this.definition);
     const shape = fuelTankDimensions(this.definition.fuelTank.capacity);
     this.fuelLocalInertia.set(2 * shape.radius ** 2 / 5, ((shape.length / 2) ** 2 + shape.radius ** 2) / 5, ((shape.length / 2) ** 2 + shape.radius ** 2) / 5);
-    this.aircraft = properties(this.definition);
+    this.aircraft = properties(this.definition, this.compiledGeometry);
     this.neutral = this.aircraft.neutralPoint;
     this.chord = planform(this.definition.mainWing).chord;
-    this.surfaces = makeSurfaces(this.definition);
+    this.surfaces = makeSurfaces(this.definition, this.compiledGeometry);
     // Coordinate descent must visit the same physical actuators after wing-role swaps.
     this.mixingSurfaces = this.surfaces.slice().sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y
       || a.point.z - b.point.z || a.spanStart - b.spanStart || a.spanEnd - b.spanEnd);
     this.structure = new WingStructure(this.definition, this.surfaces);
-    this.aerodynamics = new AerodynamicSummary(this.surfaces, this.definition);
-    this.contacts = makeContacts(this.definition, this.structure);
+    this.structure.setAttachmentSpans(this.compiledGeometry.attachmentSpans ?? []);
+    this.activeContactPairIds = new Int32Array(this.structure.sections.length * 2).fill(-1);
+    this.aerodynamics = new AerodynamicSummary(this.surfaces, this.definition, true);
+    const geometryPoints = makeContacts(this.definition, this.structure);
+    this.contactSolids = makeContactSolids(this.definition, geometryPoints);
+    runtimeContactSources.set(this, this.contactSolids.map(({ sectionId, points, indices }) => ({ sectionId, points, indices })));
+    this.contacts = sampleContacts(this.contactSolids);
     this.sectionContacts = this.structure.sections.map(() => []);
     this.contacts.forEach((point, index) => { if (point.sectionId !== undefined) this.sectionContacts[point.sectionId].push(index); });
     this.branchContacts = [];
     for (const { key, id } of aircraftWings(this.definition)) for (const side of [-1, 1]) {
       const indices = this.contacts.flatMap((point, index) => point.sectionId !== undefined && this.structure.branchContains(this.structure.sections[point.sectionId], key, side, id) ? [index] : []);
-      if (indices.length) this.branchContacts.push({ key, wingInstance: id, side, indices });
+      if (indices.length) {
+        const root = this.structure.sections.find(section => section.wingInstance === id && section.side === side && section.spanStart === 0)!;
+        // A fin-mounted tail is already part of the fin's continuous contact branch.
+        if (root.parentId !== null) continue;
+        this.branchContacts.push({ key, wingInstance: id, side, rootId: root.id, indices });
+      }
     }
     this.wingContactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
     this.wingImpactLoads = this.structure.sections.map(() => ({ force: new Vector3(), moment: new Vector3() }));
@@ -1392,6 +2065,8 @@ export class FlightSimulation {
   reset(launchRoll = this.fixedLaunchRoll ?? (Math.random() * 2 - 1) * LAUNCH_ROLL_LIMIT) {
     this.maxG = 1;
     if (!Number.isFinite(launchRoll) || Math.abs(launchRoll) > LAUNCH_ROLL_LIMIT) throw new RangeError('离台滚转角须在 ±1° 之间');
+    this.activeContactPairIds.fill(-1); activeBranchContactPairs.delete(this); preparedWindGeometries.delete(this);
+    certifiedContactGeometry.delete(this);
     this.launchRoll = launchRoll;
     raceCheckpointTimes.set(this, []);
     resetGhostRecording(this);
@@ -1417,7 +2092,18 @@ export class FlightSimulation {
     this.fuelRemaining = this.definition.fuelTank.capacity;
     this.checkpointScores.length = 0; this.heightPenalty = 0; this.aboveHeightTime = 0; this.aboveHeightStreak = 0;
     this.pilotOffset.x = 0; this.pilotOffset.z = 0;
+    const fragmented = this.fragments.length > 0;
+    if (fragmented) for (const section of this.structure.sections) {
+      if (section.wingInstance === 0 || section.wingInstance === 1) this.setSectionIncidence(section,
+        (section.wingInstance === 0 ? this.definition.assembly.mainIncidence : this.definition.assembly.tailIncidence) * DEG, true);
+    }
     this.structure.reset(); this.fragments.length = 0; this.nextFragmentId = 1;
+    if (fragmented) {
+      this.structure.syncFinGeometry(); this.structure.setAttachmentSpans(this.compiledGeometry.attachmentSpans ?? []);
+      applyCompiledControls(this.definition, this.surfaces, this.compiledGeometry);
+      for (const section of this.structure.sections) section.referenceControlPoint.copy(section.surface.controlPoint);
+      this.replaceCompiledContacts(); this.updateGeometryMassParts(); frameExposures.delete(this.surfaces);
+    }
     this.clearContactLoads();
     this.updateSurfaceExtents();
     if (this.fuelPart) {
@@ -1456,6 +2142,7 @@ export class FlightSimulation {
     this.telemetry.specificForce.set(0, GRAVITY, 0);
     this.supportTorque.set(0, 0, 0);
     this.structure.update(this, this.supportForce, this.supportTorque);
+    this.constrainWingGeometry(true);
     this.structure.summarize();
     this.syncContacts();
     // 发射净空取静载后的完整碰撞体，长翼下垂不能穿过导轨或平台。
@@ -1496,7 +2183,54 @@ export class FlightSimulation {
 
   setWindTunnel(settings: WindTunnelSettings) {
     if (this.challenge !== 'wind-tunnel') throw Error('风洞参数无效');
-    this.laboratoryState.windTarget = windTunnelSettings(settings, this.definition.birdman);
+    const target = windTunnelSettings(settings, this.definition.birdman), previous = this.laboratoryState.windTarget;
+    if (target.mainIncidence !== previous.mainIncidence || target.tailIncidence !== previous.tailIncidence) preparedWindGeometries.delete(this);
+    this.laboratoryState.windTarget = target;
+  }
+
+  /** Prepare every geometry boundary before advancing any part of a fixed-step call. */
+  private prepareWindGeometry(dt: number): boolean {
+    const provider = this.geometryProvider;
+    if (!provider) return true;
+    const actual = this.windTunnel, target = this.laboratoryState.windTarget, phase = this.fractureTickElapsed;
+    if (actual.mainIncidence === target.mainIncidence && actual.tailIncidence === target.tailIncidence
+      && actual.mainIncidence === this.definition.assembly.mainIncidence && actual.tailIncidence === this.definition.assembly.tailIncidence) return true;
+    let prepared = preparedWindGeometries.get(this);
+    if (!prepared || prepared.dt !== dt || prepared.phase !== phase || prepared.baseKey !== this.compiledGeometry.key
+      || prepared.main !== actual.mainIncidence || prepared.tail !== actual.tailIncidence
+      || prepared.targetMain !== target.mainIncidence || prepared.targetTail !== target.tailIncidence) {
+      prepared = { dt, phase, baseKey: this.compiledGeometry.key, main: actual.mainIncidence, tail: actual.tailIncidence,
+        targetMain: target.mainIncidence, targetTail: target.tailIncidence, entries: [] };
+      preparedWindGeometries.set(this, prepared);
+    }
+    let remaining = dt, tickPhase = phase, main = actual.mainIncidence, tail = actual.tailIncidence;
+    let installedMain = this.definition.assembly.mainIncidence, installedTail = this.definition.assembly.tailIncidence;
+    let previous = this.compiledGeometry, index = 0;
+    while (remaining > 0) {
+      const h = Math.min(remaining, PHYSICS_TICK - tickPhase);
+      main += Math.sign(target.mainIncidence - main) * Math.min(Math.abs(target.mainIncidence - main), windTunnelRates.mainIncidence * h);
+      tail += Math.sign(target.tailIncidence - tail) * Math.min(Math.abs(target.tailIncidence - tail), windTunnelRates.tailIncidence * h);
+      if (main !== installedMain || tail !== installedTail) {
+        let entry = prepared.entries[index++];
+        if (!entry) {
+          const definition = validateAircraft(this.definition), changed: number[] = [];
+          definition.assembly.mainIncidence = main; definition.assembly.tailIncidence = tail;
+          if (main !== installedMain) changed.push(0);
+          if (tail !== installedTail) { changed.push(1); if (definition.assembly.tailOnFin) changed.push(2); }
+          entry = { key: geometryKey(definition), definition, changed }; prepared.entries.push(entry);
+        }
+        if (!entry.result) {
+          const result = provider(entry.definition, previous, entry.changed);
+          if (!result) return false;
+          if (result.key !== entry.key) throw Error('Compiled aircraft does not match the requested wind-tunnel geometry');
+          entry.result = result;
+        }
+        previous = entry.result; installedMain = main; installedTail = tail;
+      }
+      tickPhase += h; if (tickPhase >= PHYSICS_TICK - 1e-12) tickPhase = 0;
+      remaining -= h; if (remaining < 1e-12) remaining = 0;
+    }
+    return true;
   }
 
   /** Reusable full-fuel steady-flight force probe. Angles are radians; controls normalized. */
@@ -1515,18 +2249,25 @@ export class FlightSimulation {
     this.position.set(100, 1000, 0); this.velocity.set(speed, 0, 0); this.omega.set(0, 0, 0);
     this.quaternion.setFromAxisAngle(this.cross.set(0, 0, 1), pitch);
     this.structure.reset();
+    certifiedContactGeometry.delete(this); this.clearContactLoads(); this.syncContacts(0);
     this.recomputeMainMass();
-    this.updateControlDirections();
     this.applied.elevator = elevator;
+    this.applied.aileron = this.applied.rudder = 0;
     this.engineRpm = throttle;
     this.availableThrust = this.definition.engine.count * engineCatalog[this.definition.engine.type].maxThrust * throttle ** 2;
     this.predictedControls.elevator = elevator; this.predictedControls.aileron = this.predictedControls.rudder = 0;
     for (let iteration = 0; iteration < 4; iteration++) {
-      this.evaluateForces(ZERO_CONTROLS, this.velocity, this.omega, this.quaternion, this.position, this.predictedControls);
-      if (iteration < 3) this.structure.update(this, this.telemetry.force, this.telemetry.torque);
+      this.updateControlDirections();
+      this.mixControls(this.predictedControls, this.velocity, this.omega, this.quaternion);
+      for (const surface of this.surfaces) surface.controlCommand = surface.controlCandidate;
+      this.updateControlDeflections();
+      this.evaluateForces(ZERO_CONTROLS, this.velocity, this.omega, this.quaternion, this.position);
+      if (iteration < 3) {
+        this.structure.update(this, this.telemetry.force, this.telemetry.torque);
+        this.constrainWingGeometry(true);
+      }
     }
-    for (const surface of this.surfaces) surface.controlCommand = surface.controlCandidate;
-    this.updateControlDeflections();
+    this.structure.summarize();
     return this.telemetry;
   }
 
@@ -1564,64 +2305,81 @@ export class FlightSimulation {
 
   /** Move only attached wing geometry; detached parts keep their release geometry. */
   private syncWindTunnelIncidence() {
+    const previous = this.compiledGeometry, changedWingInstances: number[] = [];
+    this.ensureContactSolids();
     for (const key of ['mainWing', 'horizontalTail'] as const) {
       const field = key === 'mainWing' ? 'mainIncidence' : 'tailIncidence';
       const value = this.windTunnel[field];
       const delta = (value - this.definition.assembly[field]) * DEG;
-      if (Math.abs(delta) < 1e-12) continue;
-      const before = wingOrigin(this.definition, key);
-      this.incidenceOldOrigin.set(before.x, before.y, 0);
+      if (delta === 0) continue;
+      changedWingInstances.push(key === 'mainWing' ? 0 : 1);
       this.definition.assembly[field] = value;
-      const after = wingOrigin(this.definition, key);
-      this.incidenceNewOrigin.set(after.x, after.y, 0);
-      this.incidenceRotation.setFromAxisAngle(this.cross.set(0, 0, 1), delta);
-      this.incidenceInverse.copy(this.incidenceRotation).invert();
-      const c = Math.cos(delta), s = Math.sin(delta);
       for (const section of this.structure.sections) {
-        if (section.wingInstance !== (key === 'mainWing' ? 0 : 1) || section.bodyId !== 0) continue;
-        for (const point of [section.referenceRoot, section.referenceTip, section.referencePoint, section.baseRoot, section.baseTip,
-          section.root.position, section.tip.position, section.center]) {
-          point.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
-        }
-        for (const direction of [section.referenceNormal, section.referenceSpan, section.referenceChord, section.referenceCrossflow,
-          section.chordAxis, section.normalAxis, section.beamAxis]) direction.applyQuaternion(this.incidenceRotation);
-        for (const rotation of [section.root.quaternion, section.tip.quaternion, section.baseRootRotation, section.baseTipRotation]) {
-          rotation.premultiply(this.incidenceRotation).multiply(this.incidenceInverse);
-        }
-        const e = section.inertia.elements, xx = e[0], yy = e[4], xy = e[3], xz = e[6], yz = e[7];
-        setInertia(section.inertia, c * c * xx + s * s * yy - 2 * c * s * xy,
-          s * s * xx + c * c * yy + 2 * c * s * xy, e[8],
-          c * s * (xx - yy) + (c * c - s * s) * xy, c * xz - s * yz, s * xz + c * yz);
-        section.surface.incidence = value * DEG;
-        for (const index of this.sectionContacts[section.id]) {
-          const point=this.contacts[index],reference = point.reference;
-          if (reference) reference.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
-          point.controlHinge?.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
-          point.controlAxis?.applyQuaternion(this.incidenceRotation);
-        }
+        if (section.wingInstance === (key === 'mainWing' ? 0 : 1) && section.bodyId === 0) this.setSectionIncidence(section, value * DEG);
       }
     }
     if (this.definition.assembly.tailOnFin) {
+      if (changedWingInstances.includes(1)) changedWingInstances.push(2);
       this.structure.syncFinGeometry();
-      for (const point of this.contacts) {
-        const section = point.sectionId === undefined ? undefined : this.structure.sections[point.sectionId];
-        if (section?.wingInstance === 2 && section.bodyId === 0 && point.reference) {
-          wingInstancePoint(this.definition, 2, section.side, point.span!, point.u!, point.normal!, point.reference);
-          if(point.controlHinge)wingControlHinge(this.definition,2,section.side,point.span!,point.controlHinge);
-          if(point.controlAxis)wingControlAxis(this.definition,2,section.side,point.controlAxis);
-        }
+    }
+    if (changedWingInstances.length) {
+      let result: CompiledAircraft;
+      if (this.geometryProvider) {
+        const key = geometryKey(this.definition), entry = preparedWindGeometries.get(this)?.entries.find(entry => entry.key === key);
+        if (!entry?.result) throw Error('Wind tunnel geometry is not prepared');
+        result = entry.result;
+      } else result = compileAffectedAircraft(this.definition, previous, changedWingInstances);
+      installCompiledAircraft(this.definition, result);
+      runtimeCompiledGeometry.set(this, result);
+      this.structure.setAttachmentSpans(result.attachmentSpans ?? []);
+      this.geometryReference = validateAircraft(this.definition);
+      getCompiledAircraft(this.geometryReference);
+      applyCompiledControls(this.definition, this.surfaces, this.compiledGeometry);
+      for (const section of this.structure.sections) if (section.bodyId === 0) {
+        section.referenceControlPoint.copy((section.surface as AerodynamicSurface).controlPoint);
+        if (section.surface.controlEffectiveness === 0) section.controlDeflection = 0;
       }
+      this.replaceCompiledContacts();
+      frameExposures.delete(this.surfaces);
     }
-    // Live clearance changes never replace existing structural joints.
-    const regions=controlSurfaceRegions(this.definition);
-    for(const surface of this.surfaces)if(surface.bodyId===0){
-      const movable=!regions.some(region=>region.wingInstance===surface.wingInstance&&region.side===surface.side&&!region.movable
-        &&region.spanStart<surface.spanEnd&&region.spanEnd>surface.spanStart);
-      surface.controlEffectiveness=movable?controlEffectiveness(wingInstanceWing(this.definition,surface.wingInstance).controlSurface):0;
-      if(!movable)surface.controlCommand=0;
-    }
-    for(const section of this.structure.sections)if(section.bodyId===0&&section.surface.controlEffectiveness===0)section.controlDeflection=0;
     this.structure.updateGeometry(0);
+    this.updateGeometryMassParts();
+    this.recomputeMainMass(); this.syncContacts(); this.updateSurfaceExtents();
+  }
+
+  private setSectionIncidence(section: StructureSection, incidence: number, resetting = false) {
+    const delta = incidence - section.surface.incidence;
+    if (delta === 0) return;
+    this.incidenceOldOrigin.copy(section.referenceRoot);
+    wingInstancePoint(this.definition, section.wingInstance, section.side, section.spanStart, 0.25, 0, this.incidenceNewOrigin);
+    this.incidenceRotation.setFromAxisAngle(this.cross.set(0, 0, 1), delta);
+    this.incidenceInverse.copy(this.incidenceRotation).invert();
+    section.referenceRoot.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+    section.referenceTip.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+    section.referencePoint.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+    section.referenceControlPoint.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+    section.center.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+    if (!resetting) {
+      section.baseRoot.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+      section.baseTip.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+      section.root.position.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+      section.tip.position.sub(this.incidenceOldOrigin).applyQuaternion(this.incidenceRotation).add(this.incidenceNewOrigin);
+      section.root.quaternion.premultiply(this.incidenceRotation).multiply(this.incidenceInverse);
+      section.tip.quaternion.premultiply(this.incidenceRotation).multiply(this.incidenceInverse);
+      section.baseRootRotation.premultiply(this.incidenceRotation).multiply(this.incidenceInverse);
+      section.baseTipRotation.premultiply(this.incidenceRotation).multiply(this.incidenceInverse);
+    }
+    section.referenceNormal.applyQuaternion(this.incidenceRotation); section.referenceSpan.applyQuaternion(this.incidenceRotation);
+    section.referenceChord.applyQuaternion(this.incidenceRotation); section.referenceCrossflow.applyQuaternion(this.incidenceRotation);
+    section.chordAxis.applyQuaternion(this.incidenceRotation); section.normalAxis.applyQuaternion(this.incidenceRotation); section.beamAxis.applyQuaternion(this.incidenceRotation);
+    const e = section.inertia.elements, xx = e[0], yy = e[4], xy = e[3], xz = e[6], yz = e[7], c = Math.cos(delta), s = Math.sin(delta);
+    setInertia(section.inertia, c * c * xx + s * s * yy - 2 * c * s * xy,
+      s * s * xx + c * c * yy + 2 * c * s * xy, e[8],
+      c * s * (xx - yy) + (c * c - s * s) * xy, c * xz - s * yz, s * xz + c * yz);
+    section.surface.incidence = incidence;
+  }
+
+  private updateGeometryMassParts() {
     for (const part of this.parts) {
       if (part.sectionId !== undefined) {
         const section = this.structure.sections[part.sectionId], e = section.inertia.elements;
@@ -1634,7 +2392,6 @@ export class FlightSimulation {
         part.ix = support.mass * vy; part.iy = support.mass * vx; part.iz = support.mass * (vx + vy);
       }
     }
-    this.recomputeMainMass(); this.syncContacts(); this.updateSurfaceExtents();
   }
 
   private applyWindTunnelFixture(dt: number) {
@@ -1706,11 +2463,14 @@ export class FlightSimulation {
   }
 
   /** Copy the complete mutable physics graph, preserving prototypes and internal aliases.
-   * Large append-only recording buffers and the validated aircraft definition are shared. */
+   * Large append-only recordings and immutable flight definitions are shared. */
   checkpoint(): FlightSimulation {
-    const seen = new Map<object, object>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, this.definition], [this.keyframes, this.keyframes]]);
+    const definition = this.challenge === 'wind-tunnel' ? validateAircraft(this.definition) : this.definition;
+    if (definition !== this.definition) installCompiledAircraft(definition, this.compiledGeometry);
+    const seen = new Map<object, object>([[this.recording, this.recording], [this.wingLoads, this.wingLoads], [this.definition, definition], [this.geometryReference, this.geometryReference], [this.keyframes, this.keyframes]]);
     // Contact solver workspaces are rebuilt before every use; synchronous steps may share them.
     for (const buffer of [this.platformFaces, this.platformGaps, this.platformImpulses, this.platformFriction, this.platformAxes, this.groundNormals, this.platformActive, this.sectionContacts, this.branchContacts]) seen.set(buffer, buffer);
+    seen.set(this.contactSolids, []);
     if (this.replay) seen.set(this.replay, this.replay);
     let bytes = 0;
     const copy = (value: unknown): unknown => {
@@ -1728,6 +2488,9 @@ export class FlightSimulation {
     };
     // This graph comes only from the existing, typed simulation.
     const result = copy(this) as FlightSimulation;
+    runtimeCompiledGeometry.set(result, this.compiledGeometry);
+    runtimeContactSources.set(result, runtimeContactSources.get(this)!);
+    const provider = this.geometryProvider; if (provider) geometryProviders.set(result, provider);
     raceCheckpointTimes.set(result, this.checkpointTimes.slice());
     checkpointSizes.set(result, bytes);
     return result;
@@ -1759,8 +2522,14 @@ export class FlightSimulation {
     this.replayFinished = copy.length === 0;
   }
 
-  step(controls: FlightControls, dt = PHYSICS_TICK) {
+  step(controls: FlightControls, dt = PHYSICS_TICK): false | void {
     if (this.ended || this.replayFinished) return;
+    if (this.challenge === 'wind-tunnel' && this.geometryProvider) {
+      if (!Number.isFinite(dt) || dt <= 0 || dt > 0.25) throw new RangeError('步长须在 0 至 0.25 秒之间');
+      if (!Number.isFinite(controls.weight + controls.rudder + controls.elevator + controls.aileron + (controls.lateral ?? 0)
+        + (controls.throttle ?? 0) + (controls.trimPitch ?? 0) + (controls.trimRoll ?? 0))) throw new RangeError('操纵输入必须为有限数');
+      if (!this.prepareWindGeometry(dt)) return false;
+    }
     const started = performance.now(), recordingFrame = this.recordingLength;
     if (!this.replay && !isLaboratory(this.challenge) && !this.keyframes.length) { this.captureKeyframe(); recordGhost(this); }
     const input = this.effective;
@@ -1795,6 +2564,7 @@ export class FlightSimulation {
       this.elapsed += dt;
       this.integrateTicks(input, dt);
       this.telemetry.physicsMs = performance.now() - started;
+      preparedWindGeometries.delete(this);
       return;
     }
     input.weight = clamp(input.weight, -1, 1); input.rudder = clamp(input.rudder, -1, 1);
@@ -2023,7 +2793,7 @@ export class FlightSimulation {
       coupledControlMoments(this.surfaces);
     }
     for (const surface of this.surfaces) if (surface.bodyId === 0) {
-      this.arm.subVectors(surface.point, this.cg);
+      this.arm.subVectors(surface.controlPoint, this.cg);
       surface.controlProjection.crossVectors(this.arm, surface.normal).normalize();
       if (!this.effective.smartMixing || surface.controlEffectiveness === 0 || surface.controlResponse === 0) surface.controlMoment.set(0, 0, 0);
     }
@@ -2036,8 +2806,26 @@ export class FlightSimulation {
     for (const section of this.structure.sections) if (section.bodyId === 0) {
       const surface = section.surface as AerodynamicSurface;
       // Rotation axes point outboard on horizontal wings and along signed fin height.
-      const incidence = surface.controlCommand * (surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT);
-      section.controlDeflection = surface.controlEffectiveness===0 ? 0 : incidence * (surface.kind === 'vertical' ? -surface.side * Math.sign(surface.spanDirection.y) : surface.side);
+      const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT, incidence = surface.controlCommand * limit;
+      const previous = section.controlDeflection;
+      const sign = surface.kind === 'vertical' ? -surface.side * Math.sign(surface.spanDirection.y) : surface.side;
+      const target = surface.controlEffectiveness === 0 ? 0 : clamp(incidence * sign, surface.controlMinAngle ?? -limit, surface.controlMaxAngle ?? limit);
+      surface.controlCommand = target === 0 || sign === 0 ? 0 : target / (sign * limit);
+      if (target === previous) continue;
+      section.controlDeflection = target;
+      this.syncSectionContacts(section.id, true);
+      if (this.blockedInternalGeometry(section.id, false, true)) {
+        let low = 0, high = 1;
+        for (let iteration = 0; iteration < 18; iteration++) {
+          const fraction = (low + high) / 2;
+          section.controlDeflection = previous + (target - previous) * fraction;
+          this.syncSectionContacts(section.id, true);
+          if (this.blockedInternalGeometry(section.id, false, true)) high = fraction; else low = fraction;
+        }
+        section.controlDeflection = previous + (target - previous) * low;
+        this.syncSectionContacts(section.id, true);
+        surface.controlCommand = section.controlDeflection === 0 || sign === 0 ? 0 : section.controlDeflection / (sign * limit);
+      }
     }
   }
 
@@ -2065,7 +2853,10 @@ export class FlightSimulation {
     // Remove persistent prediction/midpoint error; never wind up against travel or structural limits.
     const correction = -8 * this.omega.z / authority * dt;
     const requested = equilibrium + this.trimPitchBias + damping;
-    if (neutral && correction * (this.requestedControls.elevator - this.applied.elevator) <= 1e-10
+    const trimChange = (clamp(equilibrium + this.trimPitchBias, -1, 1) - this.trimPitch) * -Math.expm1(-dt / 0.25);
+    if (neutral && correction * (trimChange - clamp(trimChange, -0.5 * dt, 0.5 * dt)) <= 1e-10
+      && correction * (this.requestedControls.elevator
+      - clamp(this.requestedControls.elevator, -this.controlAuthority, this.controlAuthority)) <= 1e-10
       && correction * (requested - clamp(requested, -1, 1)) <= 1e-10) {
       this.trimPitchBias = clamp(this.trimPitchBias + correction, -1, 1);
     }
@@ -2083,10 +2874,20 @@ export class FlightSimulation {
 
   /** 冻结当前状态，直接重算候选舵量的气动力、惯性载荷及真实梁利用率。 */
   private adaptiveControlLimit(controls?: Controls): number {
-    // 零舵已有的气动/惯性/水载不能靠限制杆量消除，也不钳制真实应力或免除断裂。
-    if (this.predictControlStress(controls, 0) >= ADAPTIVE_STRESS_TARGET) return 0;
+    const neutralStress = this.predictControlStress(controls, 0);
     if (this.predictControlStress(controls, 1) <= ADAPTIVE_STRESS_TARGET) return 1;
     let safe = 0, unsafe = 1;
+    if (neutralStress >= ADAPTIVE_STRESS_TARGET) {
+      // An elastically bent wing can need nonzero control to unload. Find a
+      // measured safe bracket instead of treating zero command as always safest.
+      for (let sample = 15; sample > 0; sample--) {
+        const candidate = sample / 16;
+        if (this.predictControlStress(controls, candidate) <= ADAPTIVE_STRESS_TARGET) {
+          safe = candidate; unsafe = (sample + 1) / 16; break;
+        }
+      }
+      if (safe === 0) return 0;
+    }
     for (let iteration = 0; iteration < 14; iteration++) {
       const candidate = (safe + unsafe) / 2;
       if (this.predictControlStress(controls, candidate) <= ADAPTIVE_STRESS_TARGET) safe = candidate;
@@ -2142,11 +2943,12 @@ export class FlightSimulation {
     surface.profileDrag *= 1 - wet; surface.separatedDrag *= 1 - wet; surface.spanwiseDrag *= 1 - wet;
     const speed = this.localVelocity.length();
     const projected = speed > 1e-9 ? Math.abs(this.localVelocity.dot(surface.normal)) / speed : 0;
-    const area = surface.area * (WATER.wingEdgeDrag + (1 - WATER.wingEdgeDrag) * projected);
+    const retainedArea = surface.area * surface.exposedFraction;
+    const area = retainedArea * (WATER.wingEdgeDrag + (1 - WATER.wingEdgeDrag) * projected);
     this.localDrag.copy(this.localVelocity).multiplyScalar(-0.5 * WATER.density * WATER.wingDragCoefficient * area * wet * speed);
     surface.waterDrag = this.localDrag.length();
     surface.drag.add(this.localDrag); surface.force.add(this.localDrag);
-    this.buoyancy.set(0, WATER.density * GRAVITY * surface.area * surface.chord * WATER.wingVolumeRatio * wet, 0)
+    this.buoyancy.set(0, WATER.density * GRAVITY * retainedArea * surface.chord * WATER.wingVolumeRatio * wet, 0)
       .applyQuaternion(this.inverse);
     this.waterPower += this.buoyancy.dot(this.localVelocity);
     surface.force.add(this.buoyancy);
@@ -2183,15 +2985,22 @@ export class FlightSimulation {
 
   private mixControls(controls: Controls, velocity: Vector3, omega: Vector3, orientation: Quaternion): void {
     mixControlSurfaces(this.mixingSurfaces, controls, this.effective.smartMixing === true);
-    if (!this.effective.adaptiveControls) return;
-    this.inverse.copy(orientation).invert();
-    this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
+    if (this.effective.adaptiveControls) {
+      this.inverse.copy(orientation).invert();
+      this.bodyVelocity.copy(velocity).applyQuaternion(this.inverse);
+    }
     for (const surface of this.surfaces) if (surface.bodyId === 0) {
-      this.arm.subVectors(surface.point, this.aircraft.cg);
-      this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
-      const chord = this.localVelocity.dot(surface.chordDirection), normal = this.localVelocity.dot(surface.normal);
-      // Preserve full low-speed travel; above 30 m/s hold reference dynamic-pressure authority.
-      surface.controlCandidate *= Math.min(1, 900 / Math.max(900, chord * chord + normal * normal));
+      if (this.effective.adaptiveControls) {
+        this.arm.subVectors(surface.point, this.aircraft.cg);
+        this.localVelocity.crossVectors(omega, this.arm).add(this.bodyVelocity);
+        const chord = this.localVelocity.dot(surface.chordDirection), normal = this.localVelocity.dot(surface.normal);
+        // Preserve full low-speed travel; above 30 m/s hold reference dynamic-pressure authority.
+        surface.controlCandidate *= Math.min(1, 900 / Math.max(900, chord * chord + normal * normal));
+      }
+      const limit = surface.kind === 'vertical' ? RUDDER_LIMIT : HORIZONTAL_LIMIT;
+      const sign = surface.kind === 'vertical' ? -surface.side * Math.sign(surface.spanDirection.y) : surface.side;
+      surface.controlCandidate = sign === 0 ? 0 : clamp(surface.controlCandidate * sign * limit,
+        surface.controlMinAngle ?? -limit, surface.controlMaxAngle ?? limit) / (sign * limit);
     }
   }
 
@@ -2595,7 +3404,7 @@ export class FlightSimulation {
         const failing = this.structure.fractureCandidates(current.id).length > 0;
         if (!separated) {
           this.structure.updateGeometry(current.id);
-          if (current.id === 0 && this.challenge !== 'wind-tunnel') this.constrainWingGeometry();
+          if (current.id === 0) this.constrainWingGeometry();
         }
         if (!failing) break;
         const fragment = this.commitFractures(current);
@@ -2616,20 +3425,178 @@ export class FlightSimulation {
   }
 
   private syncContacts(bodyId?: number) {
-    if (bodyId !== undefined) {
-      for (const section of this.structure.sectionsForBody(bodyId)) for (const index of this.sectionContacts[section.id]) this.syncContact(this.contacts[index]);
-    } else for (const point of this.contacts) this.syncContact(point);
+    this.ensureContactSolids();
+    for (const solid of this.contactSolids) {
+      if (bodyId !== undefined && (solid.sectionId === undefined ? 0 : this.structure.sections[solid.sectionId].bodyId) !== bodyId) continue;
+      this.syncContactSolid(solid);
+    }
+    for (const point of this.contacts) {
+      if (bodyId !== undefined && (point.sectionId === undefined ? 0 : this.structure.sections[point.sectionId].bodyId) !== bodyId) continue;
+      poseContactVertex(this.contactSolids[point.geometrySolidIndex!], point.geometryVertexIndex!);
+    }
   }
 
   private syncContact(point: ContactPoint) {
-    if (point.sectionId === undefined || !point.reference) return;
-    const section = this.structure.sections[point.sectionId], node = point.tip ? section.tip : section.root;
-    const wing=wingInstanceWing(this.definition,section.wingInstance);
-    point.copy(point.reference);
-    if((section.surface as AerodynamicSurface).controlEffectiveness>0&&point.u!>=1-wing.controlSurface&&section.controlDeflection!==0){
-      point.sub(point.controlHinge!).applyAxisAngle(point.controlAxis!,section.controlDeflection).add(point.controlHinge!);
+    if (!point.reference) return;
+    if (point.supportSectionId !== undefined) {
+      const support = this.structure.sections[point.supportSectionId];
+      point.copy(point.reference);
+      if (support.bodyId === 0) {
+        this.structure.deformPoint(support, point, 0);
+        point.lerp(point.reference, 1 - point.supportWeight!);
+      }
+      return;
     }
-    point.sub(point.tip ? section.referenceTip : section.referenceRoot).applyQuaternion(node.quaternion).add(node.position);
+    if (point.sectionId === undefined) return;
+    const section = this.structure.sections[point.sectionId];
+    point.copy(point.reference);
+    if (point.movable && section.controlDeflection !== 0) {
+      point.sub(point.controlHinge!).applyAxisAngle(point.controlAxis!, section.controlDeflection).add(point.controlHinge!);
+    }
+    const t = clamp((point.span! - section.spanStart) / (section.spanEnd - section.spanStart), 0, 1);
+    this.structure.deformPoint(section, point, t);
+  }
+
+
+  private ensureContactSolids() {
+    if (this.contactSolids.length) return;
+    const selected = new Map(this.contacts.map(point => [`${point.geometrySolidIndex}:${point.geometryVertexIndex}`, point]));
+    const solids = runtimeContactSources.get(this)!.map((source, solid) => ({
+      sectionId: source.sectionId, indices: source.indices,
+      points: source.points.map((point, vertex) => selected.get(`${solid}:${vertex}`) ?? Object.assign(new Vector3(), point).copy(point.reference ?? point)),
+      min: new Vector3(), max: new Vector3(), boundsTranslation: new Vector3(), epoch: 0, motionBound: 0, structure: this.structure,
+    }));
+    for (const solid of prepareContactSolids(solids)) {
+      this.contactSolids.push(solid);
+      this.syncContactSolid(solid);
+    }
+  }
+
+  private syncSectionContacts(sectionId: number, movableOnly = false) {
+    this.ensureContactSolids();
+    for (const solid of this.contactSolids) if (solid.sectionId === sectionId && (!movableOnly || solid.points[0].movable)) this.syncContactSolid(solid);
+    for (const index of this.sectionContacts[sectionId]) {
+      const point = this.contacts[index];
+      if (!movableOnly || point.movable) poseContactVertex(this.contactSolids[point.geometrySolidIndex!], point.geometryVertexIndex!);
+    }
+  }
+
+  private syncContactSolid(solid: ContactSolid) {
+    const first = solid.points[0];
+    if (!first?.reference) return;
+    const section = this.structure.sections[solid.sectionId ?? first.supportSectionId!];
+    if (contactPoseUnchanged(solid, section, this.structure)) return;
+    solid.structure = this.structure; solid.epoch++;
+    if (solid.radius === undefined) {
+      let radius = 0, controlRadius = 0;
+      const root = section.referenceRoot, tip = section.referenceTip;
+      for (const point of solid.points) {
+        const reference = point.reference!, t = point.span === undefined ? 0 : clamp((point.span - section.spanStart) / (section.spanEnd - section.spanStart), 0, 1);
+        radius = Math.max(radius, Math.hypot(reference.x - root.x - (tip.x - root.x) * t,
+          reference.y - root.y - (tip.y - root.y) * t, reference.z - root.z - (tip.z - root.z) * t));
+        if (point.controlHinge) controlRadius = Math.max(controlRadius, reference.distanceTo(point.controlHinge));
+      }
+      solid.radius = radius; solid.controlRadius = controlRadius;
+    }
+    let controlMove = 0;
+    if (first.movable) {
+      contactControlRotation.setFromAxisAngle(first.controlAxis!, section.controlDeflection);
+      contactControlOffset.copy(first.controlHinge!).applyQuaternion(contactControlRotation).negate().add(first.controlHinge!);
+      (solid.controlMatrix ??= new Matrix4()).makeRotationFromQuaternion(contactControlRotation).setPosition(contactControlOffset);
+      controlMove = 2 * solid.controlRadius! * Math.sin(Math.abs(section.controlDeflection) / 2);
+    }
+    const rootAngle = 2 * Math.acos(Math.min(1, Math.abs(section.root.quaternion.w)));
+    const tipAngle = 2 * Math.acos(Math.min(1, Math.abs(section.tip.quaternion.w)));
+    const rootMove = section.root.position.distanceTo(section.referenceRoot), translation = solid.boundsTranslation;
+    if (first.supportSectionId !== undefined) translation.set(0, 0, 0);
+    else translation.subVectors(section.root.position, section.referenceRoot);
+    const length = section.referenceRoot.distanceTo(section.referenceTip);
+    // Bound only beam motion after the exact shared-axis servo rotation.
+    // The post-servo distance to the reference beam can grow by controlMove.
+    const radius = solid.radius + controlMove;
+    solid.motionBound = first.supportSectionId !== undefined
+      ? section.bodyId === 0 ? this.structure.attachmentMotionBound(section, radius, rootMove + radius * rootAngle, translation) : 0
+      : this.structure.attachmentMotionBound(section, radius, contactControlOffset.subVectors(section.tip.position, section.referenceTip).sub(translation).length()
+        + 0.15 * length * (rootAngle + tipAngle) + radius * Math.max(rootAngle, tipAngle), translation);
+    solid.motionBound += CONTACT_TOLERANCE;
+    contactQueryBounds(solid, solid.tree!);
+    solid.min.copy(contactQueryMin); solid.max.copy(contactQueryMax);
+  }
+
+  private syncBranchContacts(key: WingKey, side: number, wingInstance: number) {
+    for (const solid of this.contactSolids) {
+      if (solid.sectionId === undefined || this.structure.sections[solid.sectionId].bodyId !== 0
+        || !this.structure.branchContains(this.structure.sections[solid.sectionId], key, side, wingInstance)) continue;
+      this.syncContactSolid(solid);
+    }
+    const branch = this.branchContacts.find(branch => branch.key === key && branch.side === side && branch.wingInstance === wingInstance);
+    if (branch) for (const index of branch.indices) {
+      const point = this.contacts[index]; if (!this.mainContact(point)) continue;
+      poseContactVertex(this.contactSolids[point.geometrySolidIndex!], point.geometryVertexIndex!);
+    }
+  }
+
+  private replaceCompiledContacts() {
+    certifiedContactGeometry.delete(this);
+    activeBranchContactPairs.delete(this);
+    this.activeContactPairIds.fill(-1);
+    const fresh = makeContacts(this.definition, this.structure);
+    const solids = makeContactSolids(this.definition, fresh).filter(solid => solid.sectionId === undefined || this.structure.sections[solid.sectionId].bodyId === 0);
+    for (const solid of this.contactSolids) {
+      if (solid.sectionId !== undefined && this.structure.sections[solid.sectionId].bodyId !== 0) solids.push(solid);
+    }
+    this.contactSolids.length = this.contacts.length = 0;
+    for (const solid of solids) this.contactSolids.push(solid);
+    linkContactVertices(this.contactSolids);
+    runtimeContactSources.set(this, this.contactSolids.map(({ sectionId, points, indices }) => ({ sectionId, points, indices })));
+    for (const indices of this.sectionContacts) indices.length = 0;
+    for (const point of sampleContacts(solids)) {
+      if (point.sectionId !== undefined) this.sectionContacts[point.sectionId].push(this.contacts.length);
+      this.contacts.push(point);
+    }
+    this.branchContacts.length = 0;
+    for (const { key, id } of aircraftWings(this.definition)) for (const side of [-1, 1]) {
+      const indices = this.contacts.flatMap((point, index) => point.sectionId !== undefined
+        && this.structure.branchContains(this.structure.sections[point.sectionId], key, side, id) ? [index] : []);
+      if (indices.length) {
+        const root = this.structure.sections.find(section => section.wingInstance === id && section.side === side && section.spanStart === 0)!;
+        if (root.parentId !== null) continue;
+        this.branchContacts.push({ key, wingInstance: id, side, rootId: root.id, indices });
+      }
+    }
+    const count = this.contacts.length * CONTACT_SLOTS;
+    this.platformFaces = new Int8Array(count); this.platformGaps = new Float64Array(count);
+    this.platformImpulses = new Float64Array(count); this.platformActive = new Int32Array(count);
+    this.platformFriction = Array.from({ length: count }, () => new Vector3());
+    this.groundNormals = Array.from({ length: count }, () => new Vector3());
+    this.platformAxes = Array.from({ length: count }, () => new Vector3());
+    this.platformCount = 0;
+  }
+
+  private blockedInternalGeometry(sectionId: number, branch = false, movableOnly = false): boolean {
+    const section = this.structure.sections[sectionId];
+    for (const moving of this.contactSolids) {
+      if (movableOnly && !moving.points[0].movable) continue;
+      const owner = moving.sectionId === undefined ? undefined : this.structure.sections[moving.sectionId];
+      if (!owner || owner.bodyId !== section.bodyId || (branch
+        ? !this.structure.branchContains(owner, section.wingKey, section.side, section.wingInstance)
+        : owner.id !== sectionId)) continue;
+      for (const other of this.contactSolids) {
+        if (moving === other) continue;
+        const target = other.sectionId === undefined ? undefined : this.structure.sections[other.sectionId];
+        if ((target?.bodyId ?? 0) !== section.bodyId) continue;
+        // Consecutive beam skins share a sealed cut and move continuously together.
+        if (target && target.id !== owner.id && target.wingInstance === owner.wingInstance && target.side === owner.side
+          && (Math.abs(target.spanEnd - owner.spanStart) < 1e-7 || Math.abs(owner.spanEnd - target.spanStart) < 1e-7)) continue;
+        if (solidsIntersect(moving, other)) {
+          let pair = internalContactPairs.get(this);
+          if (!pair) { pair = { moving, other }; internalContactPairs.set(this, pair); }
+          else { pair.moving = moving; pair.other = other; }
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private blockedWingGeometry(key: WingKey, side: number, wingInstance: number) {
@@ -2644,25 +3611,80 @@ export class FlightSimulation {
     return false;
   }
 
-  private constrainWingGeometry() {
+  private constrainWingGeometry(internalOnly = false) {
+    const external = !internalOnly && this.challenge !== 'wind-tunnel';
     this.syncContacts(0);
+    const snapshot = this.compiledGeometry, certified = certifiedContactGeometry.get(this) === snapshot;
+    let constrained = false;
+    let active = activeBranchContactPairs.get(this);
+    if (!active) { active = new Map(); activeBranchContactPairs.set(this, active); }
     // The rigid-body sweep used the previous elastic shape. Limit only a new
     // shape change that would enter a solid; do not teleport the mass or alter
     // the contact energy ledger. Stress remains unbounded for real fractures.
-    for (const { key, side, wingInstance, indices } of this.branchContacts) {
-      this.preparePlatformContacts(indices);
-      if (!this.blockedWingGeometry(key, side, wingInstance)) continue;
-      let low = 0, high = 1;
-      for (let iteration = 0; iteration < 20; iteration++) {
-        const fraction = (low + high) / 2;
-        this.structure.blendContactGeometry(key, side, fraction, wingInstance);
-        for (const index of indices) this.syncContact(this.contacts[index]);
-        this.preparePlatformContacts(indices);
-        if (this.blockedWingGeometry(key, side, wingInstance)) high = fraction; else low = fraction;
+    for (const { key, side, wingInstance, rootId, indices } of this.branchContacts) {
+      const root = this.structure.sections[rootId];
+      if (root.bodyId !== 0) continue;
+      // A certified, byte-identical local skin cannot acquire an internal
+      // intersection. Servo changes and rigid-body sweeps were already checked.
+      if (certified && !this.structure.contactGeometryChanged(key, side, wingInstance)) continue;
+      const sectionId = root.id;
+      let cached = active.get(rootId);
+      if (!cached) {
+        const moving = this.contactSolids[this.activeContactPairIds[rootId * 2]], other = this.contactSolids[this.activeContactPairIds[rootId * 2 + 1]];
+        const owner = moving?.sectionId === undefined ? undefined : this.structure.sections[moving.sectionId];
+        if (moving && other && owner && this.structure.branchContains(owner, key, side, wingInstance)
+          && this.mainContact(moving.points[0]) && this.mainContact(other.points[0])) {
+          cached = { moving, other }; active.set(rootId, cached);
+        }
       }
-      this.structure.blendContactGeometry(key, side, low, wingInstance);
-      for (const index of indices) this.syncContact(this.contacts[index]);
+      let maximum = 1;
+      while (maximum > 0) {
+        if (external) this.preparePlatformContacts(indices);
+        const externalBlocked = external && this.blockedWingGeometry(key, side, wingInstance);
+        let pair: InternalContactPair | undefined;
+        if (!externalBlocked) {
+          // Re-test the last limiting pair first. A clear pair never certifies
+          // the branch: the complete narrow phase must still accept its pose.
+          if (cached && this.mainContact(cached.moving.points[0]) && this.mainContact(cached.other.points[0])
+            && solidsIntersect(cached.moving, cached.other)) pair = cached;
+          else if (this.blockedInternalGeometry(sectionId, true)) {
+            const hit = internalContactPairs.get(this)!;
+            if (!cached) { cached = { moving: hit.moving, other: hit.other }; active.set(rootId, cached); }
+            else { cached.moving = hit.moving; cached.other = hit.other; }
+            this.activeContactPairIds[rootId * 2] = hit.moving.points[0].geometrySolidIndex!;
+            this.activeContactPairIds[rootId * 2 + 1] = hit.other.points[0].geometrySolidIndex!;
+            pair = cached;
+          }
+        }
+        if (!externalBlocked && !pair) break;
+        constrained = true;
+        const resolution = 1 / 1024;
+        let low = 0, high = maximum, bracketed = false;
+        // ponytail: safe low can stop at most 1/1024 short of this shape change.
+        // Use displacement-bound convergence if finer visual/contact shapes are needed; stress and fracture stay unscaled.
+        // Deterministic dyadic bracketing avoids a full-range search at persistent contacts.
+        for (let iteration = 0; iteration < 21 && high - low > resolution; iteration++) {
+          const fraction = bracketed ? (low + high) / 2 : Math.min(high, low === 0 ? resolution : low * 2);
+          this.structure.blendContactGeometry(key, side, fraction, wingInstance);
+          if (externalBlocked) {
+            for (const index of indices) this.syncContact(this.contacts[index]);
+            this.preparePlatformContacts(indices);
+          }
+          let blocked = externalBlocked && this.blockedWingGeometry(key, side, wingInstance);
+          if (pair) {
+            this.syncContactSolid(pair.moving);
+            const target = pair.other.sectionId === undefined ? undefined : this.structure.sections[pair.other.sectionId];
+            if (target && this.structure.branchContains(target, key, side, wingInstance)) this.syncContactSolid(pair.other);
+            blocked ||= solidsIntersect(pair.moving, pair.other);
+          }
+          if (blocked) { high = fraction; bracketed = true; } else low = fraction;
+        }
+        maximum = low;
+        this.structure.blendContactGeometry(key, side, maximum, wingInstance);
+        this.syncBranchContacts(key, side, wingInstance);
+      }
     }
+    if (constrained) certifiedContactGeometry.delete(this); else certifiedContactGeometry.set(this, snapshot);
   }
 
   private updateSurfaceExtents() {
@@ -2757,6 +3779,7 @@ export class FlightSimulation {
   }
 
   private evaluateFragment(fragment: WingFragment, velocity: Vector3, omega: Vector3, orientation: Quaternion, position: Vector3) {
+    this.aerodynamics.updateExposure();
     // 独立连续翼段使用同一条带极曲线/局部转动来流；不模拟不同刚体之间的非定常尾流干扰。
     this.inverse.copy(orientation).invert();
     this.bodyVelocity.copy(velocity);
@@ -2766,7 +3789,6 @@ export class FlightSimulation {
     for (const section of this.structure.sectionsForBody(fragment.id)) {
       const surface = section.surface as AerodynamicSurface;
       surface.airFraction = 1; // Fragments retain their existing stop-on-water rule.
-      surface.exposedFraction = 1;
       this.arm.copy(surface.point).sub(fragment.cg);
       this.cross.copy(this.arm).applyQuaternion(orientation).add(position);
       surface.clearance = this.seaLevelReference ? Infinity : this.cross.y - challengeCollisionHeight(this.challenge, this.cross.x, this.cross.z);
@@ -2912,7 +3934,7 @@ export class FlightSimulation {
   private preparePlatformContacts(pointIndices?: readonly number[]) {
     this.platformCount = 0;
     this.platformFaces.fill(-1);
-    for (let cursor = (pointIndices || this.challenge === 'birdman') ? 0 : 2; cursor < (pointIndices?.length ?? this.contacts.length); cursor++) {
+    for (let cursor = 0; cursor < (pointIndices?.length ?? this.contacts.length); cursor++) {
       const point = pointIndices ? pointIndices[cursor] : cursor;
       if (!this.mainContact(this.contacts[point])) continue;
       this.platformPoint(this.contacts[point], this.position, this.quaternion, this.platformStart);
@@ -2946,18 +3968,20 @@ export class FlightSimulation {
         this.platformFaces[index] = 0;
         this.platformActive[this.platformCount++] = index;
       }
-      if (this.challenge !== 'downhill') continue;
+      if (this.challenge !== 'downhill' || p.x < RUIN_MIN_X || p.x > RUIN_MAX_X) continue;
       for (const ruin of downhillRuins) {
-        if (Math.abs(p.x-ruin.x)>ruin.radiusX+CONTACT_TOLERANCE) continue;
+        if (Math.abs(p.x-ruin.x)>ruin.radiusX+ROTATED_CONTACT_PADDING) continue;
         const cy=Math.cos(ruin.yaw),sy=Math.sin(ruin.yaw),ct=Math.cos(ruin.tilt),st=Math.sin(ruin.tilt);
         const x=p.x-ruin.x,y=p.y-ruin.y,z=p.z-ruin.z,r=sy*x+cy*z;
-        const local=[cy*x-sy*z,ct*y+st*r,-st*y+ct*r], half=[ruin.width/2,ruin.height/2,ruin.length/2];
-        if(local.some((v,i)=>Math.abs(v)>half[i]+CONTACT_TOLERANCE)) continue;
-        let axis=0;for(let i=1;i<3;i++)if(Math.abs(local[i])-half[i]>Math.abs(local[axis])-half[axis])axis=i;
-        const sign=local[axis]<0?-1:1,index=point*CONTACT_SLOTS+4;
+        const lx=cy*x-sy*z,ly=ct*y+st*r,lz=-st*y+ct*r;
+        const gx=Math.abs(lx)-ruin.width/2,gy=Math.abs(ly)-ruin.height/2,gz=Math.abs(lz)-ruin.length/2;
+        if(gx>CONTACT_TOLERANCE||gy>CONTACT_TOLERANCE||gz>CONTACT_TOLERANCE) continue;
+        let axis=0,gap=gx,value=lx;
+        if(gy>gap){axis=1;gap=gy;value=ly;}if(gz>gap){axis=2;gap=gz;value=lz;}
+        const sign=value<0?-1:1,index=point*CONTACT_SLOTS+4;
         const n=this.groundNormals[index];
         if(axis===0)n.set(cy,0,-sy);else if(axis===1)n.set(st*sy,ct,st*cy);else n.set(ct*sy,-st,ct*cy);
-        n.multiplyScalar(sign);this.platformGaps[index]=Math.abs(local[axis])-half[axis];this.platformFaces[index]=0;
+        n.multiplyScalar(sign);this.platformGaps[index]=gap;this.platformFaces[index]=0;
         this.platformActive[this.platformCount++]=index;break;
       }
     }
@@ -3193,7 +4217,7 @@ export class FlightSimulation {
   /** 分片平面上，端点与X、Z、X+Z网格线交点包含线段净空的所有极小值。 */
   private sweepsTerrain() {
     const step = this.challenge === 'test-space' ? TEST_SPACE.step : challengeTerrainGrid.step;
-    for (let pointIndex=2;pointIndex<this.contacts.length;pointIndex++) {
+    for (let pointIndex=0;pointIndex<this.contacts.length;pointIndex++) {
       const point=this.contacts[pointIndex];
       if (!this.mainContact(point)) continue;
       if (this.platformFaces[pointIndex*CONTACT_SLOTS+3]>=0 || this.platformFaces[pointIndex*CONTACT_SLOTS+4]>=0) continue;
@@ -3249,13 +4273,13 @@ export class FlightSimulation {
   }
 
   /** 与场景共用的有限起飞台/跑道盒；线段裁剪也捕获高速穿过侧边和底部。 */
-  private sweepsLaunchBox(a: Vector3, b: Vector3): boolean {
+  private sweepsLaunchBox(a: Vector3, b: Vector3, tolerance = 0): boolean {
     const launch = this.launch;
     if (!launch) return false;
     let entry = 0, exit = 1;
     for (let axis = 0; axis < 3; axis++) {
-      const low = axis === 0 ? launch.startX : axis === 1 ? launch.y - launch.thickness : launch.z - launch.width / 2;
-      const high = axis === 0 ? launch.endX : axis === 1 ? launch.y : launch.z + launch.width / 2;
+      const low = (axis === 0 ? launch.startX : axis === 1 ? launch.y - launch.thickness : launch.z - launch.width / 2) - tolerance;
+      const high = (axis === 0 ? launch.endX : axis === 1 ? launch.y : launch.z + launch.width / 2) + tolerance;
       const start = a.getComponent(axis), delta = b.getComponent(axis) - start;
       if (Math.abs(delta) < 1e-15) {
         if (start < low || start > high) return false;
@@ -3357,10 +4381,18 @@ export class FlightSimulation {
 
   private hardGroundAt(point: Vector3, tolerance=0) {
     return (this.challenge !== 'birdman' && !this.onRunway(point.x,point.z) && point.y <= challengeTerrainHeight(this.challenge,point.x,point.z)+tolerance)
-      || hitsChallengeRuin(this.challenge,point) || this.sweepsLaunchBox(point,point);
+      || hitsChallengeRuin(this.challenge,point,point,tolerance) || this.sweepsLaunchBox(point,point,tolerance);
   }
 
   private criticalGroundContact(position: Vector3, orientation: Quaternion) {
+    // A real supported nose/canopy vertex can rest just outside the analytic probes.
+    for (let index = 0; index < this.platformCount; index++) {
+      const point = this.contacts[Math.floor(this.platformActive[index] / CONTACT_SLOTS)];
+      const partition = this.compiledGeometry.partitions[point.solidId!];
+      if (partition?.kind !== 'nose' && partition?.kind !== 'canopy') continue;
+      this.cross.copy(point).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+      if (this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return true; }
+    }
     const h = 1e-4, x = position.x, z = position.z;
     this.contactNormal.set(
       -(challengeTerrainHeight(this.challenge,x+h,z)-challengeTerrainHeight(this.challenge,x-h,z))/(2*h), 1,
@@ -3372,7 +4404,7 @@ export class FlightSimulation {
       // cockpits and frontal/side impacts with the finite launcher or ruins.
       for (let face = -1; face < RUNWAY_NORMALS.length; face++) {
         this.lowestBodyPoint(shape, centerX, position, orientation, this.cross, face < 0 ? this.contactNormal : RUNWAY_NORMALS[face]);
-        if (this.hardGroundAt(this.cross)) { this.groundImpactPoint.copy(this.cross); return true; }
+        if (this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return true; }
       }
     }
     return false;
@@ -3403,10 +4435,11 @@ export class FlightSimulation {
       if (speedSquared < WATER.stopSpeed ** 2) {
         const shell = this.cockpitShape;
         this.lowestBodyPoint(shell, this.definition.cockpit.position+shell.x, position, orientation, this.cross);
-        if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+        if (!this.sweepsLaunchBox(this.cross,this.cross,CONTACT_TOLERANCE) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
         // Tail beam is part of the fuselage; a stationary wingtip alone is not.
-        this.cross.copy(this.contacts[2]).sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
-        if (!this.sweepsLaunchBox(this.cross,this.cross) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
+        this.cross.set(this.definition.fuselage.center - this.definition.fuselage.length / 2, -0.12, 0)
+          .sub(this.aircraft.cg).applyQuaternion(orientation).add(position);
+        if (!this.sweepsLaunchBox(this.cross,this.cross,CONTACT_TOLERANCE) && this.hardGroundAt(this.cross, CONTACT_TOLERANCE)) { this.groundImpactPoint.copy(this.cross); return 'terrain'; }
       }
     }
     this.noseAt(position, orientation, this.nosePoint);
@@ -3441,7 +4474,10 @@ export class FlightSimulation {
 // Snapshots are deltas against a trusted constructor graph. Static geometry and
 // untouched scratch buffers cost no file space; aliases and every changed value survive.
 const snapshotOmitted = ['recording', 'wingLoads', 'replay', 'replayIndex', 'recordingLength', 'replayFinished', 'keyframes', 'nextKeyframe', 'platformFaces', 'platformGaps', 'platformImpulses', 'platformFriction', 'platformAxes', 'groundNormals', 'platformActive', 'platformCount', 'mixingSurfaces', 'sectionContacts', 'branchContacts', 'structuralExternal', 'structuralCorrections', 'structuralResidualForce', 'structuralResidualMoment', 'structuralForce', 'structuralMoment', 'structuralBodies', 'structuralSeparated'];
+snapshotOmitted.push('contactSolids', 'geometryReference');
 const structureSnapshotOmitted = ['curvature', 'branchRoot', 'geometryScale', 'frozenBudget', 'elasticBudget', 'budgetRotation'];
+structureSnapshotOmitted.push('shapeRotation', 'shapeReference', 'shapeRootTangent', 'shapeTipTangent',
+  'shapeCenter', 'shapeTranslation', 'shapeAnchorReference', 'shapeAnchorPosition', 'shapeAnchorRotation', 'shapeAnchorCenter');
 function omitSnapshotField(sim: FlightSimulation, object: unknown, key: string) {
   return object === sim && snapshotOmitted.includes(key)
     || object === sim.structure && structureSnapshotOmitted.includes(key);
@@ -3694,6 +4730,12 @@ export function restoreReplayKeyframe(definition: AircraftDefinition, challenge:
   if (sim.structure.sections.some((section, index) => section.id !== index || section.parentId !== expectedSections[index].parentId || section.depth !== expectedSections[index].depth)
     || ordered.some((section, index) => section !== sim.structure.sections[expectedOrder[index].id])) fail();
   if (!sim.structure.rotationBudgetValid()) fail();
+  const pairIds = stateRecord(sim).activeContactPairIds as Int32Array, solidLimit = sim.compiledGeometry.partitions.length;
+  for (let index = 0; index < pairIds.length; index += 2) {
+    const first = pairIds[index], second = pairIds[index + 1];
+    if (first < -1 || second < -1 || first >= solidLimit || second >= solidLimit || (first === -1) !== (second === -1)
+      || first !== -1 && first === second) fail();
+  }
   const tick = stateRecord(sim).fractureTick as number, phase = stateRecord(sim).fractureTickElapsed as number;
   const clockTime = tick === 0 ? 0 : (tick - 1) * PHYSICS_TICK + (phase === 0 ? PHYSICS_TICK : phase);
   if (!Number.isSafeInteger(tick) || tick < 0 || !Number.isFinite(phase) || phase < 0 || phase >= PHYSICS_TICK

@@ -1,7 +1,8 @@
 import { NoBlending, Quaternion, Vector3, type Material, type Object3D } from 'three';
 import type { FlightSimulation } from './physics';
+import type { StructureSection } from './structure';
 
-export const GHOST_SECTION_WIDTH = 24;
+export const GHOST_SECTION_WIDTH = 35;
 export const MAX_GHOST_TRACK_BYTES = 32 * 1024 * 1024;
 export interface GhostFrame {
   time: number; flightTime: number; ended: boolean; position: number[]; quaternion: number[]; cg: number[];
@@ -39,13 +40,25 @@ export function captureGhost(sim: FlightSimulation): GhostFrame {
   sim.structure.sections.forEach((s, i) => {
     const offset = i * GHOST_SECTION_WIDTH;
     sections.set([s.bodyId, ...s.root.position.toArray(), ...s.tip.position.toArray(), ...s.root.quaternion.toArray(),
-      ...s.tip.quaternion.toArray(), s.controlDeflection, ...s.referenceRoot.toArray(), ...s.referenceTip.toArray(), s.surface.incidence, s.crownIncidence], offset);
+      ...s.tip.quaternion.toArray(), s.controlDeflection, ...s.referenceRoot.toArray(), ...s.referenceTip.toArray(), s.surface.incidence, s.crownIncidence,
+      +s.attachmentFrozen, ...s.attachmentReference.toArray(), ...s.attachmentPosition.toArray(), ...s.attachmentRotation.toArray()], offset);
   });
   const fragments = new Float64Array(sim.fragments.length * 11);
   sim.fragments.forEach((f, i) => fragments.set([f.id, ...f.position.toArray(), ...f.quaternion.toArray(), ...f.cg.toArray()], i * 11));
   return { time: sim.elapsedTime, flightTime: sim.time, ended: sim.ended, position: sim.position.toArray(), quaternion: sim.quaternion.toArray(), cg: sim.telemetry.cg.toArray(),
     pilot: [sim.pilotOffset.x, sim.pilotOffset.z], controls: [sim.controlDeflections.aileron, sim.controlDeflections.elevator, sim.controlDeflections.rudder],
     thrust: sim.telemetry.thrust, sections, fragments, done: sim.ended || sim.replayFinished };
+}
+
+function applySectionTopology(section: StructureSection, data: Float64Array, offset: number) {
+  section.bodyId = data[offset]; section.attachmentFrozen = !!data[offset + 24];
+  section.attachmentReference.fromArray(data, offset + 25); section.attachmentPosition.fromArray(data, offset + 28);
+  section.attachmentRotation.fromArray(data, offset + 31);
+}
+
+/** Keep connectivity discrete while interpolating the surrounding visual knots. */
+export function applyGhostTopology(sim: FlightSimulation, frame: GhostFrame) {
+  for (let i = 0; i < sim.structure.sections.length; i++) applySectionTopology(sim.structure.sections[i], frame.sections, i * GHOST_SECTION_WIDTH);
 }
 
 /** Update only render inputs. This simulation is never stepped on the UI thread. */
@@ -56,7 +69,7 @@ export function applyGhost(sim: FlightSimulation, frame: GhostFrame, fragments: 
   [sim.controlDeflections.aileron, sim.controlDeflections.elevator, sim.controlDeflections.rudder] = frame.controls;
   sim.structure.sections.forEach((s, i) => {
     const o = i * GHOST_SECTION_WIDTH, data = frame.sections;
-    s.bodyId = data[o]; s.root.position.fromArray(data, o + 1); s.tip.position.fromArray(data, o + 4);
+    applySectionTopology(s, data, o); s.root.position.fromArray(data, o + 1); s.tip.position.fromArray(data, o + 4);
     s.root.quaternion.fromArray(data, o + 7); s.tip.quaternion.fromArray(data, o + 11); s.controlDeflection = data[o + 15];
     s.referenceRoot.fromArray(data, o + 16); s.referenceTip.fromArray(data, o + 19); s.surface.incidence = data[o + 22]; s.crownIncidence = data[o + 23];
   });

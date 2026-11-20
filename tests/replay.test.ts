@@ -4,6 +4,7 @@ import { FlightSimulation, FRAME_WIDTH, MAX_FRAMES, validateRecording } from '..
 import { exportReplay, importReplay, mapHash } from '../src/replay';
 import * as challenges from '../src/challenges';
 import { seekReplay } from '../src/playback';
+import { compileAircraft } from '../src/compiled-geometry';
 
 const neutral = { weight: 0, rudder: 0, elevator: 0, aileron: 0 };
 const sample = () => {
@@ -21,19 +22,47 @@ it('keeps the exported aircraft snapshot independent of later design edits', asy
   expect((await importReplay(await pending)).definition).toEqual(expected);
 });
 
-it('exports lossless JSON and reproduces every recorded state after import', async () => {
-  const source = sample(), restored = await importReplay(await exportReplay(source));
-  expect(restored).toEqual(source);
-  const first = new FlightSimulation(source.definition, source.challenge), second = new FlightSimulation(restored.definition, restored.challenge);
-  first.loadReplay(source.recording); second.loadReplay(restored.recording);
+it('preserves the recording when geometry preparation rejects an import', async () => {
+  const source = sample(), text = await exportReplay(source);
+  const before = clone(source);
+  await expect(importReplay(text, 'replay', undefined, async () => {
+    throw new Error('Geometry compilation failed');
+  })).rejects.toThrow('Geometry compilation failed');
+  expect(source).toEqual(before);
+  const restored = await importReplay(text);
+  expect(restored.definition).toEqual(source.definition);
+  expect(restored.recording.frames).toEqual(source.recording.frames);
+});
+
+it('exports lossless JSON and reproduces every recorded state after independent geometry compilation', async () => {
+  const source = sample(), first = new FlightSimulation(source.definition, source.challenge);
+  first.loadReplay(source.recording);
+  const states = [];
   while (!first.replayFinished) {
-    first.step(neutral); second.step(neutral);
-    expect(second.position.toArray()).toEqual(first.position.toArray());
-    expect(second.quaternion.toArray()).toEqual(first.quaternion.toArray());
-    expect(second.telemetry.controlInputs).toEqual(first.telemetry.controlInputs);
-    expect(second.telemetry.smartMixing).toBe(first.telemetry.smartMixing);
-    expect(second.structure.sections.map(section => section.controlDeflection)).toEqual(first.structure.sections.map(section => section.controlDeflection));
+    first.step(neutral);
+    states.push({
+      position: first.position.toArray(), quaternion: first.quaternion.toArray(),
+      inputs: { ...first.telemetry.controlInputs }, smartMixing: first.telemetry.smartMixing,
+      deflections: first.structure.sections.map(section => section.controlDeflection),
+    });
   }
+  expect(states.length).toBe(source.recording.length);
+  const restored = await importReplay(await exportReplay(source), 'replay', undefined, async definition => {
+    // Diagnostics force a full native compile instead of returning the cached mesh.
+    compileAircraft(definition, { maxIntersectionVolume: 0, maxSurfaceDeviation: 0, minVolume: 0 });
+  });
+  expect(restored).toEqual(source);
+  const second = new FlightSimulation(restored.definition, restored.challenge);
+  second.loadReplay(restored.recording);
+  for (const state of states) {
+    second.step(neutral);
+    expect({
+      position: second.position.toArray(), quaternion: second.quaternion.toArray(),
+      inputs: second.telemetry.controlInputs, smartMixing: second.telemetry.smartMixing,
+      deflections: second.structure.sections.map(section => section.controlDeflection),
+    }).toEqual(state);
+  }
+  expect(second.replayFinished).toBe(true);
   expect(second.getRecording()).toEqual(source.recording);
 });
 

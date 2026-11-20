@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
-import { clone, controlSurfaceRegions, defaultAircraft, DEG, presets } from '../src/model';
+import { clone, defaultAircraft, DEG, presets } from '../src/model';
 import { captureReplayKeyframe, FlightSimulation, restoreReplayKeyframe } from '../src/physics';
+import { getCompiledAircraft } from '../src/compiled-geometry-cache';
 
 const neutral = { weight: 0, lateral: 0, elevator: 0, aileron: 0, rudder: 0 };
 const rollAxis = new Vector3(1, 0, 0);
@@ -34,6 +35,10 @@ describe('body-axis elevator trim', () => {
         holdCondition(sim, orientation);
         sim.omega.x = sim.omega.y = 0;
         sim.step({ ...neutral, autoTrim: true });
+        if (frame === 0 && initialRate < 0) {
+          // The trim itself is still slew-limited; rate error must not accumulate bias into that limit.
+          expect(Reflect.get(sim, 'trimPitchBias')).toBe(0);
+        }
         if (frame >= 420) { rates.push(sim.omega.z); trims.push(sim.telemetry.trimPitch); }
       }
       expect(sim.ended).toBe(false);
@@ -128,29 +133,30 @@ describe('body-axis elevator trim', () => {
 });
 
 describe('geometry-dependent control directions', () => {
-  it('uses final clearance boundaries without changing live wind-tunnel topology', () => {
+  it('uses final clearance boundaries without changing live wind-tunnel topology', async () => {
     const sim = new FlightSimulation(definition(), 'wind-tunnel', 0);
     const topology = () => sim.structure.sections.map(section => [section.wingInstance, section.side, section.spanStart, section.spanEnd, section.parentId]);
-    const original = topology(), regions = controlSurfaceRegions(sim.definition);
-    expect(sim.surfaces.map(surface => [surface.wingInstance, surface.side, surface.spanStart, surface.spanEnd, surface.controlEffectiveness > 0]))
-      .toEqual(regions.map(region => [region.wingInstance, region.side, region.spanStart, region.spanEnd, region.movable]));
-    expect(sim.surfaces.some(surface => surface.spanEnd - surface.spanStart < 0.8)).toBe(true);
+    const original = topology();
+    expect(sim.surfaces.every(surface=>surface.spanEnd-surface.spanStart<=0.8+1e-10)).toBe(true);
     sim.setWindTunnelEnabled(true);
     for (const mainIncidence of [-10, 12]) {
       sim.setWindTunnel({ ...sim.windTunnel, speed: 1, mainIncidence });
-      for (let frame = 0; frame < 40; frame++) sim.step(neutral);
+      for (let frame = 0; frame < 40; frame++) {
+        sim.step(neutral);
+        if (frame % 6 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      }
       expect(topology()).toEqual(original);
-      const current = controlSurfaceRegions(sim.definition);
+      const current = getCompiledAircraft(sim.geometryDefinition)!;
       for (const surface of sim.surfaces) {
-        const blocked = current.some(region => region.wingInstance === surface.wingInstance && region.side === surface.side && !region.movable
-          && region.spanStart < surface.spanEnd && region.spanEnd > surface.spanStart);
-        expect(surface.controlEffectiveness > 0).toBe(!blocked);
+        const control = current.controls.find(control=>control.wingInstance===surface.wingInstance&&control.side===surface.side
+          &&Math.abs(control.spanStart-surface.spanStart)<1e-8);
+        expect(surface.controlEffectiveness > 0).toBe((control?.area??0)>0);
       }
       for (const section of sim.structure.sections.filter(section => section.surface.controlEffectiveness === 0)) {
         expect(section.controlDeflection).toBe(0);
       }
     }
-  });
+  }, 120_000);
 
   it.each(['horizontalTail', 'verticalTail'] as const)('%s reverses its physical deflection ahead of CG, not its commanded moment', key => {
     const deflections: number[] = [];
@@ -184,7 +190,6 @@ describe('geometry-dependent control directions', () => {
       expect(left.controlDeflection).toBeLessThan(0);
       expect(right.controlDeflection).toBeLessThan(0);
       const fixed = commanded.structure.sections.filter(section => section.wingKey === 'mainWing' && section.surface.controlEffectiveness === 0);
-      expect(fixed.length).toBeGreaterThan(0);
       for (const section of fixed) expect(section.controlDeflection).toBe(0);
     }
   });

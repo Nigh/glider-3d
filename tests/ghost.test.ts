@@ -5,6 +5,7 @@ import { FlightSimulation } from '../src/physics';
 import { replaySimulation, cacheFlight, cacheRecording, seekReplay } from '../src/playback';
 import { applyGhost, BAYER_4, captureGhost, ditherGhost, GhostBuffer, ghostOpacity, type GhostFragment } from '../src/ghost';
 import { GhostPlayer } from '../src/ghost-player';
+import { decodeGhostFrames, encodeGhostFrames } from '../src/ghost-track';
 
 const neutral = { weight: 0, elevator: 0, aileron: 0, rudder: 0 };
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -51,6 +52,35 @@ it('copies deformation, frozen control angles and fragment transforms without al
   expect(fragments[0].cg.toArray()).toEqual([0.1, 0.2, 0.3]);
   render.structure.sections[2].root.position.x++;
   expect(sim.structure.sections[2].root.position.x).not.toBe(render.structure.sections[2].root.position.x);
+});
+
+it('keeps a severed T-tail installation on its release frame after transport and backward seeking', async () => {
+  const definition = clone(presets.find(d => !d.birdman && d.engine.count === 0)!);
+  definition.assembly.tailOnFin = true;
+  const source = new FlightSimulation(definition, 'downhill', 0), render = new FlightSimulation(definition, 'downhill', 0);
+  const tail = source.structure.sections.find(s => s.wingInstance === 1 && s.spanStart === 0 && s.side === 1)!;
+  expect(tail.attachmentAnchorId).toBeGreaterThanOrEqual(0);
+  const fin = source.structure.sections[tail.attachmentAnchorId];
+  fin.tip.position.add(new Vector3(0.02, 0.04, -0.03));
+  fin.tip.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), 0.08);
+  const attached = captureGhost(source), point = tail.referenceRoot.clone().addScaledVector(tail.referenceChord, 0.1);
+  source.structure.detach(tail, 1);
+  const release = point.clone(); source.structure.deformPoint(tail, release, 0);
+  fin.tip.position.add(new Vector3(0, 0.4, 0.3));
+  fin.tip.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), 0.2);
+  const detached = { ...captureGhost(source), time: 0.1, done: true };
+  const frames = await decodeGhostFrames(await encodeGhostFrames([attached, detached]), 0.1, source.structure.sections.length, 1);
+  const copy = render.structure.sections[tail.id], fragments: GhostFragment[] = [];
+  applyGhost(render, frames[1], fragments);
+  const frozen = point.clone(); render.structure.deformPoint(copy, frozen, 0);
+  expect(frozen.distanceTo(release)).toBeLessThan(1e-10);
+  applyGhost(render, frames[0], fragments);
+  render.structure.sections[tail.attachmentAnchorId].tip.position.y += 0.2;
+  const reattached = point.clone(); render.structure.deformPoint(copy, reattached, 0);
+  expect(reattached.distanceTo(release)).toBeGreaterThan(0.1);
+  applyGhost(render, frames[1], fragments);
+  const restored = point.clone(); render.structure.deformPoint(copy, restored, 0);
+  expect(restored.distanceTo(release)).toBeLessThan(1e-10);
 });
 
 it('samples the immutable track forward and backward without a producer or destructive eviction', () => {

@@ -3,7 +3,7 @@ import { createLegacyReplay } from './fixtures/legacy-replay';
 import { clone, defaultAircraft, wing } from '../src/model';
 import { FlightSimulation } from '../src/physics';
 import * as physics from '../src/physics';
-import { captureGhost, ghostRecording, recordGhost, MAX_GHOST_TRACK_BYTES, ghostFrameBytes } from '../src/ghost';
+import { captureGhost, ghostRecording, recordGhost, MAX_GHOST_TRACK_BYTES, ghostFrameBytes, GHOST_SECTION_WIDTH } from '../src/ghost';
 import { encodeGhostFrames, decodeGhostFrames } from '../src/ghost-track';
 import { exportReplay, importReplay } from '../src/replay';
 
@@ -56,6 +56,8 @@ it('rejects truncated, nonfinite, inconsistent or unbounded visual data',async()
   (f:typeof frames)=>{f[1].quaternion=[0,0,0,0];},
   (f:typeof frames)=>{f[1].sections=new Float64Array(1);},
   (f:typeof frames)=>{f[1].fragments=new Float64Array([999,0,0,0,0,0,0,1,0,0,0]);},
+  (f:typeof frames)=>{f[1].sections[24]=2;},
+  (f:typeof frames)=>{f[1].sections[24]=1;f[1].sections.fill(0,31,35);},
  ]){
   const changed=structuredClone(frames);mutate(changed);
   await expect(decodeGhostFrames(await encodeGhostFrames(changed),sim.elapsedTime,sim.structure.sections.length,1)).rejects.toThrow('Ghost');
@@ -76,7 +78,7 @@ it('bounds a long large-wing recording and retains fracture transitions',()=>{
  const frames=ghostRecording(sim)!;
  expect(frames.reduce((sum,f)=>sum+ghostFrameBytes(f),0)).toBeLessThan(MAX_GHOST_TRACK_BYTES);
  expect(frames.some(f=>f.time===150.1&&f.fragments.length===11)).toBe(true);
- expect(frames.some(f=>f.time===160.3&&f.sections[24]===1)).toBe(true);
+ expect(frames.some(f=>f.time===160.3&&f.sections[GHOST_SECTION_WIDTH]===1)).toBe(true);
  expect(frames[0].time).toBe(0);expect(frames.at(-1)!.time).toBe(count/10);
  expect(frames.length).toBeLessThan(count+1);
 });

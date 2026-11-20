@@ -1,10 +1,11 @@
-import { importReplay, type Replay } from './replay';
-import { replayCheckpointTimes } from './playback';
+import type { Replay } from './replay';
 import { challengeCheckpoints } from './challenges';
 import type { GhostFrame } from './ghost';
 
 self.onmessage = async event => {
  try {
+  // Static imports would await WASM before the first message handler exists.
+  const [{ importReplay }, { replayCheckpointTimes }] = await Promise.all([import('./replay'), import('./playback')]);
   let sent=false;
   const send=(replay:Replay,frames:GhostFrame[])=>{
    if(replay.challenge!==event.data.challenge)throw Error('Ghost 回放与当前关卡不一致');

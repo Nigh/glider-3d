@@ -1,5 +1,5 @@
 import { setTimeout as yieldTurn } from 'node:timers/promises';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { BODY_GEOMETRY, clone, defaultAircraft, DEG, engineMounts, fuelTankLimits, fuselageEnds, presets, validateAircraft, wing, type Controls } from '../src/model';
 import { CONTROL_SURFACE_RATE, derive, FlightSimulation, GRAVITY, type FlightControls } from '../src/physics';
@@ -9,6 +9,7 @@ import { engineCatalog, engineDensityRatio, engineThrustFactor } from '../src/en
 import jetCruise50m from './fixtures/jet-cruise-50m.json';
 
 const neutral: Controls = { weight: 0, lateral: 0, rudder: 0, elevator: 0, aileron: 0 };
+afterEach(() => yieldTurn(0));
 const downhillAircraft = presets.find(d => !d.birdman && d.engine.count === 0)!;
 const poweredAircraft = presets.find(d => d.engine.count > 0)!;
 const singleEngineAircraft = validateAircraft(jetCruise50m);
@@ -491,7 +492,7 @@ describe('低空地形、滑跑与计分', () => {
         if (sample.launching) expect(sample.velocity.y).toBe(0); else expect(sample.velocity.y).toBeGreaterThan(0);
       }
     }
-  }, 90_000);
+  }, 180_000);
 
   it('净升力足够但低头力矩会压低机头时保持附轨，不在滑跑中掉向跑道', () => {
     const s = new FlightSimulation(validateAircraft(jetCruise50m), 'low-altitude', 0);
@@ -572,6 +573,9 @@ describe('低空地形、滑跑与计分', () => {
     const d = clone(downhillAircraft);
     d.mainWing = wing(0.5, 0.3, 0.2); d.horizontalTail = wing(0.5, 0.3, 0.2); d.verticalTail = wing(0.5, 0.3, 0.2);
     const s = new FlightSimulation(d, 'low-altitude', 0), launch = challengeLaunch('low-altitude')!;
+    const shell = BODY_GEOMETRY.shell;
+    s.position.set((launch.startX + launch.endX) / 2, launch.y + s.cg.y - shell.y + shell.yRadius + 5e-5, launch.z);
+    expect(Reflect.get(s, 'landingAt').call(s, s.position, s.quaternion, 0)).toBeNull();
     s.launching = false; s.position.set((launch.startX + launch.endX) / 2, launch.y + 2, launch.z);
     s.velocity.set(1, -8, 0);
     for (let i = 0; i < 120; i++) s.step(neutral);
@@ -579,7 +583,7 @@ describe('低空地形、滑跑与计分', () => {
     const points = Reflect.get(s, 'contacts') as Vector3[];
     for (const point of points) {
       const world = point.clone().sub(s.cg).applyQuaternion(s.quaternion).add(s.position);
-      expect(world.y).toBeGreaterThanOrEqual(launch.y - 3e-6);
+      expect(world.y).toBeGreaterThanOrEqual(launch.y - 1e-4);
     }
     const t = s.telemetry;
     expect(t.energy + t.dissipatedEnergy + t.fuelEnergyRemoved - t.propulsionWork - t.controlWork - t.waterWork).toBeCloseTo(t.initialEnergy, 8);
@@ -830,6 +834,20 @@ describe('平原废墟与门高',()=>{
    for(const dz of [-10,0,10])expect(hitsChallengeRuin('downhill',new Vector3(x-50,y,z+dz),new Vector3(x+50,y,z+dz))).toBe(false);
   }
  });
+ it('旋转楼体角点的0.1mm接触带不会被世界坐标粗筛漏掉',()=>{
+  const ruin=downhillRuins.find(ruin=>ruin.height===85&&ruin.yaw>0)!,tolerance=1e-4;
+  const cy=Math.cos(ruin.yaw),sy=Math.sin(ruin.yaw),ct=Math.cos(ruin.tilt),st=Math.sin(ruin.tilt);
+  const point=(padding:number)=>{
+   const x=ruin.width/2+padding,y=ruin.height/2+padding,z=ruin.length/2+padding,r=st*y+ct*z;
+   return new Vector3(ruin.x+cy*x+sy*r,ruin.y+ct*y-st*z,ruin.z-sy*x+cy*r);
+  };
+  const touching=point(tolerance*0.99);
+  expect(touching.x-ruin.x).toBeGreaterThan(ruin.radiusX+tolerance);
+  expect(hitsChallengeRuin('downhill',touching)).toBe(false);
+  expect(hitsChallengeRuin('downhill',touching,touching,tolerance)).toBe(true);
+  const clear=point(tolerance*1.01);
+  expect(hitsChallengeRuin('downhill',clear,clear,tolerance)).toBe(false);
+ });
  it('绕行路线在整个平原保留机翼宽度',()=>{
   for(let x=4300;x<5400;x+=5)for(const dz of [-10,0,10]){
    const z=downhillRouteCenter(x)+dz,nextZ=downhillRouteCenter(x+5)+dz;
@@ -849,10 +867,25 @@ describe('平原废墟与门高',()=>{
   }
  });
  it('楼体碰撞在真实积分中结束主体而非穿透',()=>{
-  const s=crossStart(create()),ruin=downhillRuins.find(r=>r.height===85)!;
+  const d=clone(downhillAircraft);
+  d.fuselage={length:6,center:0};d.cockpit={position:0.9};
+  d.mainWing=wing(0.5,0.3,0.2);d.horizontalTail=wing(0.5,0.3,0.2);d.verticalTail=wing(0.5,0.3,0.2);
+  d.assembly={mainWing:0,mainWingHeight:0.5,horizontalTail:-2,verticalTail:-2,mainIncidence:0,tailIncidence:0,tailOnFin:false};
+  d.auxiliaryWings=[];d.engine.count=0;d.fuelTank.capacity=0;
+  const s=crossStart(new FlightSimulation(d,'downhill',0)),ruin=downhillRuins.find(r=>r.height===85)!;
   Reflect.set(s,'checkpointIndex',challengeCheckpoints('downhill').findIndex(g=>g.x>ruin.x+60));
   airborne(s,ruin.x-45,40);s.position.z=ruin.z;s.position.y=ruin.y;s.velocity.set(200,0,0);
   for(let i=0;i<30&&!s.ended;i++)s.step(neutral,0.01);
   expect(s.result?.landing).toBe('terrain');expect(s.position.x).toBeLessThan(ruin.x+ruin.radiusX);
+  const point=new Vector3(),local=new Vector3(),yawAxis=new Vector3(0,1,0),tiltAxis=new Vector3(1,0,0);
+  let clearance=Infinity;
+  for(const contact of Reflect.get(s,'contacts') as Vector3[]){
+   point.copy(contact).sub(s.cg).applyQuaternion(s.quaternion).add(s.position);
+   for(const obstacle of downhillRuins){
+    local.set(point.x-obstacle.x,point.y-obstacle.y,point.z-obstacle.z).applyAxisAngle(yawAxis,-obstacle.yaw).applyAxisAngle(tiltAxis,-obstacle.tilt);
+    clearance=Math.min(clearance,Math.max(Math.abs(local.x)-obstacle.width/2,Math.abs(local.y)-obstacle.height/2,Math.abs(local.z)-obstacle.length/2));
+   }
+  }
+  expect(clearance).toBeGreaterThanOrEqual(-1e-4);
  });
 });

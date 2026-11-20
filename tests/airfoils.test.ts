@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Vector3 } from 'three';
+import { Triangle, Vector3 } from 'three';
 import { airfoilY, airfoilShapes, AIR_VISCOSITY, naca0012Section } from '../src/airfoils';
 import { clone, defaultAircraft, presets, planform, validateAircraft, normalizeAircraftGeometry, finPoint, wingOrigin, wingLocalPoint, wingAirfoil, wingInstancePoint, wingInstanceDirection, wingInstanceWing, DEG } from '../src/model';
 import { FlightSimulation, coefficients } from '../src/physics';
@@ -52,11 +52,21 @@ describe('traceable selectable airfoils', () => {
   expect(materialCatalog[d.mainWing.materialId].density).toBe(density);
   const old=coefficients(5*DEG,8,6e6), added=coefficients(5*DEG,8,6e6,true,'naca0012');
   expect(added.cl).not.toBeCloseTo(old.cl,3); expect(added.profileCd).not.toBeCloseTo(old.profileCd,5); expect(added.cm).toBe(0); expect(old.cm).toBeLessThan(0);
-  // Contact skin uses the same profile ordinates as rendering.
-  const contacts=(second as any).contacts;
-  const contact=contacts.find((p:any)=>p.sectionId===0&&p.span===0&&p.u>0.2&&p.u<0.4&&p.normal>0);
-  const chord=d.mainWing.points[3].x-d.mainWing.points[0].x;
-  expect(contact.normal).toBeCloseTo(chord*airfoilY('naca0012',contact.u,1),10);
+  const tolerance=1e-4;
+  const contacts=Reflect.get(second,'contacts') as (Vector3&{sectionId?:number;solidId:number;vertexIndex:number;span:number;u:number;normal:number})[];
+  const skin=contacts.filter(point=>point.sectionId!==undefined
+   &&second.structure.sections[point.sectionId].wingInstance===0&&point.span>.8&&point.u>.2&&point.u<.4&&point.normal>0);
+  expect(skin.length).toBeGreaterThan(0);
+  for(const point of skin){
+   const f=point.span/Math.abs(d.mainWing.points[1].y),p=planform(d.mainWing);
+   const chord=p.root+(p.tip-p.root)*f;
+   expect(Math.abs(point.normal-chord*airfoilY('naca0012',point.u,1))).toBeLessThan(tolerance);
+   const owner=second.structure.sections[point.sectionId!];
+   const mesh=second.compiledGeometry.partitions[point.solidId];
+   const expected=new Vector3().fromArray(mesh.positions,point.vertexIndex*3);
+   second.structure.deformPoint(owner,expected,(point.span-owner.spanStart)/(owner.spanEnd-owner.spanStart));
+   expect(point.distanceTo(expected)).toBeLessThan(tolerance);
+  }
  });
  it('roundtrips independent selections, defaults legacy designs and fixes Birdman to DAE-11', () => {
   const d=normal(); d.mainWing.airfoil='naca0012'; d.horizontalTail.airfoil='dae11';
@@ -157,13 +167,34 @@ describe('T-tail crown and Birdman wind tunnel', () => {
     for(let i=0;i<9;i++)expect(s.inertia.elements[i]).toBeCloseTo(f.inertia.elements[i],8);
    }
    for(const [actual,other] of [[sim,fresh],[fresh,sim]]){
-    // Private contact samples carry trusted geometry coordinates at this test seam.
-    const contacts=Reflect.get(actual,'contacts') as readonly (Vector3&{reference?:Vector3;sectionId?:number;span?:number;u?:number;normal?:number})[];
+    const contacts=Reflect.get(actual,'contacts') as readonly (Vector3&{reference?:Vector3;sectionId?:number;span?:number;u?:number;normal?:number;solidId:number;vertexIndex:number;supportSectionId?:number;supportWeight?:number})[];
+    let wingPoints=0,supportPoints=0;
     for(const point of contacts)if(point.reference){
-     const s=actual.structure.sections[point.sectionId!];
-     const expected=wingInstancePoint(other.definition,s.wingInstance,s.side,point.span!,point.u!,point.normal!,new Vector3());
-     expect(point.reference.distanceTo(expected)).toBeLessThan(1e-9);
+     const partition=actual.compiledGeometry.partitions[point.solidId];
+     expect(point.reference.distanceTo(new Vector3().fromArray(partition.positions,point.vertexIndex*3))).toBeLessThan(1e-4);
+     if(point.sectionId!==undefined){
+      const s=actual.structure.sections[point.sectionId];
+      expect(partition.wingInstance).toBe(s.wingInstance); expect(partition.side).toBe(s.side);
+      const expected=wingInstancePoint(other.definition,s.wingInstance,s.side,point.span!,point.u!,point.normal!,new Vector3());
+      expect(point.reference.distanceTo(expected)).toBeLessThan(1e-4);wingPoints++;
+     }else{
+      expect(partition.kind).toBe('wing-support');
+      const owner=actual.structure.sections[point.supportSectionId!];
+      expect(owner.wingInstance).toBe(partition.supportWingInstance);
+      expect(point.supportWeight).toBeGreaterThanOrEqual(0);expect(point.supportWeight).toBeLessThanOrEqual(1);
+      const otherSupport=other.compiledGeometry.partitions.filter(candidate=>candidate.kind==='wing-support'
+       &&candidate.supportWingInstance===owner.wingInstance&&candidate.side===partition.side);
+      expect(otherSupport.length).toBeGreaterThan(0);
+      expect(otherSupport.some(candidate=>{
+       for(let i=0;i<candidate.indices.length;i+=3){
+        const triangle=new Triangle(...[0,1,2].map(offset=>new Vector3().fromArray(candidate.positions,candidate.indices[i+offset]*3)) as [Vector3,Vector3,Vector3]);
+        if(point.reference!.distanceTo(triangle.closestPointToPoint(point.reference!,new Vector3()))<1e-4)return true;
+       }
+       return false;
+      })).toBe(true);supportPoints++;
+     }
     }
+    expect(wingPoints).toBeGreaterThan(0);expect(supportPoints).toBeGreaterThan(0);
    }
    sim.restoreWindTunnelAircraft(); expect(sim.definition.assembly.tailIncidence).toBe(angle);
    expect(sim.structure.sections.map(s=>[s.id,s.wingInstance,s.side,s.spanStart,s.spanEnd])).toEqual(layout);
@@ -193,9 +224,13 @@ describe('T-tail crown and Birdman wind tunnel', () => {
    const d=clone(defaultAircraft);d.verticalTail.controlReversed=reversed;
    const sim=new FlightSimulation(d,'wind-tunnel',0);sim.setWindTunnel({...defaultWindTunnel,rudder:1});for(let i=0;i<45;i++)sim.step(neutral);
    const fin=sim.structure.sections.filter(s=>s.wingKey==='verticalTail');
-   expect(fin.find(s=>s.spanStart===0)!.surface.controlEffectiveness).toBe(0);
+   const root=fin.find(s=>s.spanStart===0)!;
+   const control=sim.compiledGeometry.controls.find(control=>control.wingInstance===root.wingInstance&&control.side===root.side
+    &&control.spanStart===root.spanStart&&control.spanEnd===root.spanEnd)!;
+   expect(control.area).toBeGreaterThan(0);expect(control.areaFraction).toBeGreaterThan(0);expect(control.areaFraction).toBeLessThan(1);
+   expect(root.surface.controlEffectiveness).toBeGreaterThan(0);
    expect(fin.filter(s=>s.surface.controlEffectiveness===0).every(s=>s.controlDeflection===0)).toBe(true);
-   expect(Math.sign(fin.find(s=>s.surface.controlEffectiveness>0)!.controlDeflection)).toBe(reversed?-1:1);
+   for(const s of fin.filter(s=>s.surface.controlEffectiveness>0))expect(Math.sign(s.controlDeflection)).toBe(reversed?-1:1);
   }
   const d=clone(defaultAircraft);d.verticalTail.controlAxes={roll:false,pitch:false,yaw:false};
   const sim=new FlightSimulation(d,'wind-tunnel',0);sim.setWindTunnel({...defaultWindTunnel,rudder:1});for(let i=0;i<45;i++)sim.step(neutral);
