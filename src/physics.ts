@@ -2700,7 +2700,7 @@ export class FlightSimulation {
       : (mainX + (tailArea > 0 ? effectiveness * tailX / tailArea : 0)) / (1 + effectiveness);
     aircraft.staticMargin = (aircraft.cg.x - aircraft.neutralPoint) / this.chord;
     for (const wing of this.aerodynamics.wings) {
-      wing.area = 0; wing.reynoldsMin = Infinity; wing.reynoldsMax = 0; wing.speedMax = 0; wing.aspect = 0;
+      wing.area = 0; wing.reynoldsMin = 0; wing.reynoldsMax = 0; wing.speedMax = 0; wing.aspect = 0;
       for (const surface of this.surfaces) if (surface.bodyId === 0 && surface.kind === wing.kind) {
         wing.area += surface.area; wing.aspect = surface.aspect;
       }
