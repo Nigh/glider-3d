@@ -52,6 +52,7 @@ export class AirframeExposure {
  private readonly baselineBeam:Patch[];
  private readonly strips;
  private readonly poses:Float64Array;
+ private readonly changed:Uint8Array;
  constructor(d:AircraftDefinition, private readonly surfaces:AerodynamicSurface[]){
   const shell=cockpitGeometry(d), canopy=BODY_GEOMETRY.canopy;
   this.volumes=d.birdman?[]:[ellipsoid({...shell,x:shell.x+d.cockpit.position}),ellipsoid({...canopy,x:canopy.x+d.cockpit.position},true)];
@@ -81,21 +82,25 @@ export class AirframeExposure {
    return {surface,center,slope,root:p.root,quarterSlope,samples,half,miter:surface.kind==='vertical'?0:Math.tan(w.dihedral*DEG),radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
   });
   this.poses=new Float64Array(surfaces.length*13).fill(NaN);
+  this.changed=new Uint8Array(surfaces.length);
   this.update();
  }
  update(){
   let changed=false;
   for(let i=0;i<this.surfaces.length;i++){
-   const s=this.surfaces[i];let index=i*13;
+   const s=this.surfaces[i];let index=i*13,stripChanged=false;
    for(let axis=0;axis<4;axis++){
     const v=axis===0?s.point:axis===1?s.normal:axis===2?s.chordDirection:s.spanDirection;
-    if(this.poses[index]!==v.x||this.poses[index+1]!==v.y||this.poses[index+2]!==v.z)changed=true;
+    if(this.poses[index]!==v.x||this.poses[index+1]!==v.y||this.poses[index+2]!==v.z)stripChanged=true;
     this.poses[index++]=v.x;this.poses[index++]=v.y;this.poses[index++]=v.z;
    }
-   if(this.poses[index]!==s.bodyId)changed=true;this.poses[index]=s.bodyId;
+   if(this.poses[index]!==s.bodyId)stripChanged=true;this.poses[index]=s.bodyId;
+   this.changed[i]=stripChanged?1:0;changed ||= stripChanged;
   }
   if(!changed)return;
-  for(const strip of this.strips){
+  for(let stripIndex=0;stripIndex<this.strips.length;stripIndex++){
+   if(!this.changed[stripIndex])continue;
+   const strip=this.strips[stripIndex];
    const s=strip.surface,p=s.point,r=strip.radius;
    const candidates=s.bodyId===0?this.volumes.filter(v=>p.x+r>=v.bounds[0]&&p.x-r<=v.bounds[1]&&p.y+r>=v.bounds[2]&&p.y-r<=v.bounds[3]&&p.z+r>=v.bounds[4]&&p.z-r<=v.bounds[5]):[];
    s.exposedFraction=1;

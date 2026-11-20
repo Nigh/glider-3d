@@ -1683,7 +1683,7 @@ export class SceneView {
       const origin = wingInstancePoint(d, i, 1, 0, 0, 0, this.vector);
       const shapeKey = JSON.stringify([key, d.birdman ? 'dae11' : wing.airfoil ?? 'dae11', wing.mirrored, wing.cant, wing.lateralOffset,
         i === 2 && d.assembly.tailOnFin ? [d.assembly.tailIncidence, wingAirfoil(d, 'horizontalTail'), d.horizontalTail.dihedral, d.horizontalTail.points] : false,
-        regions.filter(region => region.wingInstance === i).map(region => region.movable)]);
+        regions.filter(region => region.wingInstance === i).map(region => [region.side, region.spanStart, region.spanEnd, region.movable])]);
       const changed = this.wingChanged(i, wing, origin.x, origin.y, incidence) || this.wingShapeKeys[i] !== shapeKey;
       this.wingShapeKeys[i] = shapeKey;
       if (!changed && this.surfaceParameters[i] === wing.controlSurface) continue;

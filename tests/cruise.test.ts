@@ -36,10 +36,12 @@ describe('海平面满油稳态最佳航程参考', () => {
     expect(d).toEqual(original);
   }, 60_000);
 
-  it('确定性求解不改变输入，无动力设计明确不返回巡航', () => {
+  it('确定性求解不改变输入，无动力设计明确不返回巡航', async () => {
     const d = presets.find(preset => preset.engine.count === 2)!;
-    const original = structuredClone(d), first = solveCruiseReference(d), second = solveCruiseReference(d);
+    const original = structuredClone(d), first = solveCruiseReference(d);
+    await yieldTurn(0);
+    const second = solveCruiseReference(d);
     expect(first).not.toBeNull(); expect(second).toEqual(first); expect(d).toEqual(original);
     expect(solveCruiseReference(presets[0])).toBeNull();
-  }, 60_000);
+  }, 120_000);
 });

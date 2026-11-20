@@ -197,6 +197,14 @@ it('跨翼位置变化重建遮蔽，固定段保留翼色、无旋转、无铰�
         expect(new Vector3().fromBufferAttribute(positions, vertex).distanceTo(new Vector3().fromArray(view.wingNeutral[1], vertex * 3))).toBeLessThan(1e-6);
       }
     }
+    view.definition.verticalTail.lateralOffset = 0.9;
+    const shifted = controlSurfaceRegions(view.definition).filter(region => region.wingInstance === 1);
+    expect(shifted.map(region => region.movable)).toEqual(regions.filter(region => region.wingInstance === 1).map(region => region.movable));
+    view.aircraftPending = true;
+    view.applyAircraft();
+    expect(view.wingMeshes[1].geometry).not.toBe(original);
+    expect(view.wingSections[1].map((section: { spanStart: number; spanEnd: number }) => [section.spanStart, section.spanEnd]))
+      .toEqual(shifted.map(region => [region.spanStart, region.spanEnd]));
     view.definition.assembly.verticalTail = 2;
     view.aircraftPending = true;
     view.applyAircraft();

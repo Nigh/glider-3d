@@ -598,6 +598,19 @@ describe('多辅助翼与镜像垂翼边界',()=>{
    expect(regions.some(region=>region.wingInstance===0&&region.side===side&&region.spanStart>=0.8&&region.movable)).toBe(true);
   }
  });
+ it('镜像垂翼附近只固定实际翼型范围内的控制面',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3};d.assembly.mainWing=0;d.assembly.mainWingHeight=0.7;d.assembly.mainIncidence=0;
+  d.horizontalTail={...wing(1,0.5,0.5),controlSurface:0};d.assembly.horizontalTail=-3;
+  d.verticalTail={...wing(3,0.8,0.4),mirrored:true,cant:0,lateralOffset:1,controlSurface:0.3};d.assembly.verticalTail=-1;
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.94)?.movable).toBe(true);
+   expect(at(1)?.movable).toBe(false);
+   expect(at(1.06)?.movable).toBe(true);
+  }
+ });
  it('两翼中立互不重叠但同时偏转相撞时，共同回退固定翼面',()=>{
   const d=clone(defaultAircraft);d.birdman=false;d.assembly.tailOnFin=false;
   d.mainWing={...wing(8,1,1),airfoil:'naca0012',controlSurface:0.3};

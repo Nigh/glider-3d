@@ -41,6 +41,17 @@ it('removes only buried wing faces and follows deformation, detachment and resto
  sim.reset(0);summary.updateExposure();expect(root.exposedFraction).toBe(covered);
 });
 
+it('matches a fresh exposure calculation when only one strip changes pose or ownership',()=>{
+ const sim=new FlightSimulation(normal(),'test-space',0), surfaces=sim.surfaces;
+ const exposure=new AirframeExposure(sim.definition,surfaces), root=surfaces.find(s=>s.kind==='main'&&s.side===1&&s.spanStart===0)!;
+ for(const change of [()=>{root.point.y+=0.2;},()=>{root.bodyId=1;},()=>{root.bodyId=0;root.point.y-=0.2;}]){
+  change();exposure.update();
+  const incremental=surfaces.map(surface=>surface.exposedFraction);
+  new AirframeExposure(sim.definition,surfaces);
+  expect(surfaces.map(surface=>surface.exposedFraction)).toEqual(incremental);
+ }
+});
+
 it('reduces the fuselage proxy only where its physical exterior is buried',()=>{
  const d=normal(), far=clone(d);far.cockpit.position=100;
  const a=new AirframeExposure(d,[]),b=new AirframeExposure(far,[]),side=new Vector3(0,0,1);

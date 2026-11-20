@@ -469,6 +469,34 @@ export function wingControlAxis<T extends GeometryPoint>(d:AircraftDefinition,id
 }
 
 type GeometryBox = { center:Vector3; axes:Vector3[]; half:number[] };
+type GeometrySweepPoint = { base:Vector3; cosine:Vector3; sine:Vector3 };
+type GeometryWingCell = { id:number; side:number; box:GeometryBox; skin:Vector3[]; sweep:GeometrySweepPoint[]; axes:Vector3[]; limit:number };
+
+// A separating plane proves that the full swept vertex trajectories cannot meet.
+// The extrema are analytic, so this does not sample or skip actuator angles.
+function geometrySweepSeparated(a:GeometryWingCell,b:GeometryWingCell,movingB:boolean):boolean {
+ const range=(cell:GeometryWingCell,axis:Vector3,moving:boolean):[number,number]=>{
+  let min=Infinity,max=-Infinity;
+  if(!moving){
+   for(const p of cell.skin){const value=p.dot(axis);min=Math.min(min,value);max=Math.max(max,value);}
+  }else {
+   const c=Math.cos(cell.limit),s=Math.sin(cell.limit),t=Math.tan(cell.limit);
+   for(const p of cell.sweep){
+    const offset=p.base.dot(axis),cosine=p.cosine.dot(axis),sine=p.sine.dot(axis);
+    const center=offset+cosine*c,edge=Math.abs(sine)*s;
+    min=Math.min(min,center-edge);max=Math.max(max,center+edge);
+    if(cosine>0&&Math.abs(sine)<=cosine*t)max=Math.max(max,offset+Math.hypot(cosine,sine));
+    if(cosine<0&&Math.abs(sine)<=-cosine*t)min=Math.min(min,offset-Math.hypot(cosine,sine));
+   }
+  }
+  return [min,max];
+ };
+ for(const axis of [...a.axes,...b.axes]){
+  const [amin,amax]=range(a,axis,true),[bmin,bmax]=range(b,axis,movingB);
+  if(amax<bmin-2e-6||bmax<amin-2e-6)return true;
+ }
+ return false;
+}
 function geometryBox(points:readonly GeometryPoint[],axes:Vector3[]):GeometryBox {
  const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
  for(const point of points)for(let i=0;i<3;i++){
@@ -479,14 +507,15 @@ function geometryBox(points:readonly GeometryPoint[],axes:Vector3[]):GeometryBox
  return {center,axes,half:min.map((value,i)=>(max[i]-value)/2)};
 }
 function geometryBoxesOverlap(a:GeometryBox,b:GeometryBox):boolean {
- const delta=new Vector3().subVectors(b.center,a.center),cross=new Vector3();
+ const dx=b.center.x-a.center.x,dy=b.center.y-a.center.y,dz=b.center.z-a.center.z;
  const separates=(axis:Vector3)=>{
   const length=axis.length();if(length<1e-9)return false;
   let extent=0;for(let i=0;i<3;i++)extent+=a.half[i]*Math.abs(axis.dot(a.axes[i]))+b.half[i]*Math.abs(axis.dot(b.axes[i]));
-  return Math.abs(delta.dot(axis))>=extent-1e-7*length;
+  return Math.abs(dx*axis.x+dy*axis.y+dz*axis.z)>=extent-1e-7*length;
  };
  for(const axis of a.axes)if(separates(axis))return false;
  for(const axis of b.axes)if(separates(axis))return false;
+ const cross=new Vector3();
  for(const x of a.axes)for(const y of b.axes)if(separates(cross.crossVectors(x,y)))return false;
  return true;
 }
@@ -510,14 +539,14 @@ function geometryBoxEllipsoidOverlap(box:GeometryBox,center:GeometryPoint,radii:
 /** Full continuous actuator travel, including two controls moving toward each
  * other. Rebuild only for design/installation changes, never in a frame loop. */
 export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion[] {
- const regions:ControlSurfaceRegion[]=[],solids:{id:number;side:number;box:GeometryBox}[]=[],sweeps:GeometryBox[]=[];
+ const regions:ControlSurfaceRegion[]=[],solids:GeometryWingCell[]=[],sweeps:GeometryBox[]=[];
  const worldAxes=[new Vector3(1,0,0),new Vector3(0,1,0),new Vector3(0,0,1)];
  const append=(id:number,side:number,start:number,end:number)=>{
   const {key,wing:w}=wingInstance(d,id),vertical=key==='verticalTail',half=Math.abs(w.points[1].y),hinge=1-w.controlSurface;
   const axis=wingControlAxis(d,id,side,new Vector3()),chord=wingInstanceDirection(d,id,side,1,0,0,new Vector3());
   chord.addScaledVector(axis,-chord.dot(axis)).normalize();
   const axes=[chord,new Vector3().crossVectors(axis,chord).normalize(),axis],limit=vertical?WING_CONTROL_LIMIT.vertical:WING_CONTROL_LIMIT.horizontal;
-  const skin:Vector3[]=[],moving:Vector3[]=[];
+  const skin:Vector3[]=[],moving:GeometrySweepPoint[]=[], profileNormals:Vector3[]=[];
     const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
     // Bound every render/contact vertex. Rotated triangle interiors are convex
     // combinations of these vertices, so angular extrema cover the whole mesh.
@@ -532,9 +561,19 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
       for(let j=1;j<=12;j++)profile.push(hinge*(1-Math.cos(j/12*Math.PI))/2);
       for(let j=1;j<4;j++)profile.push(hinge+w.controlSurface*(1-Math.cos(j/4*Math.PI))/2);
      }
+     profile.sort((a,b)=>a-b);
+     let previousUpper:Vector3|undefined,previousLower:Vector3|undefined;
      for(const u of profile)for(const face of [-1,1]){
       const normal=c*(vertical?face*finThickness(u):airfoilY(wingInstanceAirfoil(d,id),u,face));
       const point=wingInstancePoint(d,id,side,span,u,normal,new Vector3());skin.push(point);
+      if(row===0){
+       const previous=face>0?previousUpper:previousLower;
+       if(previous){
+        const n=new Vector3().subVectors(point,previous).cross(axis);
+        if(n.lengthSq()>1e-16){n.normalize();if(!profileNormals.some(existing=>Math.abs(existing.dot(n))>0.99999))profileNormals.push(n);}
+       }
+       if(face>0)previousUpper=point;else previousLower=point;
+      }
       if(w.controlSurface===0||u<hinge-1e-9)continue;
       const relative=point.clone().sub(pivot),parallel=axis.clone().multiplyScalar(relative.dot(axis));
       const cosine=relative.clone().sub(parallel),sine=new Vector3().crossVectors(axis,relative),base=pivot.clone().add(parallel);
@@ -544,12 +583,12 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
        for(const angle of [extreme,extreme-Math.PI,extreme+Math.PI])if(angle>=-limit&&angle<=limit)angles.push(angle);
        for(const angle of angles){const value=offset+a*Math.cos(angle)+b*Math.sin(angle);min[i]=Math.min(min[i],value);max[i]=Math.max(max[i],value);}
       }
-      moving.push(point);
+      moving.push({base,cosine,sine});
      }
     }
     const padding=1e-6,solid=geometryBox(skin,axes);
     for(let i=0;i<3;i++)solid.half[i]+=padding;
-    solids.push({id,side,box:solid});
+    solids.push({id,side,box:solid,skin,sweep:moving,axes:profileNormals,limit});
     const center=new Vector3();for(let i=0;i<3;i++)center.addScaledVector(axes[i],(min[i]+max[i])/2);
     sweeps.push(moving.length?{center,axes,half:min.map((value,i)=>(max[i]-value)/2+padding)}:solid);
     regions.push({wingInstance:id,side,spanStart:start,spanEnd:end,movable:w.controlSurface>0});
@@ -591,7 +630,8 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
    &&!obstacles.some(box=>geometryBoxesOverlap(sweeps[i],box))
    &&!ellipsoids.some(shape=>geometryBoxEllipsoidOverlap(sweeps[i],shape.center,shape.radii))
    &&!solids.some((other,j)=>!(other.id===region.wingInstance&&other.side===region.side)
-    &&(geometryBoxesOverlap(sweeps[i],other.box)||(wingInstanceWing(d,other.id).controlSurface>0&&geometryBoxesOverlap(sweeps[i],sweeps[j]))));
+    &&((geometryBoxesOverlap(sweeps[i],other.box)&&!geometrySweepSeparated(solids[i],other,false))
+     ||(other.sweep.length>0&&geometryBoxesOverlap(sweeps[i],sweeps[j])&&!geometrySweepSeparated(solids[i],other,true))));
  };
  const risky=regions.map((region,i)=>region.movable&&!clear(i));
  const coarseRegions=regions.slice(),coarseSolids=solids.slice(),coarseSweeps=sweeps.slice();

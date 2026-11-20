@@ -317,7 +317,7 @@ function sweepAngle(w: Wing) {
   return Math.atan2(w.points[1].x - w.points[0].x + (tip - root) / 4, Math.abs(w.points[1].y));
 }
 
-function massLayout(d: AircraftDefinition): MassPart[] {
+function massLayout(d: AircraftDefinition, regions = controlSurfaceRegions(d)): MassPart[] {
   const length = d.fuselage.length;
   const fuselageMass = AIRFRAME_MASS.fuselageLinear * length;
   const shell = cockpitGeometry(d), cabinMass = cockpitMass(d);
@@ -332,7 +332,7 @@ function massLayout(d: AircraftDefinition): MassPart[] {
     // 趴姿只改变显示网格；乘员仍用此固定质点和局部惯量近似，不引入关节运动功。
     { mass: PILOT_MASS, x: d.cockpit.position, y: 0.15, z: 0, ix: PILOT_MASS * 0.08, iy: PILOT_MASS * 0.025, iz: PILOT_MASS * 0.08, moving: true },
   ];
-  const structure = new WingStructure(d, makeSurfaces(d));
+  const structure = new WingStructure(d, makeSurfaces(d, regions));
   for (const section of structure.sections) {
     const e = section.inertia.elements;
     parts.push({ mass: section.mass, x: section.center.x, y: section.center.y, z: section.center.z,
@@ -374,7 +374,7 @@ function massLayout(d: AircraftDefinition): MassPart[] {
   return parts;
 }
 
-function properties(d: AircraftDefinition): AircraftProperties {
+function properties(d: AircraftDefinition, regions = controlSurfaceRegions(d)): AircraftProperties {
   const p = planform(d.mainWing);
   let tailWeight = 0, tailMoment = 0;
   const mainQuarter = quarterChord(d.mainWing), mainAngle = d.assembly.mainIncidence * DEG;
@@ -397,7 +397,7 @@ function properties(d: AircraftDefinition): AircraftProperties {
   return { wingMass: { mainWing: 0, horizontalTail: 0, verticalTail: 0 }, mass: 0, cg: new Vector3(), inertia: new Vector3(), inertiaTensor: new Matrix3(), inverseInertia: new Matrix3(), wingArea: p.area, span: p.span, aspect: p.aspect,
     wingLoading: 0, stallSpeed: 0, glideRatio: 0, staticMargin: 0,
     mainQuarterChord,
-    neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d), d) };
+    neutralPoint: neutral, aerodynamics: new AerodynamicSummary(makeSurfaces(d, regions), d) };
 }
 
 function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, out: AircraftProperties, neutral: number, chord: number, updateInertia = true, lateral = 0, structure?: WingStructure) {
@@ -433,8 +433,8 @@ function updateMass(d: AircraftDefinition, parts: MassPart[], weight: number, ou
 
 export function derive(d: AircraftDefinition, weight = 0, lateral = 0): AircraftProperties {
   d = validateAircraft(d);
-  const out = properties(d), neutral = out.neutralPoint;
-  updateMass(d, massLayout(d), clamp(weight, -1, 1), out, neutral, planform(d.mainWing).chord, true, clamp(lateral, -1, 1));
+  const regions = controlSurfaceRegions(d), out = properties(d, regions), neutral = out.neutralPoint;
+  updateMass(d, massLayout(d, regions), clamp(weight, -1, 1), out, neutral, planform(d.mainWing).chord, true, clamp(lateral, -1, 1));
   evaluateReference(out);
   return out;
 }
@@ -529,8 +529,7 @@ function controlEffectiveness(fraction: number) {
   const hingeAngle = Math.acos(2 * fraction - 1);
   return (Math.PI - hingeAngle + Math.sin(hingeAngle)) / Math.PI;
 }
-function makeSurfaces(d: AircraftDefinition): AerodynamicSurface[] {
-  const regions=controlSurfaceRegions(d);
+function makeSurfaces(d: AircraftDefinition, regions = controlSurfaceRegions(d)): AerodynamicSurface[] {
   const surfaces: AerodynamicSurface[] = [];
   for (const instance of aircraftWings(d)) {
     const { key, id, wing: w } = instance, vertical = key === 'verticalTail', p = planform(w, !vertical);
@@ -1327,15 +1326,16 @@ export class FlightSimulation {
     this.laboratoryState.testSpaceConfig = testSpaceSettings(testSettings); this.laboratoryState.launchConfig = challengeLaunch(challenge, this.laboratoryState.testSpaceConfig);
     this.recording = new Float64Array(isLaboratory(challenge) ? 0 : MAX_FRAMES * FRAME_WIDTH);
     this.wingLoads = new Float64Array(isLaboratory(challenge) ? 0 : MAX_FRAMES * 3);
-    this.parts = massLayout(this.definition);
+    const regions = controlSurfaceRegions(this.definition);
+    this.parts = massLayout(this.definition, regions);
     this.fuelPart = this.parts.find(part => part.fuel);
     this.enginePositions = engineMounts(this.definition);
     const shape = fuelTankDimensions(this.definition.fuelTank.capacity);
     this.fuelLocalInertia.set(2 * shape.radius ** 2 / 5, ((shape.length / 2) ** 2 + shape.radius ** 2) / 5, ((shape.length / 2) ** 2 + shape.radius ** 2) / 5);
-    this.aircraft = properties(this.definition);
+    this.aircraft = properties(this.definition, regions);
     this.neutral = this.aircraft.neutralPoint;
     this.chord = planform(this.definition.mainWing).chord;
-    this.surfaces = makeSurfaces(this.definition);
+    this.surfaces = makeSurfaces(this.definition, regions);
     // Coordinate descent must visit the same physical actuators after wing-role swaps.
     this.mixingSurfaces = this.surfaces.slice().sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y
       || a.point.z - b.point.z || a.spanStart - b.spanStart || a.spanEnd - b.spanEnd);
