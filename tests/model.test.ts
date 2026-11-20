@@ -611,6 +611,30 @@ describe('多辅助翼与镜像垂翼边界',()=>{
    expect(at(1.06)?.movable).toBe(true);
   }
  });
+ it('机身梁包围盒角部与舵面扫掠重叠时仍保留分离的舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.06,mainIncidence:5,horizontalTail:-3,verticalTail:-3,tailOnFin:false});
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.03)?.movable).toBe(false);
+   expect(at(0.13)?.movable).toBe(true);
+  }
+ });
+ it('双发接触圆柱排除包围盒角部，同时保留实际干涉限制',()=>{
+  const d=clone(presets.find(preset=>preset.engine.count===2)!);
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3};
+  Object.assign(d.engine,{x:-0.5,y:-0.4,lateralOffset:0.8});
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:-0.48,mainIncidence:10,horizontalTail:-3,verticalTail:-3,tailOnFin:false});
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.63)?.movable).toBe(true);
+   expect(at(0.75)?.movable).toBe(false);
+   expect(at(0.97)?.movable).toBe(true);
+  }
+ });
  it('镜像垂翼支撑的包围盒重叠时，实体分离的控制段仍可动',()=>{
   const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;d.assembly.tailOnFin=false;
   d.mainWing={...wing(4,1,0.6),controlSurface:0.3,dihedral:5};

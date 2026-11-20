@@ -473,6 +473,7 @@ type GeometrySweepPoint = { base:Vector3; cosine:Vector3; sine:Vector3 };
 type GeometryWingCell = { id:number; side:number; box:GeometryBox; skin:Vector3[]; sweep:GeometrySweepPoint[]; axes:Vector3[]; travel:GeometryTravel };
 type GeometryTravel = { cos:number; sin:number; tan:number };
 type GeometrySupportCell = { box:GeometryBox; points:GeometryPoint[] };
+type GeometryRoundCell = { box:GeometryBox; startRadius:number; endRadius:number };
 
 function extendSweepRange(point:GeometrySweepPoint,axis:Vector3,travel:GeometryTravel,range:number[],index:number):void {
  const offset=point.base.dot(axis),cosine=point.cosine.dot(axis),sine=point.sine.dot(axis);
@@ -515,6 +516,18 @@ function geometrySweepSupportSeparated(cell:GeometryWingCell,support:GeometrySup
   }
   const [sweepMin,sweepMax]=geometrySweepRange(cell,axis);
   if(sweepMax<min-2e-6||max<sweepMin-2e-6)return true;
+ }
+ return false;
+}
+function geometrySweepRoundSeparated(cell:GeometryWingCell,sweep:GeometryBox,round:GeometryRoundCell):boolean {
+ const {center,half}=round.box;
+ const radial=new Vector3(0,sweep.center.y-center.y,sweep.center.z-center.z).normalize();
+ for(const axis of [radial,...cell.box.axes,...cell.axes]){
+  const radiusScale=Math.hypot(axis.y,axis.z),offset=center.dot(axis),dx=axis.x*half[0];
+  const start=offset-dx,end=offset+dx;
+  const r0=radiusScale*round.startRadius,r1=radiusScale*round.endRadius;
+  const [min,max]=geometrySweepRange(cell,axis);
+  if(max<Math.min(start-r0,end-r1)-2e-6||Math.max(start+r0,end+r1)<min-2e-6)return true;
  }
  return false;
 }
@@ -636,6 +649,7 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
   }
  }
  const obstacles:GeometryBox[]=[];
+ const roundCells:GeometryRoundCell[]=[];
  const support=mainWingSupport(d);
  if(support.mass>0)obstacles.push(geometryBox([
   {x:support.frontX,y:support.frontY,z:-0.03},{x:support.backX,y:support.backY,z:0.03},
@@ -643,7 +657,8 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
  ],worldAxes));
  for(const mount of engineMounts(d)){
   const spec=engineCatalog[d.engine.type],radial=Math.hypot(mount.y,mount.z);
-  obstacles.push({center:new Vector3(mount.x,mount.y,mount.z),axes:worldAxes,half:[spec.length/2,spec.radius,spec.radius]});
+  const box={center:new Vector3(mount.x,mount.y,mount.z),axes:worldAxes,half:[spec.length/2,spec.radius,spec.radius]};
+  roundCells.push({box,startRadius:spec.radius,endRadius:spec.radius});
   if(mount.supportLength>0){
    const radialAxis=new Vector3(0,mount.y/radial,mount.z/radial),normal=new Vector3(0,-mount.z/radial,mount.y/radial);
    obstacles.push({center:new Vector3(mount.x,0,0).addScaledVector(radialAxis,mount.supportLength/2),
@@ -652,8 +667,9 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
  }
  const {nose,tail}=fuselageEnds(d);
  for(let start=tail;start<nose-1e-10;start+=0.1){
-  const end=Math.min(start+0.1,nose),radius=Math.max(fuselageBeamRadius(d,start),fuselageBeamRadius(d,end));
-  obstacles.push({center:new Vector3((start+end)/2,0,0),axes:worldAxes,half:[(end-start)/2,radius,radius]});
+  const end=Math.min(start+0.1,nose),startRadius=fuselageBeamRadius(d,start),endRadius=fuselageBeamRadius(d,end);
+  const radius=Math.max(startRadius,endRadius);
+  roundCells.push({box:{center:new Vector3((start+end)/2,0,0),axes:worldAxes,half:[(end-start)/2,radius,radius]},startRadius,endRadius});
  }
  const ellipsoids=(d.birdman?[]:[cockpitGeometry(d),BODY_GEOMETRY.canopy]).map(shape=>({
   center:{x:d.cockpit.position+shape.x,y:shape.y,z:0},radii:{x:shape.xRadius,y:shape.yRadius,z:shape.zRadius},
@@ -662,6 +678,7 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
   const region=regions[i],horizontal=wings[region.wingInstance].key!=='verticalTail';
   return !(horizontal&&region.spanStart<0.02-1e-10)
    &&!obstacles.some(box=>geometryBoxesOverlap(sweeps[i],box))
+   &&!roundCells.some(round=>geometryBoxesOverlap(sweeps[i],round.box)&&!geometrySweepRoundSeparated(solids[i],sweeps[i],round))
    &&!supportCells.some(support=>geometryBoxesOverlap(sweeps[i],support.box)&&!geometrySweepSupportSeparated(solids[i],support))
    &&!ellipsoids.some(shape=>geometryBoxEllipsoidOverlap(sweeps[i],shape.center,shape.radii))
    &&!solids.some((other,j)=>!(other.id===region.wingInstance&&other.side===region.side)
