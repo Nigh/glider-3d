@@ -25,11 +25,21 @@ export function challengeCenter(challenge: ChallengeMode, x: number): number {
     : challenge === 'low-altitude' ? 55 * Math.sin(bend / 160) + 35 * Math.sin(bend / 330) + 18 * Math.sin(bend / 75) * Math.min(1, Math.max(0, x - 500) / 500) : 0;
 }
 
+const riverGridSize = (challengeTerrainGrid.maxX - challengeTerrainGrid.minX) / challengeTerrainGrid.step + 1;
+const riverGridCenters = new Float64Array(riverGridSize), riverGridHeights = new Float64Array(riverGridSize);
+for (let index = 0; index < riverGridSize; index++) {
+  const x = challengeTerrainGrid.minX + index * challengeTerrainGrid.step;
+  riverGridCenters[index] = challengeCenter('low-altitude', x);
+  riverGridHeights[index] = riverHeightVertex(x);
+}
+
 export function challengeRiverCenter(x: number): number {
   const x0 = Math.floor(x / challengeTerrainGrid.step) * challengeTerrainGrid.step;
   const fraction = (x - x0) / challengeTerrainGrid.step;
-  return 55 + challengeCenter('low-altitude', x0) * (1 - fraction)
-    + challengeCenter('low-altitude', x0 + challengeTerrainGrid.step) * fraction;
+  const index = (x0 - challengeTerrainGrid.minX) / challengeTerrainGrid.step;
+  const start = riverGridCenters[index] ?? challengeCenter('low-altitude', x0);
+  const end = riverGridCenters[index + 1] ?? challengeCenter('low-altitude', x0 + challengeTerrainGrid.step);
+  return 55 + start * (1 - fraction) + end * fraction;
 }
 function riverHeightVertex(x: number): number {
   const forward = Math.max(0, x);
@@ -38,7 +48,10 @@ function riverHeightVertex(x: number): number {
 export function challengeRiverHeight(x: number): number {
   const x0 = Math.floor(x / challengeTerrainGrid.step) * challengeTerrainGrid.step;
   const fraction = (x - x0) / challengeTerrainGrid.step;
-  return riverHeightVertex(x0) * (1 - fraction) + riverHeightVertex(x0 + challengeTerrainGrid.step) * fraction;
+  const index = (x0 - challengeTerrainGrid.minX) / challengeTerrainGrid.step;
+  const start = riverGridHeights[index] ?? riverHeightVertex(x0);
+  const end = riverGridHeights[index + 1] ?? riverHeightVertex(x0 + challengeTerrainGrid.step);
+  return start * (1 - fraction) + end * fraction;
 }
 
 export interface ChallengeLaunch {
@@ -71,8 +84,8 @@ export function lowAltitudeRailSample(x: number, out: LowAltitudeRailSample): Lo
 }
 
 function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
-  const offset = z - challengeCenter(challenge, x);
   if (challenge === 'downhill') {
+    const offset = z - challengeCenter(challenge, x);
     // 山脊在弹射台后方抬升；前方谷底快速下降，两侧山峰形成曲折谷道。
     const progress = Math.max(0, x) / 5400;
     const drop = 720 * Math.max(0, Math.min(1, (x - 2400) / 350));
