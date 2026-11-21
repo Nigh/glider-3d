@@ -671,6 +671,19 @@ describe('多辅助翼与镜像垂翼边界',()=>{
    expect(at(1.15)?.movable).toBe(false);
   }
  });
+ it('两翼包围盒重叠但全舵程投影分离时保留根部相邻舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3,dihedral:7};
+  d.horizontalTail={...wing(1,0.5,0.5),controlSurface:0};
+  d.verticalTail={...wing(3,0.8,0.4),mirrored:true,cant:15,lateralOffset:0.82,controlSurface:0.3};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.2,mainIncidence:6,tailOnFin:false,horizontalTail:-2,verticalTail:-1.5,tailIncidence:0});
+  const regions=controlSurfaceRegions(validateAircraft(d)).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.09)?.movable).toBe(false);
+   expect(at(0.11)?.movable).toBe(true);
+  }
+ });
  it('两翼中立互不重叠但同时偏转相撞时，共同回退固定翼面',()=>{
   const d=clone(defaultAircraft);d.birdman=false;d.assembly.tailOnFin=false;
   d.mainWing={...wing(8,1,1),airfoil:'naca0012',controlSurface:0.3};

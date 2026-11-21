@@ -501,7 +501,7 @@ function geometrySweepSeparated(a:GeometryWingCell,b:GeometryWingCell,movingB:bo
   for(const p of cell.skin){const value=p.dot(axis);bounds[0]=Math.min(bounds[0],value);bounds[1]=Math.max(bounds[1],value);}
   return bounds;
  };
- for(const axis of [...a.axes,...b.axes]){
+ for(const axis of [...a.box.axes,...b.box.axes,...a.axes,...b.axes]){
   const [amin,amax]=range(a,axis,true),[bmin,bmax]=range(b,axis,movingB);
   if(amax<bmin-2e-6||bmax<amin-2e-6)return true;
  }
