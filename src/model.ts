@@ -568,14 +568,11 @@ function geometrySweepEllipsoidOverlap(cell:GeometryWingCell,box:GeometryBox,cen
   const length=nearest.length();
   if(nearest.dot(delta)-edges.reduce((extent,edge)=>extent+Math.abs(nearest.dot(edge)),0)>length+1e-9)return false;
  }
- const candidate=new Vector3(nearest.x/radii.x,nearest.y/radii.y,nearest.z/radii.z).normalize();
- for(const axis of [candidate,...cell.box.axes,...cell.axes]){
-  const middle=center.x*axis.x+center.y*axis.y+center.z*axis.z;
-  const radius=Math.hypot(radii.x*axis.x,radii.y*axis.y,radii.z*axis.z);
-  const [min,max]=geometrySweepRange(cell,axis);
-  if(max<middle-radius-2e-6||middle+radius<min-2e-6)return false;
- }
- return true;
+ const axis=new Vector3(nearest.x/radii.x,nearest.y/radii.y,nearest.z/radii.z).normalize();
+ const middle=center.x*axis.x+center.y*axis.y+center.z*axis.z;
+ const radius=Math.hypot(radii.x*axis.x,radii.y*axis.y,radii.z*axis.z);
+ const [min,max]=geometrySweepRange(cell,axis);
+ return !(max<middle-radius-2e-6||middle+radius<min-2e-6);
 }
 /** Full continuous actuator travel, including two controls moving toward each
  * other. Rebuild only for design/installation changes, never in a frame loop. */
