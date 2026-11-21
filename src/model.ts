@@ -651,10 +651,13 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
  const obstacles:GeometryBox[]=[];
  const roundCells:GeometryRoundCell[]=[];
  const support=mainWingSupport(d);
- if(support.mass>0)obstacles.push(geometryBox([
-  {x:support.frontX,y:support.frontY,z:-0.03},{x:support.backX,y:support.backY,z:0.03},
-  {x:support.frontX,y:support.frontY-support.height,z:-0.03},{x:support.backX,y:support.backY-support.height,z:0.03},
- ],worldAxes));
+ if(support.mass>0){
+  const points=[-0.03,0.03].flatMap(z=>[
+   {x:support.frontX,y:support.frontY,z},{x:support.backX,y:support.backY,z},
+   {x:support.frontX,y:support.frontY-support.height,z},{x:support.backX,y:support.backY-support.height,z},
+  ]);
+  supportCells.push({box:geometryBox(points,worldAxes),points});
+ }
  for(const mount of engineMounts(d)){
   const spec=engineCatalog[d.engine.type],radial=Math.hypot(mount.y,mount.z);
   const box={center:new Vector3(mount.x,mount.y,mount.z),axes:worldAxes,half:[spec.length/2,spec.radius,spec.radius]};

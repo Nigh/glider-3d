@@ -611,6 +611,16 @@ describe('多辅助翼与镜像垂翼边界',()=>{
    expect(at(1.06)?.movable).toBe(true);
   }
  });
+ it('斜置主翼支撑只限制与实际支撑相交的垂翼舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0};
+  d.verticalTail={...wing(2,0.6,0.35),controlSurface:0.5};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.2,mainIncidence:-12,tailOnFin:false,horizontalTail:-3,verticalTail:-0.2,tailIncidence:0});
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===2);
+  const at=(span:number)=>regions.find(region=>region.spanStart<span&&region.spanEnd>span);
+  expect(at(0.25)?.movable).toBe(false);
+  expect(at(0.33)?.movable).toBe(true);
+ });
  it('机身梁包围盒角部与舵面扫掠重叠时仍保留分离的舵段',()=>{
   const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
   d.mainWing={...wing(4,1,0.6),controlSurface:0.3};
