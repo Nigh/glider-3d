@@ -555,7 +555,7 @@ function geometryBoxesOverlap(a:GeometryBox,b:GeometryBox):boolean {
 }
 /** Scale an ellipsoid to a unit sphere. Every accepted separating plane uses
  * exact support extents, so an unfinished closest-point search stays conservative. */
-function geometryBoxEllipsoidOverlap(box:GeometryBox,center:GeometryPoint,radii:GeometryPoint):boolean {
+function geometrySweepEllipsoidOverlap(cell:GeometryWingCell,box:GeometryBox,center:GeometryPoint,radii:GeometryPoint):boolean {
  const delta=new Vector3((box.center.x-center.x)/radii.x,(box.center.y-center.y)/radii.y,(box.center.z-center.z)/radii.z);
  const edges=box.axes.map((axis,i)=>new Vector3(axis.x/radii.x,axis.y/radii.y,axis.z/radii.z).multiplyScalar(box.half[i]));
  const coordinates=[0,0,0],nearest=delta.clone();
@@ -567,6 +567,13 @@ function geometryBoxEllipsoidOverlap(box:GeometryBox,center:GeometryPoint,radii:
   }
   const length=nearest.length();
   if(nearest.dot(delta)-edges.reduce((extent,edge)=>extent+Math.abs(nearest.dot(edge)),0)>length+1e-9)return false;
+ }
+ const candidate=new Vector3(nearest.x/radii.x,nearest.y/radii.y,nearest.z/radii.z).normalize();
+ for(const axis of [candidate,...cell.box.axes,...cell.axes]){
+  const middle=center.x*axis.x+center.y*axis.y+center.z*axis.z;
+  const radius=Math.hypot(radii.x*axis.x,radii.y*axis.y,radii.z*axis.z);
+  const [min,max]=geometrySweepRange(cell,axis);
+  if(max<middle-radius-2e-6||middle+radius<min-2e-6)return false;
  }
  return true;
 }
@@ -683,7 +690,7 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
    &&!obstacles.some(box=>geometryBoxesOverlap(sweeps[i],box))
    &&!roundCells.some(round=>geometryBoxesOverlap(sweeps[i],round.box)&&!geometrySweepRoundSeparated(solids[i],sweeps[i],round))
    &&!supportCells.some(support=>geometryBoxesOverlap(sweeps[i],support.box)&&!geometrySweepSupportSeparated(solids[i],support))
-   &&!ellipsoids.some(shape=>geometryBoxEllipsoidOverlap(sweeps[i],shape.center,shape.radii))
+   &&!ellipsoids.some(shape=>geometrySweepEllipsoidOverlap(solids[i],sweeps[i],shape.center,shape.radii))
    &&!solids.some((other,j)=>!(other.id===region.wingInstance&&other.side===region.side)
     &&((geometryBoxesOverlap(sweeps[i],other.box)&&!geometrySweepSeparated(solids[i],other,false))
      ||(other.sweep.length>0&&geometryBoxesOverlap(sweeps[i],sweeps[j])&&!geometrySweepSeparated(solids[i],other,true))));

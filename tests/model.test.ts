@@ -615,11 +615,24 @@ describe('多辅助翼与镜像垂翼边界',()=>{
   const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
   d.mainWing={...wing(4,1,0.6),controlSurface:0};
   d.verticalTail={...wing(2,0.6,0.35),controlSurface:0.5};
-  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.2,mainIncidence:-12,tailOnFin:false,horizontalTail:-3,verticalTail:-0.2,tailIncidence:0});
-  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===2);
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.2,mainIncidence:-10,tailOnFin:false,horizontalTail:-2,verticalTail:-0.1,tailIncidence:0});
+  const regions=controlSurfaceRegions(validateAircraft(d)).filter(region=>region.wingInstance===2);
   const at=(span:number)=>regions.find(region=>region.spanStart<span&&region.spanEnd>span);
   expect(at(0.25)?.movable).toBe(false);
-  expect(at(0.33)?.movable).toBe(true);
+  expect(at(0.31)?.movable).toBe(true);
+ });
+ it('座舱椭球与完整舵程分离时恢复主翼控制段',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;
+  d.fuselage={length:6.5,center:0};d.cockpit={position:1.73};
+  d.mainWing={...wing(9.6,1.48,0.58),points:[{x:-0.62,y:0},{x:-0.28,y:4.8},{x:0.3,y:4.8},{x:0.86,y:0}],
+   rootReference:0.425,dihedral:5.9,controlSurface:0.3};
+  Object.assign(d.assembly,{mainWing:0.94,mainWingHeight:-0.29,mainIncidence:0,horizontalTail:-2.92,verticalTail:-2.9,tailIncidence:0,tailOnFin:false});
+  const regions=controlSurfaceRegions(validateAircraft(d)).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.25)?.movable).toBe(false);
+   expect(at(0.31)?.movable).toBe(true);
+  }
  });
  it('机身梁包围盒角部与舵面扫掠重叠时仍保留分离的舵段',()=>{
   const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
