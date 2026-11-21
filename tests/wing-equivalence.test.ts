@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { clone, defaultAircraft, DEG, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
+import { AIRFRAME_MASS, clone, defaultAircraft, DEG, wing, wingOrigin, type AircraftDefinition, type Controls } from '../src/model';
 import { derive, FlightSimulation, type AerodynamicSurface } from '../src/physics';
+import { airfoilDepthScale, airfoilSkinScale } from '../src/airfoils';
+import { beamSection, materialCatalog } from '../src/materials';
 
 const neutral: Controls = { weight: 0, lateral: 0, aileron: 0, elevator: 0, rudder: 0 };
 function definition() {
@@ -18,6 +20,29 @@ function definition() {
   // Tail mount references root midpoint; main mount references root leading edge.
   d.assembly.horizontalTail = d.assembly.mainWing - 0.4 * Math.cos(3 * DEG);
   return d;
+}
+function separatedDefinitions() {
+  const d = definition();
+  d.mainWing = { ...wing(4, 0.8, 0.8), airfoil: 'naca0012', controlSurface: 0.3 };
+  d.horizontalTail = clone(d.mainWing);
+  d.assembly.mainIncidence = d.assembly.tailIncidence = 0;
+  // Equal external geometry is not equal mass: main/tail skin densities differ.
+  // Match real linear mass with a thicker main spar, keeping outer dimensions.
+  const depth = airfoilDepthScale('naca0012'), section = beamSection(d.mainWing.structure, 1, depth);
+  const area = section.area + (AIRFRAME_MASS.tailArea - AIRFRAME_MASS.mainArea) * 0.8
+    * airfoilSkinScale('naca0012') / materialCatalog[d.mainWing.materialId].density;
+  const sum = section.width + section.height;
+  d.mainWing.structure.wallThickness = (sum - Math.sqrt(sum * sum - 4 * area)) / (4 * Math.min(1, depth));
+  d.assembly.mainWing = 1.8;
+  d.assembly.horizontalTail = -1.4;
+  d.assembly.verticalTail = -3;
+  const swapped = clone(d), mainOrigin = wingOrigin(d, 'mainWing'), tailOrigin = wingOrigin(d, 'horizontalTail');
+  // Spar compensation follows each identity's skin density, not its position.
+  swapped.mainWing = { ...clone(d.horizontalTail), structure: clone(d.mainWing.structure) };
+  swapped.horizontalTail = { ...clone(d.mainWing), structure: clone(d.horizontalTail.structure) };
+  swapped.assembly.mainWing = tailOrigin.x;
+  swapped.assembly.horizontalTail = mainOrigin.x - 0.4;
+  return [d, swapped] as const;
 }
 function evaluate(d: AircraftDefinition, velocity: Vector3, controls = neutral, smart = false, height = 100) {
   const s = new FlightSimulation(d, 'test-space', 0, { height, catapult: false, speed: 12 });
@@ -61,24 +86,42 @@ describe('主翼与副翼气动等效', () => {
     }
   });
 
-  it('相同混控配置和非零舵量保持等效', () => {
-    const controls = { ...neutral, aileron: 0.3, elevator: -0.4 };
-    const s = evaluate(definition(), new Vector3(12, -0.5, 0.3), controls);
+  it('同位相交控制翼保持固定，非零指令不产生舵面响应', () => {
+    const s = evaluate(definition(), new Vector3(12, -0.5, 0.3), { ...neutral, aileron: 0.3, elevator: -0.4 });
     for (const [main, tail] of matchingPanels(s)) {
-      expect(Math.abs(main.controlCandidate)).toBeGreaterThan(0);
-      expect(main.controlCandidate).toBeCloseTo(tail.controlCandidate, 10);
+      expect(main.controlEffectiveness).toBe(0); expect(tail.controlEffectiveness).toBe(0);
+      expect(main.controlCandidate).toBe(0); expect(tail.controlCandidate).toBe(0);
       expectEqual(main, tail);
     }
-    const base = evaluate(definition(), new Vector3(12, -0.5, 0.3));
-    expect(s.surfaces[0].force.distanceTo(base.surfaces[0].force)).toBeGreaterThan(0.01);
   });
 
-  it('智能混控使用相同的真实力矩导数和水平翼舵角上限', () => {
-    const s = evaluate(definition(), new Vector3(12, -0.5, 0.3), neutral, true);
-    for (const [main, tail] of matchingPanels(s)) {
-      expect(main.controlMoment.length()).toBeGreaterThan(0);
-      expect(main.controlMoment.distanceTo(tail.controlMoment)).toBeLessThan(1e-9);
+  it.each([false, true])('无交叠对称配置交换身份后保留非零操纵及力矩导数，智能混控%s', smart => {
+    const controls = { ...neutral, aileron: 0.3, elevator: -0.4 }, velocity = new Vector3(12, -0.5, 0.3);
+    const [d, swapped] = separatedDefinitions(), before = evaluate(d, velocity, controls, smart), after = evaluate(swapped, velocity, controls, smart);
+    const base = evaluate(d, velocity, neutral, smart);
+    expect(before.aircraft.mass).toBeCloseTo(after.aircraft.mass, 12);
+    expect(before.aircraft.cg.distanceTo(after.aircraft.cg)).toBeLessThan(1e-12);
+    for (let i = 0; i < 9; i++) expect(before.aircraft.inertiaTensor.elements[i]).toBeCloseTo(after.aircraft.inertiaTensor.elements[i], 12);
+    let movable = 0, fixed = 0;
+    for (const panel of before.surfaces.filter(panel => panel.kind !== 'vertical')) {
+      const other = after.surfaces.find(other => other.kind === (panel.kind === 'main' ? 'tail' : 'main')
+        && other.side === panel.side && other.spanStart === panel.spanStart)!;
+      expectEqual(panel, other);
+      expect(panel.controlCandidate).toBeCloseTo(other.controlCandidate, 10);
+      expect(panel.controlMoment.distanceTo(other.controlMoment)).toBeLessThan(1e-9);
+      if (panel.controlEffectiveness === 0) {
+        fixed++;
+        expect(panel.controlCandidate).toBe(0);
+        continue;
+      }
+      movable++;
+      expect(Math.abs(panel.controlCandidate)).toBeGreaterThan(0);
+      expect(Math.abs(panel.controlCandidate * 22 * DEG)).toBeLessThanOrEqual(22 * DEG);
+      if (smart) expect(panel.controlMoment.length()).toBeGreaterThan(0);
+      const neutralPanel = base.surfaces.find(other => other.kind === panel.kind && other.side === panel.side && other.spanStart === panel.spanStart)!;
+      expect(panel.force.distanceTo(neutralPanel.force)).toBeGreaterThan(0.01);
     }
+    expect(fixed).toBeGreaterThan(0); expect(movable).toBeGreaterThan(0);
   });
 
 

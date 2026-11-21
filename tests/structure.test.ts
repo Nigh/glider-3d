@@ -753,3 +753,45 @@ it('翼面峰值保留卸载和断裂前的最高受力，reset清空',()=>{
  structure.reset();
  expect(structure.peakWings.every(w=>w.stress===0&&w.yieldRatio===0)).toBe(true);
 });
+
+describe('独立辅助翼结构归属',()=>{
+  function auxiliaryAircraft() {
+    const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+    d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0.4};
+    d.auxiliaryWings=[
+      {kind:'horizontalTail' as const,wing:clone(d.horizontalTail),position:0.6,incidence:3},
+      {kind:'verticalTail' as const,wing:{...clone(d.verticalTail),cant:0,lateralOffset:0.6},position:-1,incidence:0},
+    ];
+    return d;
+  }
+  it('相同展向边界不串接不同实例，断裂仅转移对应实例及侧别',()=>{
+    const simulation=new FlightSimulation(auxiliaryAircraft(),'birdman',0),structure=simulation.structure;
+    structure.reset();
+    for(const section of structure.sections){
+      if(section.parentId===null)expect(section.spanStart).toBe(0);
+      else {
+        const parent=structure.sections[section.parentId];
+        expect(parent.wingInstance).toBe(section.wingInstance);expect(parent.side).toBe(section.side);
+      }
+    }
+    const root=structure.sections.find(section=>section.wingInstance===3&&section.side===-1&&section.spanStart===0)!;
+    const mass=structure.sections.reduce((sum,section)=>sum+section.mass,0);
+    structure.detach(root,1);
+    expect(structure.sectionsForBody(1).length).toBeGreaterThan(0);
+    expect(structure.sectionsForBody(1).every(section=>section.wingInstance===3&&section.side===-1)).toBe(true);
+    expect(structure.sections.filter(section=>section.wingInstance!==3||section.side!==-1).every(section=>section.bodyId===0)).toBe(true);
+    expect([...structure.sectionsForBody(0),...structure.sectionsForBody(1)].reduce((sum,section)=>sum+section.mass,0)).toBeCloseTo(mass,12);
+    expect(structure.branchContains(root,'horizontalTail',-1,1)).toBe(false);
+    expect(structure.branchContains(root,'horizontalTail',-1,3)).toBe(true);
+    structure.reset();
+    expect(structure.sections.every(section=>section.bodyId===0)).toBe(true);
+  });
+  it('关键帧还原额外实例及镜像分支并保持后续积分确定',()=>{
+    const simulation=airborne(new Vector3(12,-0.5,0.2),auxiliaryAircraft());simulation.omega.set(0,0,0);
+    simulation.step(neutral,PHYSICS_TICK);
+    const recording=simulation.getRecording(),restored=restoreReplayKeyframe(simulation.definition,'birdman',recording,captureReplayKeyframe(simulation,recording));
+    expect(restored.structure.sections.map(section=>section.wingInstance)).toEqual(simulation.structure.sections.map(section=>section.wingInstance));
+    simulation.step(neutral,PHYSICS_TICK);restored.step(neutral,PHYSICS_TICK);
+    expect(state(restored)).toEqual(state(simulation));
+  });
+});

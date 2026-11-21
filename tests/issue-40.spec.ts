@@ -181,9 +181,9 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await expect(cameras.getByRole('button', { name: '侧视', exact: true })).toHaveAttribute('aria-pressed', 'true');
  await page.screenshot({ path: info.outputPath('wind-tunnel-restored.png') });
  await page.getByLabel('主翼安装角数值', { exact: true }).fill('6');
- await page.getByLabel('副翼安装角数值', { exact: true }).fill('-2');
+ await page.getByLabel('水平辅助翼安装角数值', { exact: true }).fill('-2');
  await expect(page.getByLabel('主翼安装角实际值', { exact: true })).toHaveText('6.0');
- await expect(page.getByLabel('副翼安装角实际值', { exact: true })).toHaveText('-2.0');
+ await expect(page.getByLabel('水平辅助翼安装角实际值', { exact: true })).toHaveText('-2.0');
  await page.getByRole('button', { name: '返回设计', exact: true }).click();
  await expect(page.getByRole('heading', { name: '飞机工坊', exact: true })).toBeVisible();
  const tuned = await page.evaluate(() => window.glider.aircraft);
@@ -214,10 +214,10 @@ test('wind tunnel keeps axis labels for pilot displacement and allows fin-mounte
  expect((await page.evaluate(() => window.glider.aircraft)).assembly.mainIncidence).toBe(4);
  await page.getByRole('button', { name: '撤销', exact: true }).click();
  expect((await page.evaluate(() => window.glider.aircraft)).assembly.mainIncidence).toBe(before.assembly.mainIncidence);
- await page.getByRole('tab', { name: '副翼', exact: true }).click();
- await page.getByRole('switch', { name: '副翼安装至垂尾顶端', exact: true }).click();
+ await page.getByRole('tab', { name: '水平辅助翼', exact: true }).click();
+ await page.getByRole('switch', { name: '水平辅助翼安装至垂尾顶端', exact: true }).click();
  await page.getByRole('button', { name: /前往风洞/ }).click();
- await page.getByLabel('副翼安装角数值', { exact: true }).fill('12');
- await expect(page.getByLabel('副翼安装角实际值', { exact: true })).toHaveText('12.0');
- await expect(page.getByText('垂尾顶面随副翼安装角和翼型平滑变化。', { exact: true })).toBeVisible();
+ await page.getByLabel('水平辅助翼安装角数值', { exact: true }).fill('12');
+ await expect(page.getByLabel('水平辅助翼安装角实际值', { exact: true })).toHaveText('12.0');
+ await expect(page.getByText('垂尾顶面随水平辅助翼安装角和翼型平滑变化。', { exact: true })).toBeVisible();
 });

@@ -1,7 +1,7 @@
-import { BODY_GEOMETRY, cockpitGeometry, fuselageEnds, planform, type AircraftDefinition, type BodyEllipsoid } from './model';
+import { BODY_GEOMETRY, cockpitGeometry, DEG, finThickness, fuselageEnds, planform, wingInstanceDirection, wingInstancePoint, wingInstanceWing, type AircraftDefinition, type BodyEllipsoid } from './model';
 import { airfoilY } from './airfoils';
 import type { AerodynamicSurface } from './physics';
-import type { Vector3 } from 'three';
+import { Vector3 } from 'three';
 
 type Patch = { x: number; y: number; z: number; nx: number; ny: number; nz: number; area: number; exposed: boolean };
 type Volume = { patches: Patch[]; contains: (x: number, y: number, z: number) => boolean; bounds: number[] };
@@ -40,7 +40,7 @@ function beam(d: AircraftDefinition): Volume {
   contains:(x,y,z)=>x>tail&&x<nose&&y*y+z*z<(.05+(x-tail)*slope)**2-1e-9};
 }
 const sectionY=(surface:AerodynamicSurface,u:number,face:number)=>surface.kind==='vertical'
- ? face*5*.105*(.2969*Math.sqrt(u)-.126*u-.3516*u*u+.2843*u**3-.1036*u**4)
+ ? face*finThickness(u)
  : airfoilY(surface.airfoil,u,face);
 
 /** Clip physical intersections, not the screen-space silhouettes of separate wings.
@@ -52,6 +52,7 @@ export class AirframeExposure {
  private readonly baselineBeam:Patch[];
  private readonly strips;
  private readonly poses:Float64Array;
+ private readonly changed:Uint8Array;
  constructor(d:AircraftDefinition, private readonly surfaces:AerodynamicSurface[]){
   const shell=cockpitGeometry(d), canopy=BODY_GEOMETRY.canopy;
   this.volumes=d.birdman?[]:[ellipsoid({...shell,x:shell.x+d.cockpit.position}),ellipsoid({...canopy,x:canopy.x+d.cockpit.position},true)];
@@ -61,33 +62,45 @@ export class AirframeExposure {
    !this.volumes.slice(bodyCount).some(other=>other!==volume&&other.contains(p.x,p.y,p.z))));
   this.bodies=this.volumes.map(volume=>volume.patches.filter(p=>!this.volumes.some(other=>other!==volume&&other.contains(p.x,p.y,p.z))));
   this.strips=surfaces.map(surface=>{
-   const w=d[surface.kind==='main'?'mainWing':surface.kind==='tail'?'horizontalTail':'verticalTail'], p=planform(w,surface.kind!=='vertical');
+   const w=wingInstanceWing(d,surface.wingInstance), p=planform(w,surface.kind!=='vertical');
    const half=Math.abs(w.points[1].y), root=p.root+(p.tip-p.root)*surface.spanStart/half, tip=p.root+(p.tip-p.root)*surface.spanEnd/half;
    const center=surface.spanStart+(surface.spanEnd-surface.spanStart)*(root+2*tip)/(3*(root+tip));
    const slope=(p.tip-p.root)/half, quarterSlope=(w.points[1].x-w.points[0].x+(p.tip-p.root)/4)/half;
    const samples:number[]=[];
+   // Local quadrature belongs to the design frame, not a checkpoint's deformed pose.
+   const point=new Vector3(),origin=wingInstancePoint(d,surface.wingInstance,surface.side,center,.25,0,new Vector3());
+   const chordDirection=wingInstanceDirection(d,surface.wingInstance,surface.side,1,0,0,new Vector3());
+   const normal=wingInstanceDirection(d,surface.wingInstance,surface.side,0,1,0,new Vector3());
+   const spanDirection=wingInstanceDirection(d,surface.wingInstance,surface.side,0,0,1,new Vector3());
    for(let i=0;i<12;i++)for(let j=0;j<24;j++){
-    const span=surface.spanStart+(i+.5)*(surface.spanEnd-surface.spanStart)/12, offset=span-center, chord=p.root+slope*span, u=(j+.5)/24;
-    for(const face of [-1,1])samples.push(-quarterSlope*offset+(.25-u)*chord,sectionY(surface,u,face)*chord,offset,chord/(12*24*(root+tip)));
+    const span=surface.spanStart+(i+.5)*(surface.spanEnd-surface.spanStart)/12, chord=p.root+slope*span, u=(j+.5)/24;
+    for(const face of [-1,1]){
+     wingInstancePoint(d,surface.wingInstance,surface.side,span,u,sectionY(surface,u,face)*chord,point).sub(origin);
+     samples.push(point.dot(chordDirection),point.dot(normal),point.dot(spanDirection),chord/(12*24*(root+tip)));
+    }
    }
-   return {surface,center,slope,root:p.root,quarterSlope,samples,radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
+   return {surface,center,slope,root:p.root,quarterSlope,samples,half,miter:surface.kind==='vertical'?0:Math.tan(w.dihedral*DEG),radius:Math.max(root,tip)+(surface.spanEnd-surface.spanStart)*(1+Math.abs(quarterSlope))};
   });
   this.poses=new Float64Array(surfaces.length*13).fill(NaN);
+  this.changed=new Uint8Array(surfaces.length);
   this.update();
  }
  update(){
   let changed=false;
   for(let i=0;i<this.surfaces.length;i++){
-   const s=this.surfaces[i];let index=i*13;
+   const s=this.surfaces[i];let index=i*13,stripChanged=false;
    for(let axis=0;axis<4;axis++){
     const v=axis===0?s.point:axis===1?s.normal:axis===2?s.chordDirection:s.spanDirection;
-    if(this.poses[index]!==v.x||this.poses[index+1]!==v.y||this.poses[index+2]!==v.z)changed=true;
+    if(this.poses[index]!==v.x||this.poses[index+1]!==v.y||this.poses[index+2]!==v.z)stripChanged=true;
     this.poses[index++]=v.x;this.poses[index++]=v.y;this.poses[index++]=v.z;
    }
-   if(this.poses[index]!==s.bodyId)changed=true;this.poses[index]=s.bodyId;
+   if(this.poses[index]!==s.bodyId)stripChanged=true;this.poses[index]=s.bodyId;
+   this.changed[i]=stripChanged?1:0;changed ||= stripChanged;
   }
   if(!changed)return;
-  for(const strip of this.strips){
+  for(let stripIndex=0;stripIndex<this.strips.length;stripIndex++){
+   if(!this.changed[stripIndex])continue;
+   const strip=this.strips[stripIndex];
    const s=strip.surface,p=s.point,r=strip.radius;
    const candidates=s.bodyId===0?this.volumes.filter(v=>p.x+r>=v.bounds[0]&&p.x-r<=v.bounds[1]&&p.y+r>=v.bounds[2]&&p.y-r<=v.bounds[3]&&p.z+r>=v.bounds[4]&&p.z-r<=v.bounds[5]):[];
    s.exposedFraction=1;
@@ -102,14 +115,23 @@ export class AirframeExposure {
    }
    s.exposedFraction=Math.max(0,1-covered);
   }
-  for(const patches of this.bodies)for(const p of patches){
-   p.exposed=!this.strips.some(strip=>{
-    const s=strip.surface;if(s.bodyId!==0)return false;
+  for(let i=0;i<this.bodies.length;i++){
+   const [x0,x1,y0,y1,z0,z1]=this.volumes[i].bounds;
+   const candidates=this.strips.filter(({surface,radius})=>{
+    if(surface.bodyId!==0)return false;
+    const {x,y,z}=surface.point;
+    const dx=Math.max(x0-x,x-x1,0),dy=Math.max(y0-y,y-y1,0),dz=Math.max(z0-z,z-z1,0);
+    return dx*dx+dy*dy+dz*dz<=(radius+1e-8)**2;
+   });
+   for(const p of this.bodies[i])p.exposed=!candidates.some(strip=>{
+    const s=strip.surface;
     const x=p.x-s.point.x,y=p.y-s.point.y,z=p.z-s.point.z;
     if(x*x+y*y+z*z>strip.radius**2)return false;
-    const offset=x*s.spanDirection.x+y*s.spanDirection.y+z*s.spanDirection.z, span=strip.center+offset;
+    const normalDistance=x*s.normal.x+y*s.normal.y+z*s.normal.z;
+    const offset=x*s.spanDirection.x+y*s.spanDirection.y+z*s.spanDirection.z;
+    const span=(strip.center+offset-normalDistance*strip.miter)/(1-normalDistance*strip.miter/strip.half);
     if(span<s.spanStart||span>s.spanEnd)return false;
-    const chord=strip.root+strip.slope*span, u=.25-(x*s.chordDirection.x+y*s.chordDirection.y+z*s.chordDirection.z+strip.quarterSlope*offset)/chord;
+    const chord=strip.root+strip.slope*span, u=.25-(x*s.chordDirection.x+y*s.chordDirection.y+z*s.chordDirection.z+strip.quarterSlope*(span-strip.center))/chord;
     if(u<=0||u>=1)return false;
     const normal=(x*s.normal.x+y*s.normal.y+z*s.normal.z)/chord;
     return normal>sectionY(s,u,-1)&&normal<sectionY(s,u,1);

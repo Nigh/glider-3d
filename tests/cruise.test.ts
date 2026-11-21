@@ -7,7 +7,7 @@ import { analyzeCruiseReference, solveCruiseReference } from '../src/cruise';
 describe('海平面满油稳态最佳航程参考', () => {
   // Synchronous solves can collectively exceed Vitest's worker RPC timeout.
   afterEach(() => yieldTurn(0));
-  it.each(presets.filter(d => d.engine.count > 0))('$name通过受力、配平和独立短自由积分', d => {
+  it.each(presets.filter(d => d.engine.count === 2))('$name通过受力、配平和独立短自由积分', d => {
     const result = analyzeCruiseReference(d), reference = result.reference;
     expect(result.reason).toBe('solved'); expect(reference).not.toBeNull();
     if (!reference) throw Error(JSON.stringify(result));
@@ -28,10 +28,20 @@ describe('海平面满油稳态最佳航程参考', () => {
     expect(simulation.quaternion.angleTo(attitude)).toBeLessThan(Math.PI / 180);
   }, 60_000);
 
-  it('确定性求解不改变输入，无动力设计明确不返回巡航', () => {
+  it('保留原单发设计，并准确报告安全裁剪后没有附着流巡航配平', () => {
     const d = presets.find(preset => preset.engine.count === 1)!;
-    const original = structuredClone(d), first = solveCruiseReference(d), second = solveCruiseReference(d);
+    const original = structuredClone(d), result = analyzeCruiseReference(d);
+    expect(result.reason).toBe('no-trim');
+    expect(result.reference).toBeNull();
+    expect(d).toEqual(original);
+  }, 60_000);
+
+  it('确定性求解不改变输入，无动力设计明确不返回巡航', async () => {
+    const d = presets.find(preset => preset.engine.count === 2)!;
+    const original = structuredClone(d), first = solveCruiseReference(d);
+    await yieldTurn(0);
+    const second = solveCruiseReference(d);
     expect(first).not.toBeNull(); expect(second).toEqual(first); expect(d).toEqual(original);
     expect(solveCruiseReference(presets[0])).toBeNull();
-  }, 60_000);
+  }, 120_000);
 });

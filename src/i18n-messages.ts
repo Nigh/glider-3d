@@ -2,6 +2,19 @@
 import { laboratoryMessages } from './laboratory-messages';
 import { inputMessages } from './input-messages';
 export const messages: Record<string, readonly [string, string]> = {
+ "垂直辅助翼镜像": ["Mirror vertical auxiliary wing", "垂直補助翼をミラー配置"],
+ "垂直辅助翼偏转角": ["Vertical auxiliary wing cant", "垂直補助翼の傾斜角"],
+ "垂直辅助翼横向偏移": ["Vertical auxiliary wing lateral offset", "垂直補助翼の左右オフセット"],
+ "正值向外倾斜，负值向内倾斜；两翼不得相交。": ["Positive tilts outward; negative tilts inward. The two wings must not intersect.", "正値は外傾、負値は内傾。左右の翼は交差できません。"],
+ "左右对称偏移，距机身不超过 1 m；悬空部分自动连接同色支撑。": ["Symmetric offset, at most 1 m from the fuselage. Matching supports connect each wing to the fuselage.", "胴体から左右対称に最大1 m移動します。浮いた部分は翼と同色の支柱で胴体につながります。"],
+ "镜像垂直辅助翼不能在顶端安装水平辅助翼。": ["A mirrored vertical auxiliary wing cannot carry a horizontal auxiliary wing at its tip.", "ミラー配置した垂直補助翼の先端に水平補助翼は取り付けられません。"],
+ "镜像垂直辅助翼不得相交": ["Mirrored vertical auxiliary wings must not intersect", "ミラー配置した垂直補助翼は交差できません"],
+ "镜像开关必须是布尔值": ["The mirror setting must be a boolean", "ミラー設定は真偽値で指定してください"],
+ "仅垂直辅助翼支持镜像、偏转与横向偏移": ["Only vertical auxiliary wings support mirroring, cant and lateral offset", "ミラー配置・傾斜・左右オフセットは垂直補助翼のみ対応しています"],
+ "辅助翼数据必须是数组": ["Auxiliary wing data must be an array", "補助翼データは配列で指定してください"],
+ "未知辅助翼类型": ["Unknown auxiliary wing type", "不明な補助翼の種類"],
+ "机身必须支撑辅助翼安装点": ["The fuselage must support the auxiliary wing mounts", "胴体は補助翼の取り付け点を支える必要があります"],
+ "镜像垂直辅助翼不能顶置水平辅助翼": ["Mirrored vertical auxiliary wings cannot carry a horizontal auxiliary wing at their tips", "ミラー配置した垂直補助翼の先端に水平補助翼は取り付けられません"],
  "结构图层": ["Structure layer", "構造レイヤー"],
  "正在计算 Ghost 秒差…": ["Calculating ghost splits…", "ゴーストとの時間差を計算中…"],
  "Ghost 回放状态无效": ["Invalid ghost replay state", "ゴーストの状態が無効です"],
@@ -25,7 +38,7 @@ export const messages: Record<string, readonly [string, string]> = {
  "翼型": ["Airfoil", "翼型"],
  "未知翼型": ["Unknown airfoil", "不明な翼型"],
  "垂尾不支持选择翼型": ["Fin airfoil selection is unavailable", "垂直尾翼の翼型は選択できません"],
- "垂尾顶面随副翼安装角和翼型平滑变化。": ["The fin crown follows the auxiliary wing incidence and airfoil smoothly.", "垂直尾翼の上面は補助翼の取付角と翼型に滑らかに追従します。"],
+ "垂尾顶面随水平辅助翼安装角和翼型平滑变化。": ["The fin crown follows the horizontal auxiliary wing incidence and airfoil smoothly.", "垂直補助翼の上面は水平補助翼の取付角と翼型に滑らかに追従します。"],
  "材料用量按平方根缩放梁尺寸；翼型厚度另缩放梁深度，翼型周长缩放蒙皮质量，改变刚度、承载能力及机翼平均密度。材料本身的密度与强度不变；不提供梁尺寸调整。": ["Material amount scales beam dimensions by its square root. Airfoil thickness scales beam depth and perimeter scales skin mass, changing stiffness, load capacity and wing bulk density. Material density and strength stay fixed; beam dimensions are not editable.", "材料量の平方根で梁寸法を拡縮します。翼型の厚さは梁の深さ、周長は外皮質量を変え、剛性・耐荷重・翼の平均密度に影響します。材料自体の密度と強度は一定で、梁寸法は編集できません。"],
 
  'W · 前往风洞': ['W · Enter wind tunnel', 'W・風洞へ'],
@@ -79,9 +92,9 @@ export const messages: Record<string, readonly [string, string]> = {
  "基础单发型": ["Basic single-engine aircraft", "基本単発型"],
  "巡航油门 {throttle}% · 巡航速度 {speed} m/s": ["Cruise throttle {throttle}% · Cruise speed {speed} m/s", "巡航スロットル {throttle}% · 巡航速度 {speed} m/s"],
  "{span} m 翼展": ["{span} m wingspan", "翼幅 {span} m"],
- "副翼安装至垂尾顶端": ["Mount auxiliary wing on fin tip", "補助翼を垂直尾翼の先端に取り付ける"],
+ "水平辅助翼安装至垂尾顶端": ["Mount horizontal auxiliary wing on fin tip", "水平補助翼を垂直補助翼の先端に取り付ける"],
  "已安装至垂尾顶端，翼根与垂尾梢弦联动；关闭开关可移回机身。": ["Mounted on the fin tip. The root follows the fin tip chord; turn off to return to the fuselage.", "垂直尾翼の先端に取り付け済みです。翼根は先端弦に連動します。オフにすると胴体に戻ります。"],
- "可开启开关直接安装，或将副翼安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the auxiliary-wing mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、補助翼の取り付け点を垂直尾翼の先端付近へドラッグして吸着させます。"],
+ "可开启开关直接安装，或将水平辅助翼安装点拖近垂尾顶端吸附。": ["Turn on to mount directly, or drag the horizontal auxiliary wing mount near the fin tip to snap.", "スイッチをオンにして取り付けるか、水平補助翼の取り付け点を垂直補助翼の先端付近へドラッグして吸着させます。"],
  "驾驶舱后段长度": ["Cockpit rear length", "操縦席の後部長"],
  "前段与玻璃座舱罩固定；后段长度改变驾驶舱质量和最大油箱容量。": ["The front and glass canopy stay fixed. Rear length changes cockpit mass and maximum fuel capacity.", "前部とガラスキャノピーは固定です。後部の長さで操縦席の質量と燃料タンクの最大容量が変わります。"],
  "实色表示实际转速，滑块表示设定转速。": ["Solid fill shows actual RPM; the thumb shows target RPM.", "塗りつぶしは実回転数、つまみは設定回転数を示します。"],
@@ -114,8 +127,8 @@ export const messages: Record<string, readonly [string, string]> = {
  "G值为重心处比力大小，包含发射与接触载荷；静止承重为1G，自由落体为0G。": ["G load is the magnitude of proper acceleration at the CG, including launch and contact loads; supported rest is 1 G and free fall is 0 G.","G荷重は重心での比力の大きさです。発射・接触荷重を含み、静止支持時は1 G、自由落下時は0 Gです。"],
  "仅拖动圆形手柄调整顶点或同时移动根弦、梢弦两端；翼面和线段不响应拖动。手柄过近时自动外移，虚线连接真实位置。按住 Ctrl 自由微调。数字输入可精确调整顶点。": ["Drag only circular handles to adjust vertices or both ends of the root/tip chord; wings and lines do not respond to dragging. Nearby handles move outward with dotted leaders to their true positions. Hold Ctrl for fine adjustment, or use numeric inputs.","頂点や根元・翼端の両端は円形ハンドルのみで調整します。翼面や線はドラッグに反応しません。近いハンドルは外へ移動し、点線で実位置を示します。Ctrlで微調整、数値入力で精密に編集できます。"],
  "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增加面积降低翼载荷，但增加重量与阻力。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. More area lowers wing loading but adds weight and drag.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。面積を増やすと翼面荷重は下がりますが、重量と抗力が増えます。"],
- "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增大副翼或后移安装位置，通常提高俯仰稳定性。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. A larger auxiliary wing or a rearward mount usually improves pitch stability.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。補助翼の拡大や後方への移動は通常ピッチ安定性を高めます。"],
- "侧视拖动顶点或根弦、梢弦的圆形手柄。按住 Ctrl 取消吸附。垂直尾翼提供偏航恢复力矩，太小容易偏离航向。": ["In side view, drag the circular vertex or chord handles. Hold Ctrl to disable snapping. The vertical tail restores heading; too little area allows drift.","側面で頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。垂直尾翼は偏航を戻す力を生み、小さすぎると進路が乱れます。"],
+ "拖动顶点或根弦、梢弦的圆形手柄调整翼型。按住 Ctrl 取消吸附。增大水平辅助翼或后移安装位置，通常提高俯仰稳定性。": ["Drag the circular vertex or chord handles. Hold Ctrl to disable snapping. A larger horizontal auxiliary wing or a rearward mount usually improves pitch stability.","頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。水平補助翼の拡大や後方への移動は通常ピッチ安定性を高めます。"],
+ "侧视拖动顶点或根弦、梢弦的圆形手柄。按住 Ctrl 取消吸附。垂直辅助翼提供偏航恢复力矩，太小容易偏离航向。": ["In side view, drag the circular vertex or chord handles. Hold Ctrl to disable snapping. The vertical auxiliary wing restores heading; too little area allows drift.","側面で頂点や翼弦の円形ハンドルをドラッグします。Ctrlで吸着を解除。垂直補助翼は偏航を戻す力を生み、小さすぎると進路が乱れます。"],
  "导入回放": ["Import replay", "リプレイをインポート"],
  "导出回放": ["Export replay", "リプレイをエクスポート"],
  "回放结束": ["Replay finished", "リプレイ終了"],
@@ -446,13 +459,13 @@ export const messages: Record<string, readonly [string, string]> = {
   "Main wing",
   "主翼"
  ],
- "副翼": [
-  "Auxiliary wing",
-  "補助翼"
+ "水平辅助翼": [
+  "Horizontal auxiliary wing",
+  "水平補助翼"
  ],
- "垂直尾翼": [
-  "Vertical tail",
-  "垂直尾翼"
+ "垂直辅助翼": [
+  "Vertical auxiliary wing",
+  "垂直補助翼"
  ],
  "组装": [
   "Assembly",
@@ -474,7 +487,7 @@ export const messages: Record<string, readonly [string, string]> = {
   "Birdman: only the vertical tail has a control surface; pitch and roll use pilot weight shift.",
   "鳥人間では垂直尾翼のみが舵面を持ち、ピッチとロールは操縦者の重心移動で操作します。"
  ],
- "主翼的滚转舵面与副翼的升降舵控制姿态；驾驶员由流线座舱包覆。": [
+ "主翼的滚转舵面与水平辅助翼的升降舵控制姿态；驾驶员由流线座舱包覆。": [
   "Ailerons and elevator control attitude; the pilot sits inside a streamlined cockpit.",
   "副翼と昇降舵で姿勢を操作し、操縦者は流線型のコックピットに収まります。"
  ],
@@ -1270,13 +1283,13 @@ export const messages: Record<string, readonly [string, string]> = {
   "Main-wing longitudinal position",
   "主翼の前後位置"
  ],
- "副翼位置": [
-  "Auxiliary-wing position",
-  "補助翼位置"
+ "水平辅助翼位置": [
+  "Horizontal auxiliary wing position",
+  "水平補助翼位置"
  ],
- "垂直尾翼位置": [
-  "Vertical-tail position",
-  "垂直尾翼位置"
+ "垂直辅助翼位置": [
+  "Vertical auxiliary wing position",
+  "垂直補助翼位置"
  ],
  "已限制在机身支撑范围内；可先延长机头或机尾。": [
   "Clamped to fuselage support. Extend the nose or tail first for more travel.",
@@ -1682,13 +1695,13 @@ export const messages: Record<string, readonly [string, string]> = {
   "Main-wing mount",
   "主翼取付"
  ],
- "副翼安装": [
-  "Auxiliary-wing mount",
-  "補助翼取付"
+ "水平辅助翼安装": [
+  "Horizontal auxiliary wing mount",
+  "水平補助翼取付"
  ],
- "垂尾安装": [
-  "Vertical-tail mount",
-  "垂直尾翼取付"
+ "垂直辅助翼安装": [
+  "Vertical auxiliary wing mount",
+  "垂直補助翼取付"
  ],
  "右翼": [
   "Right wing",
@@ -1831,7 +1844,7 @@ export const messages: Record<string, readonly [string, string]> = {
   "エンジンの上下位置"
  ],
  "引擎横向偏移": ["Engine lateral offset", "エンジンの左右間隔"],
- "最小贴近机身，最大保持在主翼翼展内；缩小翼展时自动调整。": ["Minimum keeps engines beside the body; maximum keeps them within the main-wing span. Reducing span adjusts the offset automatically.", "最小値は胴体のすぐ外側、最大値は主翼の翼幅内です。翼幅を縮めると自動で調整します。"],
+ "最小时两台引擎相互紧靠，最大保持在主翼翼展内；缩小翼展时自动调整。": ["At minimum, the two engines touch each other; maximum keeps them within the main-wing span. Reducing span adjusts the offset automatically.", "最小値で左右のエンジンが互いに接し、最大値は主翼の翼幅内です。翼幅を縮めると自動で調整します。"],
  "油箱容量": [
   "Tank capacity",
   "タンク容量"
@@ -1872,9 +1885,9 @@ export const messages: Record<string, readonly [string, string]> = {
   "More incidence increases effective angle of attack; too much can cause a stall.",
   "取付角を増やすと有効迎角が増え、過大だと失速する場合があります。"
  ],
- "副翼安装角": [
-  "Auxiliary-wing incidence",
-  "補助翼取付角"
+ "水平辅助翼安装角": [
+  "Horizontal auxiliary wing incidence",
+  "水平補助翼取付角"
  ],
  "调节尾翼安装角以配平，观察离台后攻角与俯仰变化。": [
   "Adjust tail incidence for trim; watch angle of attack and pitch after release.",

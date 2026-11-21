@@ -84,7 +84,7 @@ test('风洞安装角实体同步，返回工坊保留实际角度，三语阻�
   await page.keyboard.press('w');
   const before = await page.evaluate(() => window.glider.scene.wingRoots);
   await page.getByRole('spinbutton', { name: '主翼安装角数值', exact: true }).fill('18');
-  await page.getByRole('spinbutton', { name: '副翼安装角数值', exact: true }).fill('-12');
+  await page.getByRole('spinbutton', { name: '水平辅助翼安装角数值', exact: true }).fill('-12');
   await page.getByRole('button', { name: '开启风洞', exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const roots = window.glider.scene.wingRoots;

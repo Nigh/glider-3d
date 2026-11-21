@@ -1244,7 +1244,7 @@ it.each([0.3, 1])('live installation angle matches freshly built skin, hinges an
   const simulation = new FlightSimulation(definition, 'wind-tunnel', 0);
   const build = () => {
     const view = Object.assign(Object.create(SceneView.prototype), {
-      definition: simulation.definition, simulation, fragments: [], renderBlend: 1,
+      definition: simulation.definition, simulation, scene: new Scene(), metrics: {}, fragments: [], renderBlend: 1, aircraftOnly: true,
       wingSections: [[], [], []], wingNormalGeometry: [], wingCoordinates: [], wingNeutral: [], wingHinges: [],
       wingMovable: [], wingAxes: [], wingAngles: new Float64Array(3), wingMeshes: [],
       hingeLines: Array.from({ length: 3 }, () => ({ geometry: new BufferGeometry() })),
@@ -1256,7 +1256,11 @@ it.each([0.3, 1])('live installation angle matches freshly built skin, hinges an
     for (const [index, key] of (['mainWing', 'horizontalTail', 'verticalTail'] as const).entries()) {
       const origin = wingOrigin(simulation.definition, key);
       const incidence = index === 0 ? simulation.definition.assembly.mainIncidence : index === 1 ? simulation.definition.assembly.tailIncidence : 0;
-      view.wingMeshes.push(new Mesh(view.wingGeometry(simulation.definition[key], origin.x, origin.y, incidence, index)));
+      const regions = simulation.structure.sections.map(section => ({
+        wingInstance: section.wingInstance, side: section.side, spanStart: section.spanStart,
+        spanEnd: section.spanEnd, movable: section.surface.controlEffectiveness > 0,
+      }));
+      view.wingMeshes.push(new Mesh(view.wingGeometry(simulation.definition[key], origin.x, origin.y, incidence, index, regions)));
     }
     view.syncWingPhysics();
     return view;
@@ -1330,6 +1334,7 @@ it.each([false, true])('renders per-strip control directions for front/rear tail
     const tailMovement: number[] = [];
     for (let index = 0; index < 3; index++) {
       for (const section of view.wingSections[index]) {
+        if (!section.movable) expect(section.physics.controlDeflection).toBe(0);
         // Pitch and roll share these actuators, so main-wing strips need not move
         // in opposite vertical directions. Check each local hinge rotation instead.
         const rowStart = section.vertexStart + Math.floor(section.rows / 2) * 32;
@@ -1344,8 +1349,14 @@ it.each([false, true])('renders per-strip control directions for front/rear tail
           }
           const rendered = new Vector3().fromBufferAttribute(view.wingMeshes[index].geometry.getAttribute('position'), vertex);
           expect(rendered.distanceTo(expected)).toBeLessThan(1e-6);
-          if (chordVertex === 16 && index > 0 && section.side === 1 && section.spanStart === 0) {
-            tailMovement.push(index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z);
+          if (chordVertex === 16 && index > 0 && section.side === 1) {
+            if (section.spanStart === 0) {
+              expect(section.movable).toBe(false);
+              expect(rendered.distanceTo(neutral)).toBeLessThan(1e-6);
+            } else if (section.movable && tailMovement[index - 1] === undefined) {
+              expect(Math.abs(section.physics.controlDeflection)).toBeGreaterThan(0);
+              tailMovement[index - 1] = index === 1 ? rendered.y - neutral.y : rendered.z - neutral.z;
+            }
           }
         }
       }

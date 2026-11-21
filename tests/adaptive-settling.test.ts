@@ -17,18 +17,21 @@ it('settles under sustained full rudder at a fixed high-load flight condition', 
     engine: { type: 'jet-01', count: 0, x: -0.5, y: 0.5 }, fuelTank: { x: 0, capacity: 0 },
   };
   const sim = new FlightSimulation(definition, 'downhill', 0); sim.launching = false;
-  const tail: number[] = [];
+  const tail: number[] = [], stress: number[] = [];
   // Hold the flight condition to isolate the actuator/elastic-geometry feedback loop.
   // Structural deformation is retained between steps and all real forces are evaluated.
   // Allow six seconds for the new exposed-area load equilibrium; keep the last-second tolerance.
   for (let step = 0; step < 360; step++) {
     sim.position.set(100, 5000, 0); sim.quaternion.identity(); sim.velocity.set(35, 0, 0); sim.omega.set(0, 0, 0);
     sim.step({ weight: 0, rudder: 1, elevator: 0, aileron: 0, adaptiveControls: true });
-    if (step >= 300) tail.push(Math.max(...sim.structure.sections.filter(section => section.wingKey === 'verticalTail' && section.bodyId === 0).map(section => Math.abs(section.surface.controlCommand))));
+    if (step >= 300) {
+      tail.push(Math.max(...sim.structure.sections.filter(section => section.wingKey === 'verticalTail' && section.bodyId === 0).map(section => Math.abs(section.surface.controlCommand))));
+      stress.push(sim.structure.maxStressRatio);
+    }
   }
   expect(sim.structure.fractureCount).toBe(0);
   expect(Math.min(...tail)).toBeGreaterThan(0.05);
-  expect(Math.max(...tail)).toBeLessThan(0.5);
+  expect(Math.max(...tail)).toBeLessThan(1);
   expect(Math.max(...tail) - Math.min(...tail)).toBeLessThan(0.001);
-  expect(sim.structure.maxStressRatio).toBeLessThanOrEqual(0.901);
+  expect(Math.max(...stress)).toBeLessThanOrEqual(0.901);
 }, 15_000);

@@ -1,5 +1,5 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
-import { AIRFRAME_MASS, finPoint, wingAirfoil, planform, wingLocalPoint, wingOrigin, type AircraftDefinition, type WingKey } from './model';
+import { AIRFRAME_MASS, wingInstanceAirfoil, wingInstancePoint, wingInstanceWing, planform, type AircraftDefinition, type WingKey } from './model';
 import { airfoilDepthScale, airfoilSkinScale } from './airfoils';
 import { beamSection, materialCatalog } from './materials';
 
@@ -10,11 +10,13 @@ export interface StructuralSurface {
   point: Vector3; normal: Vector3; spanDirection: Vector3; force: Vector3; moment: Vector3;
   chordDirection: Vector3; crossflowDirection: Vector3;
   kind: 'main' | 'tail' | 'vertical'; side: number; spanStart: number; spanEnd: number;
+  wingInstance: number;
   area: number; chord: number; incidence: number; bodyId: number;
+  controlEffectiveness: number;
 }
 export interface StructureNode { span: number; position: Vector3; quaternion: Quaternion }
 export interface StructureSection {
-  id: number; wingKey: WingKey; side: number; spanStart: number; spanEnd: number; bodyId: number;
+  id: number; wingKey: WingKey; wingInstance: number; side: number; spanStart: number; spanEnd: number; bodyId: number;
   /** Actual support joint: preceding strip, fin tip for a T-tail, or airframe. */
   parentId: number | null; depth: number;
   /** 实际安装局部舵角rad，已包含场景侧别方向；断片冻结。 */
@@ -50,8 +52,8 @@ export interface WingFragment extends StructuralBody {
 
 export function summarizeWingStructure(sections: readonly Pick<StructureSection, 'wingKey' | 'stressRatio' | 'yieldRatio' | 'bodyId'>[], wings = [
   { key: 'mainWing', name: '主翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
-  { key: 'horizontalTail', name: '副翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
-  { key: 'verticalTail', name: '垂直尾翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+  { key: 'horizontalTail', name: '水平辅助翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
+  { key: 'verticalTail', name: '垂直辅助翼', stress: 0, yieldRatio: 0, attached: 0, detached: 0 },
 ]) {
  for (const wing of wings) wing.stress = wing.yieldRatio = wing.attached = wing.detached = 0;
  for (const section of sections) {
@@ -110,24 +112,17 @@ export class WingStructure {
   constructor(readonly definition: AircraftDefinition, surfaces: StructuralSurface[]) {
     this.sections = surfaces.map((surface, id) => {
       const wingKey: WingKey = surface.kind === 'main' ? 'mainWing' : surface.kind === 'tail' ? 'horizontalTail' : 'verticalTail';
-      const wing = definition[wingKey], vertical = wingKey === 'verticalTail', p = planform(wing, !vertical);
-      const material = materialCatalog[wing.materialId], section = beamSection(wing.structure, wing.materialAmount, vertical ? 1 : airfoilDepthScale(wingAirfoil(definition, wingKey)));
-      const origin = wingOrigin(definition, wingKey), incidence = surface.incidence;
-      const reference = (span: number) => {
-        const fraction = span / Math.abs(wing.points[1].y);
-        const quarter = wing.points[0].x + (wing.points[1].x - wing.points[0].x) * fraction + (p.root + (p.tip - p.root) * fraction) / 4;
-        if (vertical) return finPoint(definition, span, 0.25, 0, new Vector3());
-        const point = wingLocalPoint(wing, incidence, surface.side, -quarter, 0, span, new Vector3());
-        point.x += origin.x; point.y += origin.y;
-        return point;
-      };
+      const wing = wingInstanceWing(definition, surface.wingInstance), vertical = wingKey === 'verticalTail';
+      const airfoil = wingInstanceAirfoil(definition, surface.wingInstance);
+      const material = materialCatalog[wing.materialId], section = beamSection(wing.structure, wing.materialAmount, vertical ? 1 : airfoilDepthScale(airfoil));
+      const reference = (span: number) => wingInstancePoint(definition, surface.wingInstance, surface.side, span, 0.25, 0, new Vector3());
       const referenceRoot = reference(surface.spanStart), referenceTip = reference(surface.spanEnd);
       const beamAxis = referenceTip.clone().sub(referenceRoot).normalize();
       const chordAxis = surface.chordDirection.clone();
       chordAxis.addScaledVector(beamAxis, -chordAxis.dot(beamAxis)).normalize();
       const normalAxis = new Vector3().crossVectors(beamAxis, chordAxis).normalize();
       const length = referenceRoot.distanceTo(referenceTip);
-      const skinMass = surface.area * (wingKey === 'mainWing' ? AIRFRAME_MASS.mainArea : AIRFRAME_MASS.tailArea) * (vertical ? 1 : airfoilSkinScale(wingAirfoil(definition, wingKey)));
+      const skinMass = surface.area * (wingKey === 'mainWing' ? AIRFRAME_MASS.mainArea : AIRFRAME_MASS.tailArea) * (vertical ? 1 : airfoilSkinScale(airfoil));
       const sparMass = material.density * section.area * length, mass = skinMass + sparMass;
       const center = surface.point.clone().addScaledVector(chordAxis, -surface.chord / 4);
       // 均匀条带质量代理；梁/蒙皮质量真实分段，惯量固定在参考几何，见 update 的准静态说明。
@@ -141,7 +136,7 @@ export class WingStructure {
       const innerWidth = section.width - section.wallThickness;
       const innerHeight = section.height - section.wallThickness;
       // 翼型厚度缩放等效梁深度，蒙皮按外形周长缩放；仍非可制造性校验。
-      return { id, wingKey, side: surface.side, spanStart: surface.spanStart, spanEnd: surface.spanEnd, bodyId: 0, parentId: null, depth: 0,
+      return { id, wingKey, wingInstance: surface.wingInstance, side: surface.side, spanStart: surface.spanStart, spanEnd: surface.spanEnd, bodyId: 0, parentId: null, depth: 0,
         root: { span: surface.spanStart, position: referenceRoot.clone(), quaternion: new Quaternion() },
         tip: { span: surface.spanEnd, position: referenceTip.clone(), quaternion: new Quaternion() },
         referenceRoot, referenceTip, crownIncidence: definition.assembly.tailIncidence, skinMass, sparLinearMass: material.density * section.area, sectionHeight: section.height, mass, center, inertia, stress: 0, stressRatio: 0, yieldRatio: 0,
@@ -163,10 +158,10 @@ export class WingStructure {
     });
     const geometry = () => this.sections.map(() => ({ root: new Vector3(), tip: new Vector3(), rootRotation: new Quaternion(), tipRotation: new Quaternion() }));
     this.geometryBefore = geometry(); this.geometryAfter = geometry();
-    const finTip = this.sections.filter(s => s.wingKey === 'verticalTail').at(-1);
+    const finTip = this.sections.filter(s => s.wingInstance === 2 && s.side === 1).at(-1);
     for (const s of this.sections) {
-      const inner = this.sections.find(other => other.wingKey === s.wingKey && other.side === s.side && other.spanEnd === s.spanStart);
-      s.parentId = inner?.id ?? (definition.assembly.tailOnFin && s.wingKey === 'horizontalTail' ? finTip?.id ?? null : null);
+      const inner = this.sections.find(other => other.wingInstance === s.wingInstance && other.side === s.side && other.spanEnd === s.spanStart);
+      s.parentId = inner?.id ?? (definition.assembly.tailOnFin && s.wingInstance === 1 ? finTip?.id ?? null : null);
     }
     for (const s of this.sections) for (let parent = this.parent(s); parent; parent = this.parent(parent)) s.depth++;
     this.ordered = [...this.sections].sort((a, b) => a.depth - b.depth || a.id - b.id);
@@ -182,17 +177,17 @@ export class WingStructure {
   syncFinGeometry() {
     const d = this.definition, scratch = this.arm;
     for (const s of this.sections) {
-      if (s.wingKey !== 'verticalTail' || s.bodyId !== 0) continue;
-      finPoint(d, s.spanStart, 0.25, 0, scratch);
+      if (s.wingInstance !== 2 || s.bodyId !== 0) continue;
+      wingInstancePoint(d, 2, s.side, s.spanStart, 0.25, 0, scratch);
       this.displacement.copy(scratch).sub(s.referenceRoot);
       s.referenceRoot.copy(scratch); s.baseRoot.add(this.displacement); s.root.position.add(this.displacement);
-      finPoint(d, s.spanEnd, 0.25, 0, scratch);
+      wingInstancePoint(d, 2, s.side, s.spanEnd, 0.25, 0, scratch);
       this.displacement.copy(scratch).sub(s.referenceTip);
       s.referenceTip.copy(scratch); s.baseTip.add(this.displacement); s.tip.position.add(this.displacement);
       const w = d.verticalTail, p = planform(w, false), half = Math.abs(w.points[1].y);
       const a = p.root + (p.tip - p.root) * s.spanStart / half, b = p.root + (p.tip - p.root) * s.spanEnd / half;
       const span = s.spanStart + (s.spanEnd - s.spanStart) * (a + 2 * b) / (3 * (a + b));
-      finPoint(d, span, 0.25, 0, s.referencePoint);
+      wingInstancePoint(d, 2, s.side, span, 0.25, 0, s.referencePoint);
       s.beamAxis.subVectors(s.referenceTip, s.referenceRoot).normalize();
       s.chordAxis.copy(s.referenceChord).addScaledVector(s.beamAxis, -s.referenceChord.dot(s.beamAxis)).normalize();
       s.normalAxis.crossVectors(s.beamAxis, s.chordAxis).normalize();
@@ -331,7 +326,7 @@ export class WingStructure {
       if (first.bodyId !== bodyId || this.hasInnerSection(first)) continue;
       this.rotationVector.set(0, 0, 0); this.displacement.set(0, 0, 0);
       for (const s of this.sections) {
-        if (s.bodyId !== bodyId || s.wingKey !== first.wingKey || s.side !== first.side) continue;
+        if (s.bodyId !== bodyId || s.wingInstance !== first.wingInstance || s.side !== first.side) continue;
         const length = s.referenceRoot.distanceTo(s.referenceTip);
         s.root.position.copy(s.baseRoot).add(this.displacement);
         this.setRotation(s.root.quaternion, this.rotationVector, s.baseRootRotation);
@@ -386,13 +381,13 @@ export class WingStructure {
   private alignTailRoots(bodyId: number) {
     if (!this.definition.assembly.tailOnFin) return;
     for (const first of this.sectionsForBody(bodyId)) {
-      if (first.wingKey !== 'horizontalTail' || this.hasInnerSection(first)) continue;
+      if (first.wingInstance !== 1 || this.hasInnerSection(first)) continue;
       const parent = this.parent(first); if (parent?.bodyId !== bodyId) continue;
       this.mountRotation.copy(parent.baseTipRotation).invert().premultiply(parent.tip.quaternion);
       this.mountTarget.copy(first.baseRoot).sub(parent.baseTip).applyQuaternion(this.mountRotation).add(parent.tip.position);
       this.mountOrigin.copy(first.root.position);
       this.mountDelta.copy(first.root.quaternion).invert().premultiply(this.rotation.copy(this.mountRotation).multiply(first.baseRootRotation));
-      for (const s of this.sectionsForBody(bodyId)) if (s.wingKey === first.wingKey && s.side === first.side) {
+      for (const s of this.sectionsForBody(bodyId)) if (s.wingInstance === first.wingInstance && s.side === first.side) {
         s.root.position.sub(this.mountOrigin).applyQuaternion(this.mountDelta).add(this.mountTarget);
         s.tip.position.sub(this.mountOrigin).applyQuaternion(this.mountDelta).add(this.mountTarget);
         s.root.quaternion.premultiply(this.mountDelta); s.tip.quaternion.premultiply(this.mountDelta);
@@ -419,9 +414,9 @@ export class WingStructure {
 
   /** Restrict a massless elastic shape change at a solid boundary, retaining
    * joint continuity and the full measured stress used for fracture decisions. */
-  blendContactGeometry(wingKey: WingKey, side: number, fraction: number) {
+  blendContactGeometry(wingKey: WingKey, side: number, fraction: number, wingInstance?: number) {
     for (const s of this.sections) {
-      if (s.bodyId !== 0 || !this.branchContains(s, wingKey, side)) continue;
+      if (s.bodyId !== 0 || !this.branchContains(s, wingKey, side, wingInstance)) continue;
       const a = this.geometryBefore[s.id], b = this.geometryAfter[s.id];
       s.root.position.copy(a.root).lerp(b.root, fraction); s.tip.position.copy(a.tip).lerp(b.tip, fraction);
       s.root.quaternion.copy(a.rootRotation).slerp(b.rootRotation, fraction);
@@ -431,16 +426,16 @@ export class WingStructure {
     this.alignTailRoots(0);
   }
 
-  branchContains(s: StructureSection, wingKey: WingKey, side: number) {
+  branchContains(s: StructureSection, wingKey: WingKey, side: number, wingInstance?: number) {
     for (let node: StructureSection | undefined = s; node && node.bodyId === s.bodyId; node = this.parent(node)) {
-      if (node.wingKey === wingKey && node.side === side) return true;
+      if (node.wingKey === wingKey && node.side === side && (wingInstance === undefined || node.wingInstance === wingInstance)) return true;
     }
     return false;
   }
 
   private hasInnerSection(section: StructureSection) {
     for (const inner of this.sections) {
-      if (inner.bodyId === section.bodyId && inner.wingKey === section.wingKey && inner.side === section.side && inner.spanStart < section.spanStart) return true;
+      if (inner.bodyId === section.bodyId && inner.wingInstance === section.wingInstance && inner.side === section.side && inner.spanStart < section.spanStart) return true;
     }
     return false;
   }
