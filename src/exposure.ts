@@ -115,9 +115,16 @@ export class AirframeExposure {
    }
    s.exposedFraction=Math.max(0,1-covered);
   }
-  for(const patches of this.bodies)for(const p of patches){
-   p.exposed=!this.strips.some(strip=>{
-    const s=strip.surface;if(s.bodyId!==0)return false;
+  for(let i=0;i<this.bodies.length;i++){
+   const [x0,x1,y0,y1,z0,z1]=this.volumes[i].bounds;
+   const candidates=this.strips.filter(({surface,radius})=>{
+    if(surface.bodyId!==0)return false;
+    const {x,y,z}=surface.point;
+    const dx=Math.max(x0-x,x-x1,0),dy=Math.max(y0-y,y-y1,0),dz=Math.max(z0-z,z-z1,0);
+    return dx*dx+dy*dy+dz*dz<=(radius+1e-8)**2;
+   });
+   for(const p of this.bodies[i])p.exposed=!candidates.some(strip=>{
+    const s=strip.surface;
     const x=p.x-s.point.x,y=p.y-s.point.y,z=p.z-s.point.z;
     if(x*x+y*y+z*z>strip.radius**2)return false;
     const normalDistance=x*s.normal.x+y*s.normal.y+z*s.normal.z;
