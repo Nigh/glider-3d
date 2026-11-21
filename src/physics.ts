@@ -1,6 +1,6 @@
 import { Matrix3, Quaternion, Vector3 } from 'three';
 import { AIRFRAME_MASS, BODY_GEOMETRY, aircraftWings, controlSurfaceRegions, finThickness, wingControlAxis, wingControlHinge, wingInstanceAirfoil, wingInstanceDirection, wingInstancePoint, wingInstanceWing, wingSupports, WING_CONTROL_LIMIT, clamp, cockpitGeometry, cockpitMass, DEG, engineMounts, fuelTankDimensions, fuselageEnds, mainWingSupport, PILOT_MASS, planform, validateAircraft, wingLocalPoint, wingOrigin, SUPPORT_AREAL_DENSITY, type AircraftDefinition, type BodyEllipsoid, type Controls, type EngineMount, type Wing, type WingKey } from './model';
-import { challengeGateBlocked, hitsChallengeRuin, downhillRuins, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
+import { challengeGateBlocked, hitsChallengeRuin, downhillRuinCollisionRows, CHALLENGE_RIVER, challengeCenter, challengeCheckpoints, challengeCollisionHeight, challengeDefinitions, challengeLaunch, challengeRiverCenter, challengeRiverHeight, challengeStartGate, challengeTerrainGrid, challengeTerrainHeight, LOW_ALTITUDE, LOW_ALTITUDE_RAIL, type ChallengeMode } from './challenges';
 import { lowAltitudeRailSample, type LowAltitudeRailSample } from './challenges';
 import { engineCatalog, engineDensityRatio, engineThrustFactor, FUEL_DENSITY } from './engines';
 import { rotationalEnergy, setInertia, WingStructure, type SectionContactLoad, type StructuralBody, type WingFragment } from './structure';
@@ -2947,18 +2947,36 @@ export class FlightSimulation {
         this.platformActive[this.platformCount++] = index;
       }
       if (this.challenge !== 'downhill') continue;
-      for (const ruin of downhillRuins) {
-        if (Math.abs(p.x-ruin.x)>ruin.radiusX+CONTACT_TOLERANCE) continue;
-        const cy=Math.cos(ruin.yaw),sy=Math.sin(ruin.yaw),ct=Math.cos(ruin.tilt),st=Math.sin(ruin.tilt);
-        const x=p.x-ruin.x,y=p.y-ruin.y,z=p.z-ruin.z,r=sy*x+cy*z;
-        const local=[cy*x-sy*z,ct*y+st*r,-st*y+ct*r], half=[ruin.width/2,ruin.height/2,ruin.length/2];
-        if(local.some((v,i)=>Math.abs(v)>half[i]+CONTACT_TOLERANCE)) continue;
-        let axis=0;for(let i=1;i<3;i++)if(Math.abs(local[i])-half[i]>Math.abs(local[axis])-half[axis])axis=i;
-        const sign=local[axis]<0?-1:1,index=point*CONTACT_SLOTS+4;
-        const n=this.groundNormals[index];
-        if(axis===0)n.set(cy,0,-sy);else if(axis===1)n.set(st*sy,ct,st*cy);else n.set(ct*sy,-st,ct*cy);
-        n.multiplyScalar(sign);this.platformGaps[index]=Math.abs(local[axis])-half[axis];this.platformFaces[index]=0;
-        this.platformActive[this.platformCount++]=index;break;
+      // The local face tolerance can expand a world axis by up to sqrt(3) times.
+      const margin = 2 * CONTACT_TOLERANCE;
+      ruinRows: for (const row of downhillRuinCollisionRows) {
+        if (p.x < row.minX - margin || p.x > row.maxX + margin) continue;
+        for (const box of row.boxes) {
+          if (p.y < box.minY - margin || p.y > box.maxY + margin
+            || p.z < box.minZ - margin || p.z > box.maxZ + margin) continue;
+          const { ruin, cy, sy, ct, st, hx, hy, hz } = box;
+          if (Math.abs(p.x - ruin.x) > ruin.radiusX + CONTACT_TOLERANCE) continue;
+          const x = p.x - ruin.x, y = p.y - ruin.y, z = p.z - ruin.z, r = sy * x + cy * z;
+          const lx = cy * x - sy * z, ly = ct * y + st * r, lz = -st * y + ct * r;
+          if (Math.abs(lx) > hx + CONTACT_TOLERANCE || Math.abs(ly) > hy + CONTACT_TOLERANCE
+            || Math.abs(lz) > hz + CONTACT_TOLERANCE) continue;
+          const gx = Math.abs(lx) - hx, gy = Math.abs(ly) - hy, gz = Math.abs(lz) - hz;
+          const index = point * CONTACT_SLOTS + 4;
+          const n = this.groundNormals[index];
+          if (gz > Math.max(gx, gy)) {
+            n.set(ct * sy, -st, ct * cy).multiplyScalar(lz < 0 ? -1 : 1);
+            this.platformGaps[index] = gz;
+          } else if (gy > gx) {
+            n.set(st * sy, ct, st * cy).multiplyScalar(ly < 0 ? -1 : 1);
+            this.platformGaps[index] = gy;
+          } else {
+            n.set(cy, 0, -sy).multiplyScalar(lx < 0 ? -1 : 1);
+            this.platformGaps[index] = gx;
+          }
+          this.platformFaces[index] = 0;
+          this.platformActive[this.platformCount++] = index;
+          break ruinRows;
+        }
       }
     }
   }

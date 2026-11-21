@@ -848,6 +848,18 @@ describe('平原废墟与门高',()=>{
    expect(blocked,`height=${height}, z=${z}`).toBe(true);
   }
  });
+ it('贴近楼顶飞过时保持飞行', () => {
+  const ruin = downhillRuins.find(r => r.height === 85)!;
+  const roof = ruin.y + (Math.cos(ruin.tilt) * ruin.height + Math.sin(ruin.tilt) * ruin.length) / 2;
+  const s = airborne(crossStart(new FlightSimulation(poweredAircraft, 'downhill', 0)), ruin.x - 12);
+  Reflect.set(s, 'checkpointIndex', challengeCheckpoints('downhill').findIndex(g => g.x > ruin.x + 20));
+  s.position.set(ruin.x - 12, roof + 3, ruin.z);
+  s.velocity.set(34, 0, 0);
+  for (let i = 0; i < 24; i++) s.step(neutral, 1 / 60);
+  expect(s.ended).toBe(false);
+  expect(s.fragments).toHaveLength(0);
+  expect(s.position.x).toBeGreaterThan(ruin.x);
+ });
  it('楼体碰撞在真实积分中结束主体而非穿透',()=>{
   const s=crossStart(create()),ruin=downhillRuins.find(r=>r.height===85)!;
   Reflect.set(s,'checkpointIndex',challengeCheckpoints('downhill').findIndex(g=>g.x>ruin.x+60));
