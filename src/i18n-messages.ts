@@ -571,9 +571,10 @@ export const messages: Record<string, readonly [string, string]> = {
   "Rudder chord ratio",
   "方向舵の弦長比"
  ],
- "1 为全动垂尾。": [
-  "1 makes the entire vertical tail movable.",
-  "1で全遊動垂直尾翼になります。"
+ "舵量 50% 为中位。": ["Control input is neutral at 50%.", "操舵量は50%が中立です。"],
+ "100% 为全动垂尾。": [
+  "100% makes the entire vertical tail movable.",
+  "100%で全遊動垂直尾翼になります。"
  ],
  "控制面占翼面弦长的比例。": [
   "Control-surface chord as a fraction of wing chord.",

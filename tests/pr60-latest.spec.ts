@@ -117,9 +117,9 @@ test('动力操纵台横向合并，油量相对起飞满油显示，双发偏�
  const offset=page.getByRole('spinbutton',{name:'引擎横向偏移精确值',exact:true});
  const initial=await offset.inputValue();
  await offset.fill('2');await offset.press('Tab');
- await expect(offset).toHaveValue('2');
+ await expect(offset).toHaveValue('2.00');
  await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(offset).toHaveValue(initial);
- await page.getByRole('button',{name:'重做',exact:true}).click();await expect(offset).toHaveValue('2');
+ await page.getByRole('button',{name:'重做',exact:true}).click();await expect(offset).toHaveValue('2.00');
  const tinyTank=await page.evaluate(()=>{
   // The development API returns an independent aircraft snapshot.
   const app=window as unknown as {glider:{aircraft:AircraftDefinition}};

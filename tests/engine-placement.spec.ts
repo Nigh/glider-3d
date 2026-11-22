@@ -14,7 +14,7 @@ test('双引擎最小侧距使实体相互紧靠，支持精确输入、撤销�
  await offset.fill('1'); await offset.press('Tab');
  await offset.fill('0'); await offset.press('Tab');
  const radius = engineCatalog['jet-01'].radius;
- await expect(offset).toHaveValue(String(radius));
+ await expect(offset).toHaveValue(radius.toFixed(2));
  const separation = () => page.evaluate(() => {
   const scene = window.glider.scene as unknown as { engines: { visible: boolean; position: { x: number; y: number; z: number } }[] };
   const [left, right] = scene.engines.filter(engine => engine.visible);
@@ -22,12 +22,12 @@ test('双引擎最小侧距使实体相互紧靠，支持精确输入、撤销�
  });
  await expect.poll(separation).toBeCloseTo(2 * radius, 8);
  await page.getByRole('button', { name: '撤销', exact: true }).click();
- await expect(offset).toHaveValue('1');
+ await expect(offset).toHaveValue('1.00');
  await expect.poll(separation).toBeCloseTo(2, 8);
  await page.getByRole('button', { name: '重做', exact: true }).click();
- await expect(offset).toHaveValue(String(radius));
+ await expect(offset).toHaveValue(radius.toFixed(2));
  await expect.poll(separation).toBeCloseTo(2 * radius, 8);
  await offset.fill('0'); await offset.press('Tab');
- await expect(offset).toHaveValue(String(radius));
+ await expect(offset).toHaveValue(radius.toFixed(2));
  await expect.poll(separation).toBeCloseTo(2 * radius, 8);
 });

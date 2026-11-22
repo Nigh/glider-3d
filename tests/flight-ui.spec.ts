@@ -31,7 +31,7 @@ test('开始试飞后配平集中在圆形杆量仪表',async({page})=>{
  await expect(panel).toBeVisible();
 });
 
-test('T与Y切换飞行辅助，重飞复位，鸟人禁用自动配平',async({page})=>{
+test('T与Y切换飞行辅助，重飞记忆，鸟人禁用自动配平',async({page})=>{
  await enterFlight(page);
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await page.getByRole('button',{name:'暂停',exact:true}).click();
@@ -45,7 +45,7 @@ test('T与Y切换飞行辅助，重飞复位，鸟人禁用自动配平',async({
  await page.keyboard.press('t');await page.keyboard.press('y');await page.keyboard.press('r');
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await page.getByRole('button',{name:'暂停',exact:true}).click();
- await expect(auto).toHaveAttribute('aria-checked','false');await expect(adaptive).toHaveAttribute('aria-checked','false');
+ await expect(auto).toHaveAttribute('aria-checked','true');await expect(adaptive).toHaveAttribute('aria-checked','true');
  await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'返回主菜单',exact:true}).click();
  await page.getByRole('button',{name:'鸟人间挑战',exact:false}).click();
@@ -139,7 +139,7 @@ test('工坊每个翼面保留响应轴，支持撤销与重置',async({page})=>
  await page.getByRole('button',{name:'重置设计',exact:true}).click();await expect(roll).toHaveAttribute('aria-checked','false');
 });
 
-test('智能混控默认关闭，支持U和输入设置，重飞复位',async({page})=>{
+test('智能混控默认关闭，支持U和输入设置，重飞记忆',async({page})=>{
  await enterFlight(page);
  const mixing=page.getByRole('switch',{name:'智能混控（U）',exact:true});
  await expect(mixing).toBeVisible();await expect(mixing).toHaveAttribute('aria-checked','false');
@@ -156,8 +156,8 @@ test('智能混控默认关闭，支持U和输入设置，重飞复位',async({p
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>window.glider.telemetry?.smartMixing)).toBe(true);
  await page.getByRole('button',{name:'暂停',exact:true}).click();
- await page.keyboard.press('r');await expect(mixing).toHaveAttribute('aria-checked','false');
- expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(false);
+ await page.keyboard.press('r');await expect(mixing).toHaveAttribute('aria-checked','true');
+ expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
 });
 
 test('回放智能混控只读且跟随记录和跳转',async({page})=>{

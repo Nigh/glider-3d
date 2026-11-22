@@ -60,6 +60,7 @@ type FragmentRender = {
 export class SceneView {
   readonly metrics = { fps: 60, mean: 16.7, p95: 16.7, p99: 16.7, renderMs: 0, geometryMs: 0, drawCalls: 0, triangles: 0, memory: 0, quality: 'Medium', geometries: 0, textures: 0, programs: 0 };
   onEditorSelect: ((target: Exclude<EditorTarget, null>) => void) | null = null;
+  onWindOrbit: (() => void) | null = null;
   onDesignViewChange: ((view: string) => void) | null = null;
   private readonly crashMark = new THREE.Group();
   private crashAge = -1;
@@ -479,7 +480,7 @@ export class SceneView {
     controls.maxPolarAngle = Math.PI * 0.94;
     controls.minZoom = 0.1;
     controls.maxZoom = 10;
-    controls.addEventListener('change', () => { this.editorDirty = true; this.promoteDesignPerspective(); });
+    controls.addEventListener('change', () => { this.editorDirty = true; this.promoteOrbitPerspective(); });
     controls.addEventListener('start', () => { this.cameraDragging = true; });
     controls.addEventListener('end', () => { this.cameraDragging = false; this.cameraReleasedAt = this.elapsed; });
     return controls;
@@ -920,8 +921,9 @@ export class SceneView {
     }
   }
 
-  private promoteDesignPerspective(): void {
-    if (this.simulation || this.camera !== this.orthographic || !this.cameraDragging
+  private promoteOrbitPerspective(): void {
+    const wind = this.simulation?.challenge === 'wind-tunnel';
+    if ((this.simulation && !wind) || this.camera !== this.orthographic || !this.cameraDragging
       || this.editorPointerId >= 0 || this.camera.quaternion.angleTo(this.designOrbitRotation) < 1e-6) return;
     const target = this.controls.target;
     const distance = (this.orthographic.top - this.orthographic.bottom)
@@ -932,9 +934,11 @@ export class SceneView {
     this.perspective.up.copy(this.orthographic.up);
     this.camera = this.perspective;
     this.controls.object = this.camera;
-    this.view = 'orbit';
+    this.view = wind ? 'free' : 'orbit';
+    this.followInitialized = false;
     this.editorDirty = true;
-    this.onDesignViewChange?.('orbit');
+    if (wind) this.onWindOrbit?.();
+    else this.onDesignViewChange?.('orbit');
   }
 
   private partTarget(object: THREE.Object3D): EditorTarget {
@@ -2158,7 +2162,7 @@ export class SceneView {
     if (this.simulation && (!this.controls.enabled || this.view === 'free')) this.followCamera(1, true);
     this.cameraHome.copy(this.camera.position);
     this.targetHome.copy(this.controls.target);
-    if (orthographic && !this.simulation) {
+    if (orthographic && (!this.simulation || this.simulation.challenge === 'wind-tunnel')) {
       this.designOrbitRotation.copy(this.camera.quaternion);
     }
     this.constrainCamera();
@@ -2315,7 +2319,7 @@ export class SceneView {
     this.renderer.domElement.removeEventListener('pointercancel', this.cancelPartSelection);
     this.renderer.domElement.removeEventListener('lostpointercapture', this.cancelPartSelection);
     this.renderer.domElement.removeEventListener('pointerleave', this.leavePartSelection);
-    this.onEditorSelect = this.onDesignViewChange = null;
+    this.onEditorSelect = this.onDesignViewChange = this.onWindOrbit = null;
     this.editorOverlay.remove();
     for (const geometry of this.wingNormalGeometry) geometry.dispose();
     this.release(this.scene);

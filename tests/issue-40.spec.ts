@@ -44,7 +44,7 @@ test('test space configures the balloon platform before launch and keeps results
  await expect(page.locator('.result-instruments')).toHaveCount(0);
  expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.includes('.best.') && (key.includes('test-space') || key.includes('wind-tunnel'))))).toEqual([]);
  await page.getByRole('button', { name: '再试一次', exact: true }).click();
- await expect(height).toBeEnabled(); await expect(height).toHaveValue('1200');
+ await expect(height).toBeEnabled(); await expect(height).toHaveValue('1200.00');
  await page.getByLabel('启用弹射', { exact: true }).check();
  await page.getByLabel('弹射末端速度数值', { exact: true }).fill('30');
  await page.getByRole('button', { name: '开始试飞', exact: true }).click();
@@ -69,7 +69,7 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await expect(page.locator('.advanced-hud')).toHaveAttribute('open', '');
  const speedHud = page.getByRole('region', { name: '风洞风速', exact: true });
  const currentSpeed = speedHud.getByLabel('当前风速', { exact: true });
- await expect(speedHud).toBeVisible(); await expect(currentSpeed).toHaveText('0.0');
+ await expect(speedHud).toBeVisible(); await expect(currentSpeed).toHaveText('0.00');
  await expect(page.getByRole('region', { name: '飞行数据', exact: true })).toHaveCount(0);
  await expect(speedHud.locator('output')).toHaveCount(1);
  const speedBox = (await speedHud.boundingBox())!, viewport = page.viewportSize()!;
@@ -79,9 +79,12 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  const room = await page.evaluate(() => (window as any).glider.scene.laboratory);
  expect(room.walls).toHaveLength(6); expect(room.walls.every((wall: any) => wall.gridMeters === 1 && wall.tickMeters === 0.1 && wall.finish === 'dark-concrete')).toBe(true);
  expect(await page.evaluate(() => (window as any).glider.laboratory)).toMatchObject({ wind: { speed: 0 }, windEnabled: false });
- await expect(page.getByLabel('气流速度数值', { exact: true })).toHaveValue('10.0');
+ await expect(page.getByLabel('气流速度数值', { exact: true })).toHaveValue('10.00');
  const numericInputs = page.locator('.wind-control input[type=number]');
- for (const input of await numericInputs.all()) await expect(input).toHaveValue(/^-?\d+\.\d$/);
+ for (const input of await numericInputs.all()) {
+  const step = await input.getAttribute('step');
+  await expect(input).toHaveValue(step === '1' ? /^\d+$/ : step === '0.01' ? /^-?\d+\.\d{2}$/ : /^-?\d+\.\d$/);
+ }
  for (const label of ['开始测试', '暂停测试', '继续测试', '停止测试']) await expect(page.getByRole('button', { name: label, exact: true })).toHaveCount(0);
  const cameras = page.getByLabel('观察视角', { exact: true });
  await expect(cameras.getByRole('button', { name: '侧视', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -136,7 +139,7 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.screenshot({ path: info.outputPath('wind-tunnel-room.png') });
  await page.getByRole('button', { name: '开启风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(10);
- await expect(currentSpeed).toHaveText('10.0');
+ await expect(currentSpeed).toHaveText('10.00');
  await page.getByLabel('滚转角度数值', { exact: true }).fill('90');
  await pitch.fill('20'); await pitch.blur();
  const motionStart = await page.evaluate(() => (window as any).glider.time);
@@ -151,24 +154,24 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  await page.getByLabel('气流速度数值', { exact: true }).fill('200');
  await page.getByLabel('滚转角度数值', { exact: true }).fill('30');
  await page.getByLabel('俯仰角度数值', { exact: true }).fill('8');
- await page.getByLabel('滚转控制数值', { exact: true }).fill('40');
- await page.getByLabel('俯仰控制数值', { exact: true }).fill('30');
- await page.getByLabel('方向舵控制比例数值', { exact: true }).fill('-25');
+ await page.getByLabel('滚转控制数值', { exact: true }).fill('70');
+ await page.getByLabel('俯仰控制数值', { exact: true }).fill('65');
+ await page.getByLabel('方向舵控制比例数值', { exact: true }).fill('38');
  expect(await page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBe(0);
- await expect(currentSpeed).toHaveText('0.0'); // Configured target is 200; show actual flow.
+ await expect(currentSpeed).toHaveText('0.00'); // Configured target is 200; show actual flow.
  await page.getByRole('button', { name: '开启风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed)).toBeGreaterThan(0);
  await page.getByLabel('滚转角度数值', { exact: true }).fill('-30');
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.roll), { timeout: 90000 }).toBe(-30);
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.fractures), { timeout: 90000 }).toBeGreaterThan(0);
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed), { timeout: 90000 }).toBe(200);
- await expect(currentSpeed).toHaveText('200.0');
+ await expect(currentSpeed).toHaveText('200.00');
  expect(await page.evaluate(() => (window as any).glider.state)).toBe('flight');
  expect(await page.evaluate(() => (window as any).glider.result)).toBeNull();
  expect(await page.evaluate(() => (window as any).glider.laboratory)).toMatchObject({ recordingBytes: 0, curveSamples: 0 });
  await page.getByRole('button', { name: '关闭风洞', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.wind.speed), { timeout: 90000 }).toBe(0);
- await expect(currentSpeed).toHaveText('0.0');
+ await expect(currentSpeed).toHaveText('0.00');
  const beforeRestore = await page.evaluate(() => ({ time: (window as any).glider.time, wind: (window as any).glider.laboratory.wind }));
  await page.getByRole('button', { name: '还原飞机状态', exact: true }).click();
  await expect.poll(() => page.evaluate(() => (window as any).glider.laboratory.fractures)).toBe(0);
@@ -177,7 +180,7 @@ test('wind tunnel ramps airflow on and off, highlights views and restores a dama
  expect(restoredWings.every((wing: any) => wing.sections.every((section: any) => section.bodyId === 0))).toBe(true);
  expect(await page.evaluate(() => (window as any).glider.laboratory)).toMatchObject({ wind: beforeRestore.wind, windEnabled: false, fragments: 0 });
  expect(await page.evaluate(() => (window as any).glider.time)).toBeGreaterThanOrEqual(beforeRestore.time);
- await expect(page.getByLabel('气流速度数值', { exact: true })).toHaveValue('200.0');
+ await expect(page.getByLabel('气流速度数值', { exact: true })).toHaveValue('200.00');
  await expect(cameras.getByRole('button', { name: '侧视', exact: true })).toHaveAttribute('aria-pressed', 'true');
  await page.screenshot({ path: info.outputPath('wind-tunnel-restored.png') });
  await page.getByLabel('主翼安装角数值', { exact: true }).fill('6');

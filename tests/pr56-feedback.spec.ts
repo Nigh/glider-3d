@@ -76,7 +76,7 @@ test('非输入控件和动态对话框不持有焦点，原生选择器、滑�
   const box = (await slider.boundingBox())!;
   await slider.click({ position: { x: box.width / 2, y: box.height / 2 } });
   await expect(slider).not.toBeFocused();
-  await expect(page.getByRole('spinbutton', { name: '平台高度数值', exact: true })).not.toHaveValue('2000');
+  await expect(page.getByRole('spinbutton', { name: '平台高度数值', exact: true })).not.toHaveValue('2000.00');
 });
 
 test('风洞安装角实体同步，返回工坊保留实际角度，三语阻力分项紧随总阻力', async ({ page }) => {

@@ -28,9 +28,9 @@ test('翼型独立选择、简洁设置、T尾安装角和鸟人风速上限通�
  await page.getByRole('combobox',{name:'飞机类型',exact:true}).selectOption('birdman');
  await expect(selector).toBeDisabled(); await expect(selector).toHaveValue('dae11');
  await page.getByRole('heading',{name:'飞机工坊',exact:true}).click();await page.keyboard.press('w');
- const speed=page.getByRole('spinbutton',{name:'气流速度数值',exact:true});await expect(speed).toHaveAttribute('max','50');await expect(speed).toHaveValue('50.0');
+ const speed=page.getByRole('spinbutton',{name:'气流速度数值',exact:true});await expect(speed).toHaveAttribute('max','50');await expect(speed).toHaveValue('50.00');
  await expect(page.getByRole('slider',{name:'气流速度',exact:true})).toHaveAttribute('max','50');
- await speed.fill('200'); await speed.blur(); await expect(speed).toHaveValue('50.0');
+ await speed.fill('200'); await speed.blur(); await expect(speed).toHaveValue('50.00');
  await page.getByRole('spinbutton',{name:'方向舵控制比例数值',exact:true}).fill('100');
  await expect.poll(()=>page.evaluate(()=>window.glider.telemetry?.controlInputs.rudder)).toBe(1);
  await page.keyboard.press('Escape');

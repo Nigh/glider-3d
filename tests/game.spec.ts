@@ -365,7 +365,7 @@ test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ pa
   const root = page.getByRole('spinbutton', { name: '顶点1后向坐标', exact: true });
   await root.fill('2');
   await root.press('Tab');
-  await expect(root).toHaveValue(String(originalRoot));
+  await expect(root).toHaveValue(originalRoot.toFixed(2));
   await expect(page.getByRole('alert')).toContainText('至少 0.15 m');
   expect((await aircraft(page)).mainWing.points[0].x).toBe(originalRoot);
   const before = (await aircraft(page)).mainWing.points[1].y;
@@ -618,7 +618,7 @@ test('工坊紧凑仪表按类别排列并显示满油至空油推重比', async
   await page.getByRole('button', { name: '低空飞行', exact: false }).click();
   const metrics = page.getByRole('region', { name: '飞机性能估算', exact: true });
   await expect(metrics.locator(':scope > div > small:first-child')).toHaveText([
-    '主翼面积', '翼展 / 展弦比', '翼载荷', '自由空气最佳滑翔比', '估算失速速度', '全备质量 · 驾驶员 60 kg', '推重比',
+    '主翼面积', '翼展 / 展弦比', '翼载荷', '自由空气最佳滑翔比', '估算失速速度', '全备质量 · 驾驶员 60.00 kg', '推重比',
   ]);
   await expect(page.locator('.aero-preview')).toHaveCount(0);
   await page.getByRole('tab', { name: '动力', exact: true }).click();
@@ -780,7 +780,7 @@ test('固定驾驶员质量，端点数值保持对端不动，安装位置受�
   expect(normalized.fuselage.center).toBe(0);
   expect(normalized.pilot.mass).toBe(60);
   await page.getByRole('tab', { name: '机身', exact: true }).click();
-  await expect(page.getByLabel('固定驾驶员质量', { exact: true })).toContainText('60 kg');
+  await expect(page.getByLabel('固定驾驶员质量', { exact: true })).toContainText('60.00 kg');
   const github = page.getByRole('link', { name: 'GitHub 项目源码（新标签页）', exact: true });
   await expect(github).toHaveAttribute('href', 'https://github.com/Nigh/glider-3d');
   await expect(github).toHaveAttribute('target', '_blank');
@@ -837,14 +837,14 @@ test('主翼高度滑条与精确值同步，正负支撑质量进入主视图�
   await expect.poll(() => page.evaluate(() => window.glider.scene.support.visible)).toBe(false);
   const sliderBounds = (await slider.boundingBox())!;
   await slider.click({ position: { x: 1, y: sliderBounds.height / 2 } });
-  await expect(input).toHaveValue('-0.5');
+  await expect(input).toHaveValue('-0.50');
   expect((await aircraft(page)).assembly.mainWingHeight).toBe(-0.5);
   const negativeArea = Number(await area.textContent()), negativeMass = Number(await supportMass.textContent());
   expect(negativeArea).toBeGreaterThan(0);
   expect(negativeMass).toBeGreaterThan(0);
   expect(Math.abs(Number(await mass.textContent()) - baselineMass - negativeMass)).toBeLessThan(0.11);
   await slider.click({ position: { x: sliderBounds.width - 1, y: sliderBounds.height / 2 } });
-  await expect(input).toHaveValue('1');
+  await expect(input).toHaveValue('1.00');
   expect((await aircraft(page)).assembly.mainWingHeight).toBe(1);
   expect(Number(await area.textContent())).toBeCloseTo(negativeArea * 2, 1);
   expect(Number(await supportMass.textContent())).toBeCloseTo(negativeMass * 2, 1);
