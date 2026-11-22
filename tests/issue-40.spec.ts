@@ -51,7 +51,7 @@ test('test space configures the balloon platform before launch and keeps results
  await expect.poll(() => page.evaluate(() => (window as any).glider.telemetry.speed), { timeout: 60000 }).toBeGreaterThan(29);
  await expect(page.locator('.flight-status')).toContainText('飞行中', { timeout: 60000 });
  await page.getByRole('button', { name: '停止测试', exact: true }).click();
- await expect(result.locator('div').filter({ has: page.locator('dt', { hasText: /^起飞速度$/ }) }).last()).toContainText('30.0 m/s');
+ await expect(result.locator('div').filter({ has: page.locator('dt', { hasText: /^起飞速度$/ }) }).last()).toContainText('30.00 m/s');
  await page.screenshot({ path: info.outputPath('test-space-results.png') });
  expect(errors).toEqual([]);
 });
