@@ -34,24 +34,23 @@ test('开始试飞后配平集中在圆形杆量仪表',async({page})=>{
 test('T与Y切换飞行辅助，重飞记忆，鸟人禁用自动配平',async({page})=>{
  await enterFlight(page);
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
- await page.getByRole('button',{name:'暂停',exact:true}).click();
  const auto=page.getByRole('switch',{name:'自动升降舵配平（T）',exact:true});
  const adaptive=page.getByRole('switch',{name:'自适应杆量（Y）',exact:true});
  await expect(auto).toHaveAttribute('aria-checked','false');
- await page.keyboard.press('t');await expect(auto).toHaveAttribute('aria-checked','true');
+ await page.keyboard.down('t');await expect(auto).toHaveAttribute('aria-checked','true');await page.keyboard.up('t');
  await auto.click();await expect(auto).toHaveAttribute('aria-checked','false');
- await page.keyboard.press('y');await expect(adaptive).toHaveAttribute('aria-checked','true');
+ await page.keyboard.down('y');await expect(adaptive).toHaveAttribute('aria-checked','true');await page.keyboard.up('y');
  await adaptive.click();await expect(adaptive).toHaveAttribute('aria-checked','false');
- await page.keyboard.press('t');await page.keyboard.press('y');await page.keyboard.press('r');
- await page.getByRole('button',{name:'开始试飞',exact:true}).click();
+ await auto.click();await adaptive.click();
  await page.getByRole('button',{name:'暂停',exact:true}).click();
+ await page.keyboard.down('r');
+ await expect(page.getByRole('button',{name:'开始试飞',exact:true})).toBeVisible();
+ await page.keyboard.up('r');
  await expect(auto).toHaveAttribute('aria-checked','true');await expect(adaptive).toHaveAttribute('aria-checked','true');
  await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'返回主菜单',exact:true}).click();
  await page.getByRole('button',{name:'鸟人间挑战',exact:false}).click();
  await page.getByRole('button',{name:'试飞',exact:true}).click();
- await page.getByRole('button',{name:'开始试飞',exact:true}).click();
- await page.getByRole('button',{name:'暂停',exact:true}).click();
  await expect(auto).toBeDisabled();await page.keyboard.press('t');
  await expect(auto).toHaveAttribute('aria-checked','false');
 });
@@ -143,7 +142,7 @@ test('智能混控默认关闭，支持U和输入设置，重飞记忆',async({p
  await enterFlight(page);
  const mixing=page.getByRole('switch',{name:'智能混控（U）',exact:true});
  await expect(mixing).toBeVisible();await expect(mixing).toHaveAttribute('aria-checked','false');
- await page.keyboard.press('u');await expect(mixing).toHaveAttribute('aria-checked','true');
+ await page.keyboard.down('u');await expect(mixing).toHaveAttribute('aria-checked','true');await page.keyboard.up('u');
  expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
  await mixing.click();await expect(mixing).toHaveAttribute('aria-checked','false');
  await page.getByRole('button',{name:'输入设置',exact:true}).click();
@@ -152,11 +151,13 @@ test('智能混控默认关闭，支持U和输入设置，重飞记忆',async({p
  await expect(row.locator('[data-code="KeyU"]')).toBeVisible();
  await row.getByRole('button',{name:'添加绑定：智能混控',exact:true}).click();
  await page.keyboard.press('b');await settings.getByRole('banner').getByRole('button',{name:'保存',exact:true}).click();
- await page.keyboard.press('b');await expect(mixing).toHaveAttribute('aria-checked','true');
+ await page.keyboard.down('b');await expect(mixing).toHaveAttribute('aria-checked','true');await page.keyboard.up('b');
  await page.getByRole('button',{name:'开始试飞',exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>window.glider.telemetry?.smartMixing)).toBe(true);
  await page.getByRole('button',{name:'暂停',exact:true}).click();
- await page.keyboard.press('r');await expect(mixing).toHaveAttribute('aria-checked','true');
+ await page.keyboard.down('r');
+ await expect(page.getByRole('button',{name:'开始试飞',exact:true})).toBeVisible();
+ await page.keyboard.up('r');await expect(mixing).toHaveAttribute('aria-checked','true');
  expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
 });
 
@@ -179,7 +180,7 @@ test('回放智能混控只读且跟随记录和跳转',async({page})=>{
  await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'max');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
  await expect(mixing).toHaveAttribute('aria-checked','true');
- await page.keyboard.press('u');await expect(mixing).toHaveAttribute('aria-checked','true');
+ await page.keyboard.down('u');await expect(mixing).toHaveAttribute('aria-checked','true');await page.keyboard.up('u');
  expect(await page.evaluate(()=>window.glider.flightControls.smartMixing)).toBe(true);
  await clickRangeEdge(page.getByRole('slider',{name:'回放进度',exact:true}), 'min');
  await expect(timeline).toHaveAttribute('aria-busy','false',{timeout:60000});
