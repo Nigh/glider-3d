@@ -12,8 +12,8 @@ export interface SavedAircraft {
 }
 
 const AIRCRAFT_PREFIX = 'lakewind.aircraft.';
-// 放宽局部动压控制后轨迹改变，旧物理版本成绩/回放不再混用。
-export const PHYSICS_VERSION = 'surface-pressure-v26';
+// 控制面扫掠裁剪与闭合支撑改变气动、接触及惯量，旧版本成绩/回放不再混用。
+export const PHYSICS_VERSION = 'wing-cross-axis-v35';
 const BEST_PREFIX = `lakewind.best.${PHYSICS_VERSION}.`;
 
 function systemAircraft(): SavedAircraft[] {

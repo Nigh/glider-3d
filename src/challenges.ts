@@ -25,11 +25,21 @@ export function challengeCenter(challenge: ChallengeMode, x: number): number {
     : challenge === 'low-altitude' ? 55 * Math.sin(bend / 160) + 35 * Math.sin(bend / 330) + 18 * Math.sin(bend / 75) * Math.min(1, Math.max(0, x - 500) / 500) : 0;
 }
 
+const riverGridSize = (challengeTerrainGrid.maxX - challengeTerrainGrid.minX) / challengeTerrainGrid.step + 1;
+const riverGridCenters = new Float64Array(riverGridSize), riverGridHeights = new Float64Array(riverGridSize);
+for (let index = 0; index < riverGridSize; index++) {
+  const x = challengeTerrainGrid.minX + index * challengeTerrainGrid.step;
+  riverGridCenters[index] = challengeCenter('low-altitude', x);
+  riverGridHeights[index] = riverHeightVertex(x);
+}
+
 export function challengeRiverCenter(x: number): number {
   const x0 = Math.floor(x / challengeTerrainGrid.step) * challengeTerrainGrid.step;
   const fraction = (x - x0) / challengeTerrainGrid.step;
-  return 55 + challengeCenter('low-altitude', x0) * (1 - fraction)
-    + challengeCenter('low-altitude', x0 + challengeTerrainGrid.step) * fraction;
+  const index = (x0 - challengeTerrainGrid.minX) / challengeTerrainGrid.step;
+  const start = riverGridCenters[index] ?? challengeCenter('low-altitude', x0);
+  const end = riverGridCenters[index + 1] ?? challengeCenter('low-altitude', x0 + challengeTerrainGrid.step);
+  return 55 + start * (1 - fraction) + end * fraction;
 }
 function riverHeightVertex(x: number): number {
   const forward = Math.max(0, x);
@@ -38,7 +48,10 @@ function riverHeightVertex(x: number): number {
 export function challengeRiverHeight(x: number): number {
   const x0 = Math.floor(x / challengeTerrainGrid.step) * challengeTerrainGrid.step;
   const fraction = (x - x0) / challengeTerrainGrid.step;
-  return riverHeightVertex(x0) * (1 - fraction) + riverHeightVertex(x0 + challengeTerrainGrid.step) * fraction;
+  const index = (x0 - challengeTerrainGrid.minX) / challengeTerrainGrid.step;
+  const start = riverGridHeights[index] ?? riverHeightVertex(x0);
+  const end = riverGridHeights[index + 1] ?? riverHeightVertex(x0 + challengeTerrainGrid.step);
+  return start * (1 - fraction) + end * fraction;
 }
 
 export interface ChallengeLaunch {
@@ -71,8 +84,8 @@ export function lowAltitudeRailSample(x: number, out: LowAltitudeRailSample): Lo
 }
 
 function terrainVertex(challenge: ChallengeMode, x: number, z: number): number {
-  const offset = z - challengeCenter(challenge, x);
   if (challenge === 'downhill') {
+    const offset = z - challengeCenter(challenge, x);
     // 山脊在弹射台后方抬升；前方谷底快速下降，两侧山峰形成曲折谷道。
     const progress = Math.max(0, x) / 5400;
     const drop = 720 * Math.max(0, Math.min(1, (x - 2400) / 350));
@@ -212,7 +225,7 @@ export function downhillRouteCenter(x: number): number {
   return challengeCenter('downhill',x);
 }
 
-export const downhillRuins: readonly ChallengeRuin[] = downhillRuinPassages.flatMap(({x,offset:gap}, row) => {
+const downhillRuinRows = downhillRuinPassages.map(({x,offset:gap}, row) => {
   const center = challengeCenter('downhill', x);
   const blocks: ChallengeRuin[] = [];
   // Fixed noise keeps retries, replays and collision geometry identical.
@@ -235,28 +248,55 @@ export const downhillRuins: readonly ChallengeRuin[] = downhillRuinPassages.flat
   return blocks;
 });
 
-export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:number;z:number}, b = a): boolean {
-  if (challenge !== 'downhill' || Math.max(a.x,b.x) < DOWNHILL_PLAIN_START) return false;
-  for (const ruin of downhillRuins) {
-    if (Math.max(a.x,b.x) < ruin.x - ruin.radiusX || Math.min(a.x,b.x) > ruin.x + ruin.radiusX) continue;
+export const downhillRuins: readonly ChallengeRuin[] = downhillRuinRows.flat();
+
+// Keep the broad phase separate from the map geometry serialized in replays.
+export const downhillRuinCollisionRows = downhillRuinRows.map(row => {
+  const boxes = row.map(ruin => {
     const cy = Math.cos(ruin.yaw), sy = Math.sin(ruin.yaw), ct = Math.cos(ruin.tilt), st = Math.sin(ruin.tilt);
-    const ax = a.x - ruin.x, ay = a.y - ruin.y, az = a.z - ruin.z;
-    const bx = b.x - ruin.x, by = b.y - ruin.y, bz = b.z - ruin.z;
-    const ar = sy * ax + cy * az, br = sy * bx + cy * bz;
-    let entry = 0, exit = 1;
-    for (let axis = 0; axis < 3; axis++) {
-      const start = axis === 0 ? cy * ax - sy * az : axis === 1 ? ct * ay + st * ar : -st * ay + ct * ar;
-      const end = axis === 0 ? cy * bx - sy * bz : axis === 1 ? ct * by + st * br : -st * by + ct * br;
-      const half = (axis === 0 ? ruin.width : axis === 1 ? ruin.height : ruin.length) / 2;
-      const delta = end - start;
-      if (Math.abs(delta) < 1e-12) {
-        if (Math.abs(start) > half) { entry = Infinity; break; }
-      } else {
-        const first = (-half - start) / delta, last = (half - start) / delta;
-        entry = Math.max(entry, Math.min(first,last)); exit = Math.min(exit, Math.max(first,last));
+    const hx = ruin.width / 2, hy = ruin.height / 2, hz = ruin.length / 2;
+    const ry = Math.abs(ct) * hy + Math.abs(st) * hz;
+    const rz = Math.abs(sy) * hx + Math.abs(cy) * (Math.abs(st) * hy + Math.abs(ct) * hz);
+    const margin = 1e-9;
+    return { ruin, cy, sy, ct, st, hx, hy, hz,
+      minX: ruin.x - ruin.radiusX - margin, maxX: ruin.x + ruin.radiusX + margin,
+      minY: ruin.y - ry - margin, maxY: ruin.y + ry + margin,
+      minZ: ruin.z - rz - margin, maxZ: ruin.z + rz + margin };
+  });
+  return { boxes, minX: Math.min(...boxes.map(box => box.minX)), maxX: Math.max(...boxes.map(box => box.maxX)) };
+});
+
+export function hitsChallengeRuin(challenge: ChallengeMode, a: {x:number;y:number;z:number}, b = a): boolean {
+  if (challenge !== 'downhill') return false;
+  const maxX = Math.max(a.x, b.x);
+  if (maxX < DOWNHILL_PLAIN_START) return false;
+  const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+  const minZ = Math.min(a.z, b.z), maxZ = Math.max(a.z, b.z);
+  for (const row of downhillRuinCollisionRows) {
+    if (maxX < row.minX || minX > row.maxX) continue;
+    for (const box of row.boxes) {
+      if (maxX < box.minX || minX > box.maxX || maxY < box.minY || minY > box.maxY
+        || maxZ < box.minZ || minZ > box.maxZ) continue;
+      const { ruin, cy, sy, ct, st, hx, hy, hz } = box;
+      if (maxX < ruin.x - ruin.radiusX || minX > ruin.x + ruin.radiusX) continue;
+      const ax = a.x - ruin.x, ay = a.y - ruin.y, az = a.z - ruin.z;
+      const bx = b.x - ruin.x, by = b.y - ruin.y, bz = b.z - ruin.z;
+      const ar = sy * ax + cy * az, br = sy * bx + cy * bz;
+      let entry = 0, exit = 1;
+      for (let axis = 0; axis < 3; axis++) {
+        const start = axis === 0 ? cy * ax - sy * az : axis === 1 ? ct * ay + st * ar : -st * ay + ct * ar;
+        const end = axis === 0 ? cy * bx - sy * bz : axis === 1 ? ct * by + st * br : -st * by + ct * br;
+        const half = axis === 0 ? hx : axis === 1 ? hy : hz;
+        const delta = end - start;
+        if (Math.abs(delta) < 1e-12) {
+          if (Math.abs(start) > half) { entry = Infinity; break; }
+        } else {
+          const first = (-half - start) / delta, last = (half - start) / delta;
+          entry = Math.max(entry, Math.min(first,last)); exit = Math.min(exit, Math.max(first,last));
+        }
       }
+      if (entry <= exit) return true;
     }
-    if (entry <= exit) return true;
   }
   return false;
 }

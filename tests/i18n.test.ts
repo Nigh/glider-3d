@@ -49,14 +49,8 @@ describe('shared translations', () => {
    }
   }
  });
- it('distinguishes the auxiliary wing from aileron trim for issue #55', () => {
-  expect(t('副翼', {}, 'en')).toBe('Auxiliary wing');
-  expect(t('副翼', {}, 'ja')).toBe('補助翼');
-  expect(t('副翼配平', {}, 'en')).toBe('Roll trim');
-  expect(t('副翼配平', {}, 'ja')).toBe('ロールトリム');
- });
  it('translates wind tunnel axes, pilot motion and live incidence labels', () => {
-  const labels = ['滚转控制', '俯仰控制', '主翼安装角', '副翼安装角'];
+  const labels = ['滚转控制', '俯仰控制', '主翼安装角', '水平辅助翼安装角'];
   for (const source of labels) for (const suffix of ['', '数值', '实际值']) {
    expect(t(source + suffix, {}, 'en')).not.toBe(source + suffix);
    expect(t(source + suffix, {}, 'ja')).not.toBe(source + suffix);

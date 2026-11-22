@@ -31,9 +31,12 @@ export function analyzeCruiseReference(definition: AircraftDefinition): CruiseAn
   const weight = simulation.mass * GRAVITY, momentScale = weight * planform(d.mainWing).chord;
   const engine = engineCatalog[d.engine.type], candidates: Omit<CruiseReference, 'validation'>[] = [];
   const probe = new Float64Array(4);
+  let lastSpeed = NaN, lastPitch = NaN, lastElevator = NaN;
   // Thrust has no propwash term. Solve its horizontal balance directly, retaining
   // vertical thrust, mount moment, and the same aeroelastic force evaluation.
   const balance = (speed: number, pitch: number, elevator: number) => {
+    // The accepted line-search probe is also the next iteration's starting point.
+    if (speed === lastSpeed && pitch === lastPitch && elevator === lastElevator) return;
     const unit = d.engine.count * engine.maxThrust * engineThrustFactor(0, speed * Math.cos(pitch), engine.exhaustVelocity) * Math.cos(pitch);
     let squaredThrottle = 0;
     let t = simulation.sampleSteadyFlight(speed, pitch, elevator, 0);
@@ -45,6 +48,7 @@ export function analyzeCruiseReference(definition: AircraftDefinition): CruiseAn
     probe[1] = t.torque.z / momentScale;
     probe[2] = Math.sqrt(squaredThrottle);
     probe[3] = t.force.x / weight;
+    lastSpeed = speed; lastPitch = pitch; lastElevator = elevator;
   };
   let previousPitch = 3 * DEG, previousElevator = 0;
   for (let speed = result.searched.minimumSpeed; speed <= result.searched.maximumSpeed; speed++) {

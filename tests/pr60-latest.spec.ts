@@ -47,7 +47,7 @@ test('结构面板可反复展开且实时刷新不折叠，结构图层切换�
  await expect(panel).not.toHaveAttribute('open','');
  await summary.click();
  await expect(panel).toHaveAttribute('open','');
- for(const name of ['主翼','副翼','垂直尾翼']) await expect(page.getByRole('meter',{name:`${name}结构极限利用率`,exact:true})).toBeVisible();
+ for(const name of ['主翼','水平辅助翼','垂直辅助翼']) await expect(page.getByRole('meter',{name:`${name}结构极限利用率`,exact:true})).toBeVisible();
  await expect(page.locator('.flight-hud .advanced-hud')).toHaveCount(0);
  await expect(page.locator('.flight-status')).toHaveCount(0);
  await expect(panel.locator('.wing-structure')).toHaveCount(3);
@@ -117,9 +117,9 @@ test('动力操纵台横向合并，油量相对起飞满油显示，双发偏�
  const offset=page.getByRole('spinbutton',{name:'引擎横向偏移精确值',exact:true});
  const initial=await offset.inputValue();
  await offset.fill('2');await offset.press('Tab');
- await expect(offset).toHaveValue('2');
+ await expect(offset).toHaveValue('2.00');
  await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(offset).toHaveValue(initial);
- await page.getByRole('button',{name:'重做',exact:true}).click();await expect(offset).toHaveValue('2');
+ await page.getByRole('button',{name:'重做',exact:true}).click();await expect(offset).toHaveValue('2.00');
  const tinyTank=await page.evaluate(()=>{
   // The development API returns an independent aircraft snapshot.
   const app=window as unknown as {glider:{aircraft:AircraftDefinition}};

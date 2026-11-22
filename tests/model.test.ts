@@ -5,6 +5,8 @@ import { beamSection, defaultStructures, materialCatalog, type MaterialId } from
 import { derive, FlightSimulation } from '../src/physics';
 import { engineCatalog } from '../src/engines';
 import { exportAircraft, importAircraft, History } from '../src/storage';
+import { aircraftWings, controlSurfaceRegions, finPairMinimumOffset, finThickness, fuselageBeamRadius, hasMirroredFin, WING_CONTROL_LIMIT, wingControlAxis, wingControlHinge, wingInstancePoint, wingSupports } from '../src/model';
+import { WingStructure } from '../src/structure';
 describe('参数化几何与信任边界',()=>{
  it('矩形和梯形面积、展弦比、平均气动弦与左右对称一致',()=>{const p=planform(wing(10,2,1));expect(p.area).toBeCloseTo(15);expect(p.span).toBe(10);expect(p.aspect).toBeCloseTo(100/15);expect(p.chord).toBeCloseTo(14/9);expect(planform(wing(10,2,1),false).area).toBeCloseTo(7.5);});
  it('后掠不凭空改变面积，展弦比随翼展变化',()=>{expect(planform(wing(10,2,1,2)).area).toBeCloseTo(planform(wing(10,2,1,0)).area);expect(planform(wing(12,2,1)).aspect).toBeGreaterThan(planform(wing(10,2,1)).aspect);});
@@ -87,8 +89,23 @@ describe('参数化几何与信任边界',()=>{
    const simulation=new FlightSimulation(changed,'birdman',0);
    expect(simulation.aircraft.mass).toBeCloseTo(base.aircraft.mass,12);
    expect(simulation.aircraft.wingArea).toBe(base.aircraft.wingArea);
+   // Clearance changes strip boundaries. Compare identical physical spans,
+   // not section IDs from two different partitions.
+   const reference=new WingStructure(d,simulation.surfaces.map(surface=>{
+    const w=d[surface.kind==='main'?'mainWing':surface.kind==='tail'?'horizontalTail':'verticalTail'];
+    const p=planform(w,surface.kind!=='vertical'),half=Math.abs(w.points[1].y),width=surface.spanEnd-surface.spanStart;
+    const root=p.root+(p.tip-p.root)*surface.spanStart/half,tip=p.root+(p.tip-p.root)*surface.spanEnd/half;
+    const span=surface.spanStart+width*(root+2*tip)/(3*(root+tip));
+    const original=base.structure.sections.find(candidate=>candidate.wingInstance===surface.wingInstance&&candidate.side===surface.side)!;
+    return {...original.surface,spanStart:surface.spanStart,spanEnd:surface.spanEnd,area:width*(root+tip)/2,
+     chord:2/3*(root*root+root*tip+tip*tip)/(root+tip),
+     normal:original.referenceNormal,spanDirection:original.referenceSpan,
+     chordDirection:original.referenceChord,crossflowDirection:original.referenceCrossflow,
+     point:wingInstancePoint(d,surface.wingInstance,surface.side,span,0.25,0,new Vector3())};
+   }));
    for(const section of simulation.structure.sections){
-    const original=base.structure.sections[section.id];
+    const original=reference.sections.find(candidate=>candidate.wingInstance===section.wingInstance&&candidate.side===section.side
+     &&candidate.spanStart===section.spanStart&&candidate.spanEnd===section.spanEnd)!;
     const incidence=section.wingKey==='mainWing'?d.assembly.mainIncidence:d.assembly.tailIncidence;
     const rotation=section.wingKey==='verticalTail'?new Quaternion():new Quaternion().setFromAxisAngle(new Vector3(Math.cos(incidence*DEG),Math.sin(incidence*DEG),0),-section.side*angle*DEG);
     const origin=wingOrigin(d,section.wingKey),pivot=new Vector3(origin.x,origin.y,0);
@@ -185,20 +202,20 @@ describe('参数化几何与信任边界',()=>{
   for(const value of [0,0.201,NaN,Infinity]){const invalid=clone(d);invalid.controls.lateralTravel=value;expect(()=>validateAircraft(invalid)).toThrow();}
   for(const value of [0.01,0.2]){const valid=clone(d);valid.controls.lateralTravel=value;expect(validateAircraft(valid).controls.lateralTravel).toBe(value);}
  });
- it('单双发默认贴机身且自动支撑共用尺寸，油箱体积对应升容量',()=>{
+ it('双发默认相切且自动支撑共用尺寸，油箱体积对应升容量',()=>{
   const d=clone(defaultAircraft);d.birdman=false;d.engine={type:'jet-01',count:2,x:-0.5,y:0};
   const mounts=engineMounts(validateAircraft(d)),offset=engineLateralOffset(d);
-  expect(offset).toBeCloseTo(0.63);expect(mounts.map(m=>m.z)).toEqual([-offset,offset]);expect(mounts.map(m=>m.y)).toEqual([0,0]);
-  for(const mount of mounts){expect(mount.supportLength).toBeGreaterThan(0);expect(mount.supportMass).toBeGreaterThan(0);}
+  expect(offset).toBe(engineCatalog[d.engine.type].radius);expect(mounts.map(m=>m.z)).toEqual([-offset,offset]);expect(mounts.map(m=>m.y)).toEqual([0,0]);
+  for(const mount of mounts){expect(mount.supportLength).toBe(0);expect(mount.supportMass).toBe(0);}
   d.engine.count=1;d.engine.x=-2;d.engine.y=-0.5;expect(engineMounts(validateAircraft(d))[0]).toMatchObject({z:0,y:-0.5});
   const shape=fuelTankDimensions(12);expect(4*Math.PI*shape.radius**3).toBeCloseTo(0.012,12);expect(shape.length).toBe(6*shape.radius);
  });
- it('双发横向偏移由机身净空和主翼水平翼展限制，缩翼及上反角变化自动夹紧',()=>{
+ it('双发横向偏移从引擎相切到主翼水平翼展，缩翼及上反角变化自动夹紧',()=>{
   const d=clone(presets.find(plane=>plane.engine.count===2)!);
   d.mainWing.points[1].y=d.mainWing.points[2].y=3;
   d.mainWing.dihedral=0;
   const radius=engineCatalog[d.engine.type].radius,limits=engineLateralOffsetLimits(d);
-  expect(limits.min-radius).toBeCloseTo(BODY_GEOMETRY.shell.zRadius+0.03);
+  expect(limits.min).toBe(radius);
   expect(limits.max+radius).toBeCloseTo(3);
   for(const value of [0,limits.min,1.5,12]){
    d.engine.lateralOffset=value;
@@ -218,9 +235,9 @@ describe('参数化几何与信任边界',()=>{
   const narrow=engineLateralOffsetLimits(d);
   expect(narrow.max).toBe(narrow.min);expect(d.engine.lateralOffset).toBe(narrow.min);
   expect(()=>validateAircraft(d)).not.toThrow();
-  expect(engineMounts(d)[1].z-radius).toBeCloseTo(BODY_GEOMETRY.shell.zRadius+0.03);
+  expect(engineMounts(d)[1].z-radius).toBeCloseTo(0);
  });
- it('横向偏移保留导出导入和撤销重做，旧设计默认贴机身且不复活旧侧距',()=>{
+ it('横向偏移保留导出导入和撤销重做，旧设计默认相切且不复活旧侧距',()=>{
   const legacy:any=clone(presets.find(plane=>plane.engine.count===2)!);
   delete legacy.engine.lateralOffset;legacy.engine.z=3;
   const migrated=validateAircraft(legacy),minimum=engineLateralOffsetLimits(migrated).min;
@@ -415,5 +432,331 @@ describe('材料目录与独立梁截面',()=>{
   const input:any=clone(defaultAircraft);input.fragments=[{id:1}];input.structure={fractureCount:4};input.mainWing.deformation=[1];input.mainWing.structure.runtime=1;
   const checked:any=validateAircraft(input);
   expect(checked).toEqual(defaultAircraft);expect(input.fragments).toHaveLength(1);expect(input.mainWing.deformation).toEqual([1]);
+ });
+});
+
+describe('多辅助翼与镜像垂翼边界',()=>{
+ it('旧存档保持首翼字段，多实例及镜像参数完整导入导出',()=>{
+  const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+  d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0};
+  d.auxiliaryWings=[
+   {kind:'horizontalTail',wing:clone(d.horizontalTail),position:0.7,incidence:-4},
+   {kind:'verticalTail',wing:{...clone(d.verticalTail),cant:0,lateralOffset:1},position:-1,incidence:2},
+   {kind:'horizontalTail',wing:clone(d.horizontalTail),position:-0.8,incidence:5},
+   {kind:'verticalTail',wing:{...clone(d.verticalTail),cant:45,lateralOffset:0.01},position:-1.5,incidence:0},
+  ];
+  const checked=validateAircraft(d),restored=importAircraft(exportAircraft(d));
+  expect(restored).toEqual(checked);
+  expect(restored.auxiliaryWings).toHaveLength(4);
+  expect(aircraftWings(restored).map(instance=>instance.id)).toEqual([0,1,2,3,4,5,6]);
+  expect(validateAircraft(defaultAircraft)).toEqual(defaultAircraft);
+  expect(defaultAircraft.auxiliaryWings).toBeUndefined();
+ });
+ it('45度及1米边界有效，越界、非有限值和错误字段被拒绝',()=>{
+  for(const cant of [-45,0,45]){
+   const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+   d.verticalTail={...wing(0.6,0.5,0.3),mirrored:true,cant,lateralOffset:1};
+   expect(validateAircraft(d).verticalTail.cant).toBe(cant);
+  }
+  for(const [field,values] of [['cant',[-45.001,45.001,NaN,Infinity]],['lateralOffset',[-0.001,1.001,NaN,Infinity]],['mirrored',[1,'true',null]]] as const)for(const value of values){
+   const d:any=clone(defaultAircraft);d.verticalTail[field]=value;
+   expect(()=>validateAircraft(d)).toThrow();
+  }
+  for(const malformed of [null,{},[null],[{kind:'mainWing'}],[{kind:'verticalTail',position:0,incidence:Infinity}]]){
+   const d:any=clone(defaultAircraft);d.auxiliaryWings=malformed;
+   expect(()=>validateAircraft(d)).toThrow();
+  }
+ });
+ it('有限厚度平行翼和向下内倾翼必须留足间距',()=>{
+  for(const height of [0.5,-0.5])for(const cant of [0,-45]){
+   const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+   d.verticalTail={...wing(1,0.8,0.6),mirrored:true,cant,lateralOffset:1};
+   d.verticalTail.points[1].y=d.verticalTail.points[2].y=height;
+   const minimum=finPairMinimumOffset(d.verticalTail);
+   expect(minimum).toBeGreaterThan(0);
+   d.verticalTail.lateralOffset=minimum-1e-5;
+   expect(()=>validateAircraft(d)).toThrow('镜像垂直辅助翼不得相交');
+   d.verticalTail.lateralOffset=minimum;
+   expect(()=>validateAircraft(d)).not.toThrow();
+  }
+ });
+ it('V翼根斜接及微小偏移不产生跨过对称面的实体顶点',()=>{
+  for(const height of [0.5,-0.5])for(const offset of [0,0.01]){
+   const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+   d.verticalTail={...wing(1,1.5,0.6),mirrored:true,cant:30,lateralOffset:offset};
+   d.verticalTail.points[1].y=d.verticalTail.points[2].y=height;
+   expect(finPairMinimumOffset(d.verticalTail)).toBe(0);
+   expect(()=>validateAircraft(d)).not.toThrow();
+   for(const span of [0,0.01,0.25,0.5])for(const u of [0,0.1,0.3,0.7,1])for(const face of [-1,1]){
+    const chord=1.5+(0.6-1.5)*span/0.5,normal=face*finThickness(u)*chord;
+    const left=wingInstancePoint(d,2,-1,span,u,normal,new Vector3()),right=wingInstancePoint(d,2,1,span,u,normal,new Vector3());
+    expect(right.z).toBeGreaterThanOrEqual(0);expect(left.z).toBeLessThanOrEqual(0);
+    expect(left.x).toBe(right.x);expect(left.y).toBe(right.y);expect(left.z).toBe(-right.z);
+   }
+  }
+ });
+ it('任意镜像垂翼禁止顶置水平翼，关闭镜像恢复单片居中直立',()=>{
+  const d=clone(defaultAircraft);d.assembly.tailOnFin=true;
+  d.auxiliaryWings=[{kind:'verticalTail',wing:{...wing(1,0.5,0.3),mirrored:true,cant:30,lateralOffset:0},position:-1,incidence:0}];
+  expect(hasMirroredFin(d)).toBe(true);
+  expect(()=>validateAircraft(d)).toThrow('镜像垂直辅助翼不能顶置水平辅助翼');
+  d.auxiliaryWings=[];d.verticalTail={...d.verticalTail,mirrored:true,cant:30,lateralOffset:0};
+  expect(()=>validateAircraft(d)).toThrow('镜像垂直辅助翼不能顶置水平辅助翼');
+  d.verticalTail.mirrored=false;d.verticalTail.lateralOffset=1;
+  expect(()=>validateAircraft(d)).not.toThrow();
+  d.assembly.tailOnFin=false;
+  const checked=validateAircraft(d),point=wingInstancePoint(checked,2,1,0.2,0.25,0,new Vector3());
+  expect(hasMirroredFin(checked)).toBe(false);expect(point.z).toBe(0);expect(point.y).toBeCloseTo(0.2);
+  expect(wingSupports(checked)).toHaveLength(0);
+ });
+ it('所有水平翼的上下根截面在对称面斜接，平均面与翼梁位置不变',()=>{
+  const d=clone(defaultAircraft);
+  d.auxiliaryWings=[{kind:'horizontalTail',wing:wing(4,1,0.6),position:0,incidence:9}];
+  for(const id of [0,1,3])for(const dihedral of [-25,25]){
+   const w=aircraftWings(d).find(instance=>instance.id===id)!.wing;w.dihedral=dihedral;
+   for(const u of [0,0.15,0.5,0.85,1])for(const normal of [-0.08,0,0.12]){
+    const left=wingInstancePoint(d,id,-1,0,u,normal,new Vector3()),right=wingInstancePoint(d,id,1,0,u,normal,new Vector3());
+    expect(left.distanceTo(right)).toBeLessThan(1e-12);expect(left.z).toBeCloseTo(0,12);
+   }
+  }
+ });
+ it('垂翼支撑为封闭渐薄实体，机身端真实梁径且外端嵌入垂翼根',()=>{
+  const d=clone(defaultAircraft);d.assembly.tailOnFin=false;
+  d.verticalTail={...wing(2,0.8,0.5),mirrored:true,cant:30,lateralOffset:0.7};
+  const peak=Math.max(...Array.from({length:17},(_,j)=>finThickness((1-Math.cos(j/16*Math.PI))/2)));
+  for(const support of wingSupports(d)){
+   expect(support.points).toHaveLength(13*32);expect(support.vertexWeights).toHaveLength(support.points.length);
+   expect(support.mass).toBeGreaterThan(0);expect(Object.values(support.inertia).every(Number.isFinite)).toBe(true);
+   expect(support.inertia.ix).toBeGreaterThan(0);expect(support.inertia.iy).toBeGreaterThan(0);expect(support.inertia.iz).toBeGreaterThan(0);
+   const edges=new Map<string,number>();
+   for(let i=0;i<support.indices.length;i+=3)for(let j=0;j<3;j++){
+    const a=support.indices[i+j],b=support.indices[i+(j+1)%3],key=[Math.min(a,b),Math.max(a,b)].join(':');
+    edges.set(key,(edges.get(key)??0)+1);
+   }
+   expect([...edges.values()].every(count=>count===2)).toBe(true);
+   for(let k=1;k<16;k++){
+    const u=(1-Math.cos(k/16*Math.PI))/2,root=support.points[k];
+    expect(root.y).toBeCloseTo(finThickness(u)/peak*fuselageBeamRadius(d,root.x),12);expect(root.z).toBe(0);
+    let previous=Infinity;
+    for(let ring=0;ring<=12;ring++){
+     const a=support.points[ring*32+k],b=support.points[ring*32+32-k],width=Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+     expect(width).toBeLessThanOrEqual(previous+1e-12);previous=width;
+    }
+    expect(previous).toBeLessThanOrEqual(0.06+1e-12);
+    const normal=-Math.min(finThickness(u)*0.8,finThickness(u)/peak*0.03,root.y);
+    const end=wingInstancePoint(d,2,support.side,0,u,normal,new Vector3()),actual=support.points[12*32+k];
+    expect(new Vector3(actual.x,actual.y,actual.z).distanceTo(end)).toBeLessThan(1e-12);
+   }
+  }
+  const embedded=clone(d);embedded.verticalTail.lateralOffset=0.01;
+  expect(wingSupports(embedded)).toHaveLength(0);
+ });
+ it('净空细分只拆遮蔽边界，原0.8m结构格保留且短水平尾翼仍可操纵',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(8,1,1),dihedral:0,controlSurface:0.3};
+  d.assembly.mainWing=1.8;d.assembly.mainWingHeight=1;d.assembly.mainIncidence=0;
+  d.assembly.horizontalTail=d.assembly.verticalTail=-2.5;
+  const regions=controlSurfaceRegions(d);
+  for(const side of [-1,1]){
+   const main=regions.filter(region=>region.wingInstance===0&&region.side===side);
+   expect(main[0]).toEqual({wingInstance:0,side,spanStart:0,spanEnd:0.04,movable:false});
+   expect(main[1]).toEqual({wingInstance:0,side,spanStart:0.04,spanEnd:0.8,movable:true});
+   expect(main.slice(2).every(region=>region.movable&&region.spanEnd-region.spanStart<=0.8+1e-10)).toBe(true);
+   expect(main.some(region=>Math.abs(region.spanStart-1.6)<1e-10)).toBe(true);
+  }
+  for(const preset of presets.filter(preset=>!preset.birdman)){
+   const tail=controlSurfaceRegions(preset).filter(region=>region.wingInstance===1);
+   expect(tail.some(region=>!region.movable)).toBe(true);
+   expect(tail.some(region=>region.movable)).toBe(true);
+  }
+ });
+ it('真实座舱椭球及尾部锥梁只裁掉风险小格，不扩展到整个初始格',()=>{
+  for(const preset of presets.filter(preset=>preset.engine.count>0)){
+   const regions=controlSurfaceRegions(preset);
+   for(const side of [-1,1]){
+    const main=regions.filter(region=>region.wingInstance===0&&region.side===side);
+    const tail=regions.filter(region=>region.wingInstance===1&&region.side===side);
+    expect(main[0].movable).toBe(false);expect(main[0].spanEnd).toBeLessThan(0.6);
+    expect(tail[0].movable).toBe(false);expect(tail[0].spanEnd).toBeLessThan(0.2);
+    expect(tail[0].spanEnd).toBeGreaterThanOrEqual(0.02);
+    expect(main[1].movable).toBe(true);expect(tail[1].movable).toBe(true);
+    expect(main.some(region=>Math.abs(region.spanEnd-0.8)<1e-10)).toBe(true);
+    expect(tail.some(region=>Math.abs(region.spanEnd-0.8)<1e-10)).toBe(true);
+   }
+  }
+ });
+ it('中央固定带保持连接，支撑只关闭相交段，外侧操纵仍有效',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(8,1,1),controlSurface:0.3};d.assembly.mainWing=1;d.assembly.mainIncidence=0;d.assembly.mainWingHeight=0;
+  d.horizontalTail={...wing(6,1,1),controlSurface:0.3};d.assembly.horizontalTail=-2;d.assembly.tailIncidence=0;
+  d.verticalTail={...wing(2,0.8,0.5),mirrored:true,cant:0,lateralOffset:1,controlSurface:0.3};d.assembly.verticalTail=-2;
+  const regions=controlSurfaceRegions(d);
+  expect(regions.filter(region=>region.wingInstance<2&&region.spanStart===0).every(region=>!region.movable)).toBe(true);
+  for(const side of [-1,1]){
+   expect(regions.find(region=>region.wingInstance===1&&region.side===side&&region.spanStart<1&&region.spanEnd>1)?.movable).toBe(false);
+   expect(regions.some(region=>region.wingInstance===1&&region.side===side&&region.spanStart>=1.6&&region.movable)).toBe(true);
+   expect(regions.some(region=>region.wingInstance===0&&region.side===side&&region.spanStart>=0.8&&region.movable)).toBe(true);
+  }
+ });
+ it('镜像垂翼附近只固定实际翼型范围内的控制面',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3};d.assembly.mainWing=0;d.assembly.mainWingHeight=0.7;d.assembly.mainIncidence=0;
+  d.horizontalTail={...wing(1,0.5,0.5),controlSurface:0};d.assembly.horizontalTail=-3;
+  d.verticalTail={...wing(3,0.8,0.4),mirrored:true,cant:0,lateralOffset:1,controlSurface:0.3};d.assembly.verticalTail=-1;
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.94)?.movable).toBe(true);
+   expect(at(1)?.movable).toBe(false);
+   expect(at(1.06)?.movable).toBe(true);
+  }
+ });
+ it('交叉分离轴保留斜置镜像垂翼附近的主翼舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;
+  d.mainWing={...wing(3,1.1,0.6),dihedral:-11.38,controlSurface:0.3};
+  d.horizontalTail={...wing(1,0.5,0.5),controlSurface:0};
+  d.verticalTail={...wing(2,0.8,0.35),mirrored:true,cant:-10.41,lateralOffset:0.99,controlSurface:0.55};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.694,mainIncidence:-6.07,
+   horizontalTail:-2.9,verticalTail:-1.011,tailOnFin:false});
+  const regions=controlSurfaceRegions(validateAircraft(d));
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.wingInstance===0&&region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.83)?.movable).toBe(true);
+  }
+ });
+ it('斜置主翼支撑只限制与实际支撑相交的垂翼舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0};
+  d.verticalTail={...wing(2,0.6,0.35),controlSurface:0.5};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.2,mainIncidence:-10,tailOnFin:false,horizontalTail:-2,verticalTail:-0.1,tailIncidence:0});
+  const regions=controlSurfaceRegions(validateAircraft(d)).filter(region=>region.wingInstance===2);
+  const at=(span:number)=>regions.find(region=>region.spanStart<span&&region.spanEnd>span);
+  expect(at(0.25)?.movable).toBe(false);
+  expect(at(0.31)?.movable).toBe(true);
+ });
+ it('座舱椭球与完整舵程分离时恢复主翼控制段',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;
+  d.fuselage={length:6.5,center:0};d.cockpit={position:1.73};
+  d.mainWing={...wing(9.6,1.48,0.58),points:[{x:-0.62,y:0},{x:-0.28,y:4.8},{x:0.3,y:4.8},{x:0.86,y:0}],
+   rootReference:0.425,dihedral:5.9,controlSurface:0.3};
+  Object.assign(d.assembly,{mainWing:0.94,mainWingHeight:-0.29,mainIncidence:0,horizontalTail:-2.92,verticalTail:-2.9,tailIncidence:0,tailOnFin:false});
+  const regions=controlSurfaceRegions(validateAircraft(d)).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.25)?.movable).toBe(false);
+   expect(at(0.31)?.movable).toBe(true);
+  }
+ });
+ it('机身梁包围盒角部与舵面扫掠重叠时仍保留分离的舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=true;d.engine.count=0;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.06,mainIncidence:5,horizontalTail:-3,verticalTail:-3,tailOnFin:false});
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.03)?.movable).toBe(false);
+   expect(at(0.13)?.movable).toBe(true);
+  }
+ });
+ it('双发接触圆柱排除包围盒角部，同时保留实际干涉限制',()=>{
+  const d=clone(presets.find(preset=>preset.engine.count===2)!);
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3};
+  Object.assign(d.engine,{x:-0.5,y:-0.4,lateralOffset:0.8});
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:-0.48,mainIncidence:10,horizontalTail:-3,verticalTail:-3,tailOnFin:false});
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.63)?.movable).toBe(true);
+   expect(at(0.75)?.movable).toBe(false);
+   expect(at(0.97)?.movable).toBe(true);
+  }
+ });
+ it('镜像垂翼支撑的包围盒重叠时，实体分离的控制段仍可动',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3,dihedral:5};
+  Object.assign(d.assembly,{mainWing:-0.5,mainWingHeight:0.12,mainIncidence:0,horizontalTail:-3,verticalTail:-1});
+  d.horizontalTail={...wing(1,0.5,0.5),controlSurface:0};
+  d.verticalTail={...wing(3,0.8,0.4),mirrored:true,cant:30,lateralOffset:1,controlSurface:0};
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.35)?.movable).toBe(true);
+   expect(at(1.15)?.movable).toBe(false);
+  }
+ });
+ it('两翼包围盒重叠但全舵程投影分离时保留根部相邻舵段',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;
+  d.mainWing={...wing(4,1,0.6),controlSurface:0.3,dihedral:7};
+  d.horizontalTail={...wing(1,0.5,0.5),controlSurface:0};
+  d.verticalTail={...wing(3,0.8,0.4),mirrored:true,cant:15,lateralOffset:0.82,controlSurface:0.3};
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0.2,mainIncidence:6,tailOnFin:false,horizontalTail:-2,verticalTail:-1.5,tailIncidence:0});
+  const regions=controlSurfaceRegions(validateAircraft(d)).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   const at=(span:number)=>regions.find(region=>region.side===side&&region.spanStart<span&&region.spanEnd>span);
+   expect(at(0.09)?.movable).toBe(false);
+   expect(at(0.11)?.movable).toBe(true);
+  }
+ });
+ it('几何重叠的两个翼面仍保留各自材料和安装分支',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.engine.count=0;d.fuelTank.capacity=0;
+  Object.assign(d.assembly,{mainWing:0,mainWingHeight:0,mainIncidence:0,tailOnFin:false,horizontalTail:-2,verticalTail:-2});
+  d.mainWing={...wing(4,1,0.6),materialId:'carbon-epoxy',controlSurface:0};
+  d.auxiliaryWings=[{kind:'horizontalTail',wing:{...d.mainWing,materialId:'spruce'},position:-0.5,incidence:0}];
+  const design=validateAircraft(d);
+  const main=wingInstancePoint(design,0,1,1,0.5,0,new Vector3());
+  const auxiliary=wingInstancePoint(design,3,1,1,0.5,0,new Vector3());
+  expect(main.distanceTo(auxiliary)).toBeLessThan(1e-9);
+  const {sections}=new FlightSimulation(design,'test-space',0).structure;
+  for(const [id,materialId] of [[0,'carbon-epoxy'],[3,'spruce']] as const){
+   const branch=sections.filter(section=>section.wingInstance===id);
+   const material=materialCatalog[materialId];
+   expect(branch.some(section=>section.parentId===null)).toBe(true);
+   expect(branch.some(section=>section.parentId!==null)).toBe(true);
+   for(const section of branch){
+    expect(section.normalStrength).toBe(Math.min(material.ultimateStrength,material.compressiveStrength));
+    if(section.parentId!==null)expect(sections[section.parentId].wingInstance).toBe(id);
+   }
+  }
+ });
+ it('两翼中立互不重叠但同时偏转相撞时，共同回退固定翼面',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(8,1,1),airfoil:'naca0012',controlSurface:0.3};
+  d.assembly.mainWing=0.5;d.assembly.mainWingHeight=0.2;d.assembly.mainIncidence=0;
+  d.assembly.horizontalTail=-2.5;d.assembly.verticalTail=-2.5;
+  d.auxiliaryWings=[{kind:'horizontalTail',wing:{...wing(8,1,1),airfoil:'naca0012',controlSurface:0},position:0,incidence:0}];
+  const neutral=controlSurfaceRegions(d).filter(region=>region.wingInstance===0&&region.spanStart>=0.8);
+  expect(neutral.every(region=>region.movable)).toBe(true);
+  d.auxiliaryWings[0].wing.controlSurface=0.3;
+  const moving=controlSurfaceRegions(d).filter(region=>(region.wingInstance===0||region.wingInstance===3)&&region.spanStart>=0.8);
+  for(const side of [-1,1]){
+   const span=1.3,limit=WING_CONTROL_LIMIT.horizontal;
+   const edge=(id:number,angle:number)=>{
+    const hinge=wingControlHinge(d,id,side,span,new Vector3());
+    return wingInstancePoint(d,id,side,span,1,0,new Vector3())
+     .sub(hinge).applyAxisAngle(wingControlAxis(d,id,side,new Vector3()),angle).add(hinge);
+   };
+   const areOpposed=(angle:number)=>{
+    const upper=edge(0,angle),lower=edge(3,-angle);
+    return Math.abs(upper.x-lower.x)<1e-9&&Math.abs(upper.z-lower.z)<1e-9&&upper.y<lower.y;
+   };
+   expect(areOpposed(limit)||areOpposed(-limit)).toBe(true);
+   for(const id of [0,3]){
+    const branch=moving.filter(region=>region.wingInstance===id&&region.side===side);
+    expect(branch.length).toBeGreaterThan(0);
+    expect(branch.every(region=>!region.movable)).toBe(true);
+   }
+  }
+ });
+ it('发动机连接支撑占用的舵面段回退固定，远离支撑的外段仍可动',()=>{
+  const d=clone(defaultAircraft);d.birdman=false;d.assembly.tailOnFin=false;
+  d.mainWing={...wing(8,1,1),controlSurface:0.3};d.assembly.mainWing=0.5;d.assembly.mainWingHeight=0;d.assembly.mainIncidence=0;
+  d.assembly.horizontalTail=-2.5;d.assembly.verticalTail=-2.5;
+  expect(controlSurfaceRegions(d).filter(region=>region.wingInstance===0&&region.spanStart>=0.8).every(region=>region.movable)).toBe(true);
+  d.engine={type:'jet-01',count:2,x:-0.35,y:0,lateralOffset:2.3};
+  const regions=controlSurfaceRegions(d).filter(region=>region.wingInstance===0);
+  for(const side of [-1,1]){
+   expect(regions.find(region=>region.side===side&&Math.abs(region.spanStart-0.8)<1e-8)?.movable).toBe(false);
+   expect(regions.find(region=>region.side===side&&Math.abs(region.spanStart-3.2)<1e-8)?.movable).toBe(true);
+  }
  });
 });

@@ -159,7 +159,7 @@ test('工坊默认自由透视，切换部件保留显式选择的相机', async
   await enterDesign(page);
   await expect.poll(() => page.evaluate(() => window.glider.scene.orthographic)).toBe(false);
   const freeView = await page.evaluate(() => window.glider.scene.view);
-  for (const tab of ['机身', '主翼', '副翼', '垂直尾翼']) {
+  for (const tab of ['机身', '主翼', '水平辅助翼', '垂直辅助翼']) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.glider.scene.view)).toBe(freeView);
     expect(await page.evaluate(() => window.glider.scene.orthographic)).toBe(false);
@@ -167,7 +167,7 @@ test('工坊默认自由透视，切换部件保留显式选择的相机', async
   await page.getByRole('button', { name: '侧视', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.glider.scene.orthographic)).toBe(true);
   const sideView = await page.evaluate(() => window.glider.scene.view);
-  for (const tab of ['机身', '主翼', '副翼', '垂直尾翼']) {
+  for (const tab of ['机身', '主翼', '水平辅助翼', '垂直辅助翼']) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.glider.scene.view)).toBe(sideView);
     expect(await page.evaluate(() => window.glider.scene.orthographic)).toBe(true);
@@ -199,7 +199,7 @@ test.describe('桌面完整交互', () => {
     await expect(page.getByRole('button', { name: '自由', exact: true })).toBeEnabled();
     await number(page, '主翼上反角精确值', 8);
     for (const [tab, key, value] of [
-      ['副翼', 'horizontalTail', 2.1], ['垂直尾翼', 'verticalTail', 2.0],
+      ['水平辅助翼', 'horizontalTail', 2.1], ['垂直辅助翼', 'verticalTail', 2.0],
     ] as const) {
       await page.getByRole('tab', { name: tab, exact: true }).click();
       await page.getByText('精确编辑四个顶点', { exact: true }).click();
@@ -220,8 +220,8 @@ test.describe('桌面完整交互', () => {
     expect((await aircraft(page)).assembly.mainWing).not.toBe(originalPosition);
     for (const [tab, label, value, key] of [
       ['主翼', '主翼纵向位置', 1.1, 'mainWing'], ['主翼', '主翼安装高度', 1.0, 'mainWingHeight'],
-      ['主翼', '主翼安装角', 5, 'mainIncidence'], ['副翼', '副翼位置', -3.1, 'horizontalTail'],
-      ['副翼', '副翼安装角', -1, 'tailIncidence'], ['垂直尾翼', '垂直尾翼位置', -3.2, 'verticalTail'],
+      ['主翼', '主翼安装角', 5, 'mainIncidence'], ['水平辅助翼', '水平辅助翼位置', -3.1, 'horizontalTail'],
+      ['水平辅助翼', '水平辅助翼安装角', -1, 'tailIncidence'], ['垂直辅助翼', '垂直辅助翼位置', -3.2, 'verticalTail'],
     ] as const) {
       await page.getByRole('tab', { name: tab, exact: true }).click();
       await number(page, label + '精确值', value);
@@ -365,7 +365,7 @@ test('编辑错误和跨飞机撤销不会悄悄改变保存数据', async ({ pa
   const root = page.getByRole('spinbutton', { name: '顶点1后向坐标', exact: true });
   await root.fill('2');
   await root.press('Tab');
-  await expect(root).toHaveValue(String(originalRoot));
+  await expect(root).toHaveValue(originalRoot.toFixed(2));
   await expect(page.getByRole('alert')).toContainText('至少 0.15 m');
   expect((await aircraft(page)).mainWing.points[0].x).toBe(originalRoot);
   const before = (await aircraft(page)).mainWing.points[1].y;
@@ -618,7 +618,7 @@ test('工坊紧凑仪表按类别排列并显示满油至空油推重比', async
   await page.getByRole('button', { name: '低空飞行', exact: false }).click();
   const metrics = page.getByRole('region', { name: '飞机性能估算', exact: true });
   await expect(metrics.locator(':scope > div > small:first-child')).toHaveText([
-    '主翼面积', '翼展 / 展弦比', '翼载荷', '自由空气最佳滑翔比', '估算失速速度', '全备质量 · 驾驶员 60 kg', '推重比',
+    '主翼面积', '翼展 / 展弦比', '翼载荷', '自由空气最佳滑翔比', '估算失速速度', '全备质量 · 驾驶员 60.00 kg', '推重比',
   ]);
   await expect(page.locator('.aero-preview')).toHaveCount(0);
   await page.getByRole('tab', { name: '动力', exact: true }).click();
@@ -647,9 +647,9 @@ test('工坊紧凑仪表按类别排列并显示满油至空油推重比', async
 
 test('拥挤翼型的外伸手柄可分别拖动且不改变弦长', async ({ page }) => {
   await enterDesign(page);
-  for (const [tab, key] of [['主翼', 'mainWing'], ['副翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+  for (const [tab, key] of [['主翼', 'mainWing'], ['水平辅助翼', 'horizontalTail'], ['垂直辅助翼', 'verticalTail']] as const) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
-    await page.getByRole('button', { name: tab === '垂直尾翼' ? '侧视' : '俯视', exact: true }).click();
+    await page.getByRole('button', { name: tab === '垂直辅助翼' ? '侧视' : '俯视', exact: true }).click();
     await page.getByText('精确编辑四个顶点', { exact: true }).click();
     await number(page, '顶点2展向坐标', 0.25);
     await number(page, '顶点3后向坐标', 0.45);
@@ -753,13 +753,13 @@ test('固定驾驶员质量，端点数值保持对端不动，安装位置受�
   expect(endsOf(changed).nose).toBeCloseTo(nose, 8);
   expect(endsOf(changed).tail).toBeCloseTo(initialEnds.tail - 0.4, 8);
   const fixedEnds = endsOf(changed);
-  for (const [tab, label] of [['副翼', '副翼位置'], ['垂直尾翼', '垂直尾翼位置'], ['机身', '驾驶舱位置']]) {
+  for (const [tab, label] of [['水平辅助翼', '水平辅助翼位置'], ['垂直辅助翼', '垂直辅助翼位置'], ['机身', '驾驶舱位置']]) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     const input = page.getByRole('spinbutton', { name: label + '精确值', exact: true });
     await input.fill(String(fixedEnds.tail - 1));
     await input.press('Tab');
     const supported = await aircraft(page);
-    const value = label === '驾驶舱位置' ? supported.cockpit.position : supported.assembly[label === '副翼位置' ? 'horizontalTail' : 'verticalTail'];
+    const value = label === '驾驶舱位置' ? supported.cockpit.position : supported.assembly[label === '水平辅助翼位置' ? 'horizontalTail' : 'verticalTail'];
     expect(value).toBeGreaterThanOrEqual(fixedEnds.tail);
     expect(Number(await input.inputValue())).toBeCloseTo(value, 8);
     expect(endsOf(supported)).toEqual(fixedEnds);
@@ -780,7 +780,7 @@ test('固定驾驶员质量，端点数值保持对端不动，安装位置受�
   expect(normalized.fuselage.center).toBe(0);
   expect(normalized.pilot.mass).toBe(60);
   await page.getByRole('tab', { name: '机身', exact: true }).click();
-  await expect(page.getByLabel('固定驾驶员质量', { exact: true })).toContainText('60 kg');
+  await expect(page.getByLabel('固定驾驶员质量', { exact: true })).toContainText('60.00 kg');
   const github = page.getByRole('link', { name: 'GitHub 项目源码（新标签页）', exact: true });
   await expect(github).toHaveAttribute('href', 'https://github.com/Nigh/glider-3d');
   await expect(github).toHaveAttribute('target', '_blank');
@@ -837,14 +837,14 @@ test('主翼高度滑条与精确值同步，正负支撑质量进入主视图�
   await expect.poll(() => page.evaluate(() => window.glider.scene.support.visible)).toBe(false);
   const sliderBounds = (await slider.boundingBox())!;
   await slider.click({ position: { x: 1, y: sliderBounds.height / 2 } });
-  await expect(input).toHaveValue('-0.5');
+  await expect(input).toHaveValue('-0.50');
   expect((await aircraft(page)).assembly.mainWingHeight).toBe(-0.5);
   const negativeArea = Number(await area.textContent()), negativeMass = Number(await supportMass.textContent());
   expect(negativeArea).toBeGreaterThan(0);
   expect(negativeMass).toBeGreaterThan(0);
   expect(Math.abs(Number(await mass.textContent()) - baselineMass - negativeMass)).toBeLessThan(0.11);
   await slider.click({ position: { x: sliderBounds.width - 1, y: sliderBounds.height / 2 } });
-  await expect(input).toHaveValue('1');
+  await expect(input).toHaveValue('1.00');
   expect((await aircraft(page)).assembly.mainWingHeight).toBe(1);
   expect(Number(await area.textContent())).toBeCloseTo(negativeArea * 2, 1);
   expect(Number(await supportMass.textContent())).toBeCloseTo(negativeMass * 2, 1);
@@ -870,18 +870,18 @@ test('主翼高度滑条与精确值同步，正负支撑质量进入主视图�
 
 test('尾翼变根形和安装角后翼根仍贴梁，主翼纵向输入保持根中心支撑', async ({ page }) => {
   await enterDesign(page);
-  for (const [tab, key] of [['副翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+  for (const [tab, key] of [['水平辅助翼', 'horizontalTail'], ['垂直辅助翼', 'verticalTail']] as const) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     await page.getByText('精确编辑四个顶点', { exact: true }).click();
     const before = (await aircraft(page))[key].points;
     await number(page, '顶点1后向坐标', before[0].x + 0.2);
     await number(page, '顶点4后向坐标', before[3].x + 0.4);
   }
-  await page.getByRole('tab', { name: '副翼', exact: true }).click();
-  await number(page, '副翼安装角精确值', 7);
-  await number(page, '副翼位置精确值', -1.9);
-  await page.getByRole('tab', { name: '垂直尾翼', exact: true }).click();
-  await number(page, '垂直尾翼位置精确值', -2.1);
+  await page.getByRole('tab', { name: '水平辅助翼', exact: true }).click();
+  await number(page, '水平辅助翼安装角精确值', 7);
+  await number(page, '水平辅助翼位置精确值', -1.9);
+  await page.getByRole('tab', { name: '垂直辅助翼', exact: true }).click();
+  await number(page, '垂直辅助翼位置精确值', -2.1);
   for (const key of ['horizontalTail', 'verticalTail'] as const) {
     const definition = await aircraft(page);
     const root = await page.evaluate(key => window.glider.scene.wingRoots[key], key);
@@ -958,9 +958,9 @@ test('主翼拖近机身吸附，Ctrl保留微小高度，取消拖动不破坏�
 
 test('尾翼根顶点和根弦拖动跟随光标，翼根中心仍安装在机身梁上', async ({ page }) => {
   await enterDesign(page);
-  for (const [tab, key] of [['副翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+  for (const [tab, key] of [['水平辅助翼', 'horizontalTail'], ['垂直辅助翼', 'verticalTail']] as const) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
-    await page.getByRole('button', { name: tab === '垂直尾翼' ? '侧视' : '俯视', exact: true }).click();
+    await page.getByRole('button', { name: tab === '垂直辅助翼' ? '侧视' : '俯视', exact: true }).click();
     for (const segment of [false, true]) {
       const name = tab + (segment ? '根弦线段1–4' : '顶点1');
       const handle = page.getByRole('button', { name, exact: true });
@@ -1115,7 +1115,7 @@ test('不同名称保存独立飞机，同名取消保留旧设计、确认才�
 
 test('三翼页整体位置手柄保留顶点，动力页引擎与油箱复用位置操纵', async ({ page }) => {
   await page.getByRole('button', { name: '高山速降', exact: false }).click();
-  for (const [tab, key] of [['主翼', 'mainWing'], ['副翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+  for (const [tab, key] of [['主翼', 'mainWing'], ['水平辅助翼', 'horizontalTail'], ['垂直辅助翼', 'verticalTail']] as const) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     const before = await aircraft(page);
     const handle = page.getByRole('button', { name: tab + '位置', exact: true });
@@ -1258,7 +1258,7 @@ test('低速助跑翼尖拖尾按距离渐入渐出，失速清除', async ({ pa
 test('三翼调整材料用量并独立撤销，保留预设截面且不提供尺寸输入', async ({ page }) => {
   await enterDesign(page);
   const before = await aircraft(page);
-  for (const [tab, key] of [['主翼', 'mainWing'], ['副翼', 'horizontalTail'], ['垂直尾翼', 'verticalTail']] as const) {
+  for (const [tab, key] of [['主翼', 'mainWing'], ['水平辅助翼', 'horizontalTail'], ['垂直辅助翼', 'verticalTail']] as const) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
     for (const name of ['梁截面弦向宽度', '梁截面法向高度', '梁管壁厚']) {
       await expect(page.getByRole('slider', { name, exact: true })).toHaveCount(0);

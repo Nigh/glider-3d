@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3 } from 'three';
 import { airfoilY, airfoilShapes, AIR_VISCOSITY, naca0012Section } from '../src/airfoils';
-import { clone, defaultAircraft, presets, planform, validateAircraft, normalizeAircraftGeometry, finPoint, wingOrigin, wingLocalPoint, wingAirfoil, DEG } from '../src/model';
+import { clone, defaultAircraft, presets, planform, validateAircraft, normalizeAircraftGeometry, finPoint, wingOrigin, wingLocalPoint, wingAirfoil, wingInstancePoint, wingInstanceDirection, wingInstanceWing, DEG } from '../src/model';
 import { FlightSimulation, coefficients } from '../src/physics';
 import { defaultWindTunnel, windTunnelSettings } from '../src/laboratory';
 import { exportAircraft, importAircraft } from '../src/storage';
 import { exportReplay, importReplay } from '../src/replay';
 import { materialCatalog } from '../src/materials';
+import { WingStructure } from '../src/structure';
 
 const neutral = { weight: 0, lateral: 0, elevator: 0, aileron: 0, rudder: 0, throttle: 0 };
 const normal = () => clone(presets.find(p=>p.name==='基础单发型')!);
@@ -130,18 +131,42 @@ describe('T-tail crown and Birdman wind tunnel', () => {
  it('matches fresh structural references, mass and contact geometry after live incidence and restore', () => {
   const d=normal(); d.assembly.tailOnFin=true; normalizeAircraftGeometry(d);
   const sim=new FlightSimulation(d,'wind-tunnel',0);
+  const layout=sim.structure.sections.map(s=>[s.id,s.wingInstance,s.side,s.spanStart,s.spanEnd]);
   for(const angle of [12,-12]){
    sim.setWindTunnel({...defaultWindTunnel,tailIncidence:angle}); for(let i=0;i<55;i++)sim.step(neutral);
    expect(sim.definition.assembly.tailIncidence).toBe(angle);
    const fresh=new FlightSimulation(sim.definition,'wind-tunnel',0);
+   expect(sim.structure.sections.map(s=>[s.id,s.wingInstance,s.side,s.spanStart,s.spanEnd])).toEqual(layout);
+   // A fresh mask may split different spans. Rebuild neutral reference mechanics
+   // on the live joints instead of treating IDs from both layouts as equivalent.
+   const reference=new WingStructure(fresh.definition,sim.structure.sections.map(s=>{
+    const w=wingInstanceWing(fresh.definition,s.wingInstance),half=Math.abs(w.points[1].y),p=planform(w,s.wingKey!=='verticalTail');
+    const root=p.root+(p.tip-p.root)*s.spanStart/half,tip=p.root+(p.tip-p.root)*s.spanEnd/half;
+    const span=s.spanStart+(s.spanEnd-s.spanStart)*(root+2*tip)/(3*(root+tip));
+    return {...s.surface,point:wingInstancePoint(fresh.definition,s.wingInstance,s.side,span,.25,0,new Vector3()),
+     normal:wingInstanceDirection(fresh.definition,s.wingInstance,s.side,0,1,0,new Vector3()),
+     spanDirection:wingInstanceDirection(fresh.definition,s.wingInstance,s.side,0,0,1,new Vector3()),
+     chordDirection:wingInstanceDirection(fresh.definition,s.wingInstance,s.side,1,0,0,new Vector3()),
+     crossflowDirection:wingInstanceDirection(fresh.definition,s.wingInstance,s.side,0,0,1,new Vector3())};
+   }));
    for(const s of sim.structure.sections){
-    const f=fresh.structure.sections[s.id]; expect(s.referenceRoot.distanceTo(f.referenceRoot)).toBeLessThan(1e-9); expect(s.referenceTip.distanceTo(f.referenceTip)).toBeLessThan(1e-9);
-    expect(s.mass).toBeCloseTo(f.mass,9); expect(s.center.distanceTo(f.center)).toBeLessThan(1e-8);
+    const f=reference.sections.find(candidate=>candidate.wingInstance===s.wingInstance&&candidate.side===s.side
+     &&candidate.spanStart===s.spanStart&&candidate.spanEnd===s.spanEnd)!;
+    expect(s.referenceRoot.distanceTo(f.referenceRoot)).toBeLessThan(1e-9); expect(s.referenceTip.distanceTo(f.referenceTip)).toBeLessThan(1e-9);
+    expect(s.mass).toBeCloseTo(f.mass,9); expect(s.center.distanceTo(f.center)).toBeLessThan(1e-9);
     for(let i=0;i<9;i++)expect(s.inertia.elements[i]).toBeCloseTo(f.inertia.elements[i],8);
    }
-   const a=(sim as any).contacts,b=(fresh as any).contacts;
-   for(let i=0;i<a.length;i++)if(a[i].reference)expect(a[i].reference.distanceTo(b[i].reference)).toBeLessThan(1e-8);
+   for(const [actual,other] of [[sim,fresh],[fresh,sim]]){
+    // Private contact samples carry trusted geometry coordinates at this test seam.
+    const contacts=Reflect.get(actual,'contacts') as readonly (Vector3&{reference?:Vector3;sectionId?:number;span?:number;u?:number;normal?:number})[];
+    for(const point of contacts)if(point.reference){
+     const s=actual.structure.sections[point.sectionId!];
+     const expected=wingInstancePoint(other.definition,s.wingInstance,s.side,point.span!,point.u!,point.normal!,new Vector3());
+     expect(point.reference.distanceTo(expected)).toBeLessThan(1e-9);
+    }
+   }
    sim.restoreWindTunnelAircraft(); expect(sim.definition.assembly.tailIncidence).toBe(angle);
+   expect(sim.structure.sections.map(s=>[s.id,s.wingInstance,s.side,s.spanStart,s.spanEnd])).toEqual(layout);
   }
  });
  it('freezes detached crown references while attached geometry continues to move', () => {
@@ -167,7 +192,10 @@ describe('T-tail crown and Birdman wind tunnel', () => {
   for(const reversed of [false,true]){
    const d=clone(defaultAircraft);d.verticalTail.controlReversed=reversed;
    const sim=new FlightSimulation(d,'wind-tunnel',0);sim.setWindTunnel({...defaultWindTunnel,rudder:1});for(let i=0;i<45;i++)sim.step(neutral);
-   expect(Math.sign(sim.structure.sections.find(s=>s.wingKey==='verticalTail')!.controlDeflection)).toBe(reversed?-1:1);
+   const fin=sim.structure.sections.filter(s=>s.wingKey==='verticalTail');
+   expect(fin.find(s=>s.spanStart===0)!.surface.controlEffectiveness).toBe(0);
+   expect(fin.filter(s=>s.surface.controlEffectiveness===0).every(s=>s.controlDeflection===0)).toBe(true);
+   expect(Math.sign(fin.find(s=>s.surface.controlEffectiveness>0)!.controlDeflection)).toBe(reversed?-1:1);
   }
   const d=clone(defaultAircraft);d.verticalTail.controlAxes={roll:false,pitch:false,yaw:false};
   const sim=new FlightSimulation(d,'wind-tunnel',0);sim.setWindTunnel({...defaultWindTunnel,rudder:1});for(let i=0;i<45;i++)sim.step(neutral);
