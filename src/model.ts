@@ -495,15 +495,37 @@ function geometrySweepRange(cell:GeometryWingCell,axis:Vector3):[number,number] 
 // A separating plane proves that the full swept vertex trajectories cannot meet.
 // The extrema are analytic, so this does not sample or skip actuator angles.
 function geometrySweepSeparated(a:GeometryWingCell,b:GeometryWingCell,movingB:boolean):boolean {
- const range=(cell:GeometryWingCell,axis:Vector3,moving:boolean):[number,number]=>{
-  if(moving)return geometrySweepRange(cell,axis);
-  const bounds:[number,number]=[Infinity,-Infinity];
-  for(const p of cell.skin){const value=p.dot(axis);bounds[0]=Math.min(bounds[0],value);bounds[1]=Math.max(bounds[1],value);}
-  return bounds;
+ const separates=(axis:Vector3)=>{
+  const [min,max]=geometrySweepRange(a,axis);
+  const lower=min-2e-6;
+  // Adding vertices can only grow the interval, so an observed overlap is final.
+  if(movingB){
+   const range=[Infinity,-Infinity];
+   for(const point of b.sweep){
+    extendSweepRange(point,axis,b.travel,range,0);
+    if(max>=range[0]-2e-6&&range[1]>=lower)return false;
+   }
+  }else{
+   let low=Infinity,high=-Infinity;
+   for(const point of b.skin){
+    const value=point.dot(axis);
+    low=Math.min(low,value);high=Math.max(high,value);
+    if(max>=low-2e-6&&high>=lower)return false;
+   }
+  }
+  return true;
  };
- for(const axis of [...a.box.axes,...b.box.axes,...a.axes,...b.axes]){
-  const [amin,amax]=range(a,axis,true),[bmin,bmax]=range(b,axis,movingB);
-  if(amax<bmin-2e-6||bmax<amin-2e-6)return true;
+ for(const axis of [...a.box.axes,...b.box.axes,...a.axes,...b.axes])
+  if(separates(axis))return true;
+ const cross=new Vector3();
+ for(const aAxis of a.box.axes)for(const bAxis of b.box.axes){
+  cross.crossVectors(aAxis,bAxis);
+  const length=cross.length();
+  if(length<=1e-9)continue;
+  cross.multiplyScalar(1/length);
+  if(a.box.axes.some(axis=>Math.abs(cross.dot(axis))>1-1e-12)
+   ||b.box.axes.some(axis=>Math.abs(cross.dot(axis))>1-1e-12))continue;
+  if(separates(cross))return true;
  }
  return false;
 }
@@ -591,14 +613,18 @@ export function controlSurfaceRegions(d:AircraftDefinition):ControlSurfaceRegion
   const samples=profile.sort((a,b)=>a-b).flatMap(u=>[-1,1].map(face=>({
    u,face,ordinate:vertical?face*finThickness(u):airfoilY(airfoil,u,face),
   })));
-  return {...instance,hinge,samples};
+  const limit=vertical?WING_CONTROL_LIMIT.vertical:WING_CONTROL_LIMIT.horizontal;
+  const travel={cos:Math.cos(limit),sin:Math.sin(limit),tan:Math.tan(limit)};
+  const axesBySide=[-1,1].map(side=>{
+   const axis=wingControlAxis(d,id,side,new Vector3()),chord=wingInstanceDirection(d,id,side,1,0,0,new Vector3());
+   chord.addScaledVector(axis,-chord.dot(axis)).normalize();
+   return [chord,new Vector3().crossVectors(axis,chord).normalize(),axis];
+  });
+  return {...instance,hinge,samples,travel,axesBySide};
  });
  const append=(id:number,side:number,start:number,end:number)=>{
-  const {key,wing:w,hinge,samples}=wings[id],vertical=key==='verticalTail',half=Math.abs(w.points[1].y);
-  const axis=wingControlAxis(d,id,side,new Vector3()),chord=wingInstanceDirection(d,id,side,1,0,0,new Vector3());
-  chord.addScaledVector(axis,-chord.dot(axis)).normalize();
-  const axes=[chord,new Vector3().crossVectors(axis,chord).normalize(),axis],limit=vertical?WING_CONTROL_LIMIT.vertical:WING_CONTROL_LIMIT.horizontal;
-  const travel={cos:Math.cos(limit),sin:Math.sin(limit),tan:Math.tan(limit)};
+  const {wing:w,hinge,samples,travel,axesBySide}=wings[id],half=Math.abs(w.points[1].y);
+  const axes=axesBySide[side<0?0:1],axis=axes[2];
   const skin:Vector3[]=[],moving:GeometrySweepPoint[]=[], profileNormals:Vector3[]=[];
     const bounds=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];
     // Bound every render/contact vertex. Rotated triangle interiors are convex
