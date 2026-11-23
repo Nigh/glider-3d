@@ -223,7 +223,7 @@ npm run test:e2e
 
 Physics regressions set the geometry, material strength and engine count needed by each scenario explicitly instead of assuming that a system preset stays unchanged. Preset validation remains covered separately. Unit tests retain physical boundaries, energy accounting, fractures, deterministic replay and cache limits; duplicate replay runs and assertions that only pin visual styling or translated wording are omitted.
 
-Unit tests use a 30-second timeout to accommodate structural and contact integration on shared CI CPUs; complete-flight regressions may set a longer per-test timeout. Expensive setup yields between integration batches so the test worker can respond to the runner. These limits detect stalled tests, not performance regressions. Use `npx vitest run --maxWorkers=1` when sharing CPU with browser rendering.
+Unit tests use a 30-second timeout to accommodate structural and contact integration on shared CI CPUs; complete-flight regressions may set a longer per-test timeout. Expensive setup yields between integration batches so the test worker can respond to the runner. These limits detect stalled tests, not performance regressions. The Pages workflow runs `npm test -- --maxWorkers=1` to avoid concurrent physics integrations competing for shared runner CPUs and delaying worker RPC responses. Use the same command when sharing CPU with browser rendering.
 
 Browser tests start the development server by default. To use an existing server when CI is enabled:
 

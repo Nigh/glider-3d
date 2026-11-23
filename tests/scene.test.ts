@@ -986,12 +986,12 @@ describe('工坊场景与直接选取', () => {
     view.orthographic.zoom = 2;
     view.orthographic.position.add(new Vector3(1, 2, 3));
     view.controls.target.add(new Vector3(1, 2, 3));
-    view.promoteDesignPerspective();
+    view.promoteOrbitPerspective();
     expect(view.camera).toBe(view.orthographic);
     view.orthographic.rotateY(0.1);
     const rotation = view.orthographic.quaternion.clone(), target = view.controls.target.clone();
     const height = (view.orthographic.top - view.orthographic.bottom) / view.orthographic.zoom;
-    view.promoteDesignPerspective();
+    view.promoteOrbitPerspective();
     expect(view.camera).toBe(view.perspective);
     expect(view.camera.quaternion.angleTo(rotation)).toBeLessThan(1e-7);
     expect(view.controls.target.distanceTo(target)).toBe(0);

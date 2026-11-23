@@ -34,7 +34,7 @@ jobs:
       - name: Check types
         run: npm run check
       - name: Run unit tests
-        run: npm test
+        run: npm test -- --maxWorkers=1
       - name: Build for Pages
         run: npm run build -- --base "$PAGES_BASE_PATH/"
         env:
