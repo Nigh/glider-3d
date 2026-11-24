@@ -32,7 +32,7 @@ Play [Aero Formula](https://nigh.github.io/glider-3d/).
 
 `.github/workflows/deploy-pages.yml` deploys after a push or merge to `main`. You can also select **Run workflow** in GitHub Actions. The repository's Pages build source is **GitHub Actions**.
 
-The workflow uses Node.js 24, runs `npm ci`, type checks, unit tests and the production build, then uploads and deploys `dist/` through the official Pages Actions. The build uses `base_path` from `configure-pages`, so the repository name is not hardcoded and local development paths remain unchanged. The build job has no deployment write permission; only the deployment job requests `pages: write` and `id-token: write`.
+The workflow uses Node.js 24, runs `npm ci` and the production build, then uploads and deploys `dist/` through the official Pages Actions. Type checks and tests run locally before merging, not in the deployment workflow. The build uses `base_path` from `configure-pages`, so the repository name is not hardcoded and local development paths remain unchanged. The build job has no deployment write permission; only the deployment job requests `pages: write` and `id-token: write`.
 
 Action versions were checked against the official repositories' latest-release APIs on 2026-10-30 and pinned to their commit SHAs: `checkout` v7.0.1, `setup-node` v7.1.0, `configure-pages` v6.0.0, `upload-pages-artifact` v5.0.0 and `deploy-pages` v5.0.1. Update both the SHA and its version comment when upgrading.
 
@@ -223,7 +223,9 @@ npm run test:e2e
 
 Physics regressions set the geometry, material strength and engine count needed by each scenario explicitly instead of assuming that a system preset stays unchanged. Preset validation remains covered separately. Unit tests retain physical boundaries, energy accounting, fractures, deterministic replay and cache limits; duplicate replay runs and assertions that only pin visual styling or translated wording are omitted.
 
-Unit tests use a 30-second timeout to accommodate structural and contact integration on shared CI CPUs; complete-flight regressions may set a longer per-test timeout. Expensive setup yields between integration batches so the test worker can respond to the runner. These limits detect stalled tests, not performance regressions. The Pages workflow runs `npm test -- --maxWorkers=1` to avoid concurrent physics integrations competing for shared runner CPUs and delaying worker RPC responses. Use the same command when sharing CPU with browser rendering.
+Unit tests use a 30-second timeout to accommodate structural and contact integration on shared CPUs; complete-flight regressions may set a longer per-test timeout. Expensive setup yields between integration batches so the test worker can respond to the runner. These limits detect stalled tests, not performance regressions. Use `npm test -- --maxWorkers=1` when sharing CPU with browser rendering.
+
+Before merging a PR containing code changes into `main`, run `npm run check`, `npm test` and `npm run build` locally against the final PR code. For interaction changes, also run the relevant Playwright tests and verify the actual interface. Record the tested full commit SHA, Node.js version, commands and results in the PR description or a comment. Repeat affected checks after changes; results must apply to the final commit. The person merging verifies the record. Documentation-only PRs require checking paths, commands and facts, but not these tests or test results. This is a contributor rule, not an automatic GitHub check.
 
 Browser tests start the development server by default. To use an existing server when CI is enabled:
 
